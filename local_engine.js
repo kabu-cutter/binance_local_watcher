@@ -139,6 +139,47 @@ function compactDateLabel(dateText) {
   return String(dateText || '').replace(/-/g, '');
 }
 
+
+function expandCompactDateLabel(dateLabel) {
+  const text = String(dateLabel || '').trim();
+  const match = text.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (!match) return '';
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function latestDownloadedDateFor(symbol, interval) {
+  const dir = longDataDir();
+  if (!fs.existsSync(dir)) return '';
+  const pattern = new RegExp(`^binance_${symbol}_${interval}_(\\d{8})_.*_JST\\.csv$`);
+  const dates = [];
+  for (const name of fs.readdirSync(dir)) {
+    const match = name.match(pattern);
+    if (match) dates.push(match[1]);
+  }
+  dates.sort();
+  return dates.length ? expandCompactDateLabel(dates[dates.length - 1]) : '';
+}
+
+
+function summarizeReferenceFiles(files, maxShown = 4) {
+  const names = Array.isArray(files) ? files.map((file) => path.basename(file)) : [];
+  if (!names.length) return '参照ファイル: なし';
+  const shown = names.slice(0, maxShown);
+  const rest = names.length - shown.length;
+  return `参照ファイル: ${shown.join(', ')}${rest > 0 ? ` ほか${rest}件` : ''}`;
+}
+
+function summarizeReferenceRange(rows) {
+  if (!Array.isArray(rows) || !rows.length) return '';
+  const times = rows
+    .map((row) => safeFloat(row.open_time_ms, NaN))
+    .filter((value) => Number.isFinite(value));
+  if (!times.length) return '';
+  const start = formatJst(new Date(Math.min(...times)));
+  const end = formatJst(new Date(Math.max(...times)));
+  return `参照範囲: ${start}〜${end}`;
+}
+
 function hourLabel(hour) {
   return String(hour).padStart(2, '0');
 }
@@ -536,12 +577,16 @@ async function downloadedKlineRows(params = {}) {
   };
 }
 
-async function estimateVirtualFillRate(body = {}) {
+async function estimateRequiredMoveOccurrenceRate(body = {}) {
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
   const interval = ['1m', '5m', '15m', '1h'].includes(body.interval) ? body.interval : '1m';
-  const date = String(body.date || '').trim();
-  if (!date) {
-    return { rate: null, note: '仮想約定率の自動推定: 日付が未指定のため手入力値を使います。' };
+  const requestedDate = String(body.date || '').trim();
+  const autoDate = requestedDate || latestDownloadedDateFor(symbol, interval);
+  if (!autoDate) {
+    return {
+      rate: null,
+      note: '必要値幅の出現率: 日付未指定で、利用できるDL済み履歴も見つからないため、履歴ベース確認は行いません。'
+    };
   }
   try {
     const target = Math.max(0, safeFloat(body.target_profit_jpy));
@@ -552,30 +597,40 @@ async function estimateVirtualFillRate(body = {}) {
     const { rows, files } = await downloadedKlineRows({
       symbol,
       interval,
-      date,
+      date: autoDate,
       start_hour: body.start_hour,
       end_hour: body.end_hour,
     });
     if (rows.length < 10) {
-      return { rate: null, note: '仮想約定率の自動推定: DL済み履歴が不足しているため手入力値を使います。' };
+      return { rate: null, note: '必要値幅の出現率: DL済み履歴が不足しているため、履歴ベース確認は行いません。' };
     }
-    let fillable = 0;
+    let matched = 0;
     rows.forEach((row) => {
       const open = safeFloat(row.open, NaN);
       const high = safeFloat(row.high, NaN);
       const low = safeFloat(row.low, NaN);
       if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || open <= 0) return;
       const rangePct = ((high - low) / open) * 100;
-      if (rangePct >= requiredMovePct) fillable += 1;
+      if (rangePct >= requiredMovePct) matched += 1;
     });
-    const rawRate = rows.length ? (fillable / rows.length) * 100 : 0;
-    const rate = Math.max(5, Math.min(95, rawRate));
+    const rate = rows.length ? Math.max(0, Math.min(100, (matched / rows.length) * 100)) : 0;
+    const fileSummary = summarizeReferenceFiles(files);
+    const rangeSummary = summarizeReferenceRange(rows);
+    const autoDateNote = requestedDate ? '' : ' 日付未指定だったため、最新のDL済み履歴日付を使いました。';
     return {
       rate,
-      note: `仮想約定率の自動推定: ${date} ${interval} 足 ${rows.length}本（${files.length}ファイル）から、必要変動率 ${requiredMovePct.toFixed(3)}% を満たす足の割合を使い ${rate.toFixed(1)}% としました。`,
+      required_move_pct: requiredMovePct,
+      referenced_files: Array.isArray(files) ? files.map((file) => path.basename(file)) : [],
+      referenced_file_count: Array.isArray(files) ? files.length : 0,
+      referenced_row_count: rows.length,
+      matched_row_count: matched,
+      reference_range: rangeSummary,
+      note: `必要値幅の出現率: ${autoDate} ${interval} 足 ${rows.length}本（${files.length}ファイル）のうち、必要変動率 ${requiredMovePct.toFixed(3)}% を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。${autoDateNote}
+${fileSummary}${rangeSummary ? `
+${rangeSummary}` : ''}`,
     };
   } catch (error) {
-    return { rate: null, note: `仮想約定率の自動推定: ${error.message} のため手入力値を使います。` };
+    return { rate: null, note: `必要値幅の出現率: ${error.message} のため、履歴ベース確認は行いません。` };
   }
 }
 
@@ -1012,6 +1067,7 @@ async function saveDailyGoalReport(body = {}) {
     'capital_jpy',
     'roundtrip_cost_pct',
     'virtual_fill_rate_pct_used',
+    'required_move_occurrence_rate_pct',
     'cancel_rate',
     'opportunities',
     'effective',
@@ -1033,6 +1089,7 @@ async function saveDailyGoalReport(body = {}) {
       safeFloat(body.capital_jpy, 0),
       safeFloat(daily.roundtrip_cost_pct, 0),
       safeFloat(daily.virtual_fill_rate_pct_used, 0),
+      daily.required_move_occurrence_rate_pct === null || daily.required_move_occurrence_rate_pct === undefined ? '' : safeFloat(daily.required_move_occurrence_rate_pct, 0),
       safeFloat(row.cancel_rate, 0),
       safeInt(row.opportunities, 0),
       safeInt(row.effective, 0),
@@ -1196,16 +1253,18 @@ async function dailyGoal(body = {}) {
   const summary = symbols.find((item) => item.symbol === symbol);
   const manualFillRate = Math.max(0, Math.min(100, safeFloat(body.virtual_fill_rate_pct, 70)));
   const autoEnabled = body.virtual_fill_rate_auto !== false;
-  const estimated = autoEnabled ? await estimateVirtualFillRate(body) : null;
-  const fillRateToUse = Number.isFinite(estimated?.rate) ? estimated.rate : manualFillRate;
-  const fillRateNote = autoEnabled
-    ? (estimated?.note || '仮想約定率の自動推定を試し、手入力値を使いました。')
-    : '仮想約定率は手入力値を使っています。';
+  const occurrence = autoEnabled ? await estimateRequiredMoveOccurrenceRate(body) : null;
+  const fillRateNote = '仮想約定率は手入力値またはテンプレート値を使います。履歴確認は約定率ではなく、必要値幅の出現率として別表示します。';
   return calculations.calculateDailyGoal({
     ...body,
-    virtual_fill_rate_pct: fillRateToUse,
-    virtual_fill_rate_pct_used: fillRateToUse,
+    virtual_fill_rate_pct: manualFillRate,
+    virtual_fill_rate_pct_used: manualFillRate,
     virtual_fill_rate_note: fillRateNote,
+    required_move_occurrence_rate_pct: Number.isFinite(occurrence?.rate) ? occurrence.rate : null,
+    required_move_occurrence_note: autoEnabled
+      ? (occurrence?.note || '必要値幅の出現率: 履歴ベース確認を試しましたが、参考値は作れませんでした。')
+      : '必要値幅の出現率: 履歴確認はOFFです。',
+    required_move_occurrence_required_pct: Number.isFinite(occurrence?.required_move_pct) ? occurrence.required_move_pct : null,
     recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
     recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
   });
