@@ -65,6 +65,10 @@ API契約は `API_CONTRACT.json` を参照してください。
 - GET: `status`, `capabilities`, `summary`, `impact`, `alert-preview`, `alert-history`, `daily-goal-reports`, `chart`, `contract`, `api-readiness`
 - POST: `fetch-prices`, `download-history`, `trade-preview`, `daily-goal`, `save-daily-goal-report`, `clear-alert-history`, `clear-daily-goal-reports`
 
+補足:
+- `alert-preview` は `simple / rolling / sustained` モード対応
+- `trade-preview` は概算P/Lに加えて、`exchangeInfo` ベースの最小ルール診断（`rule_check`）を返します
+
 禁止範囲:
 - `real_order`
 - `auto_trading`

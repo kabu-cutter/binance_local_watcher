@@ -13,10 +13,11 @@
 - `npm install` 済み
 - `npm start` でElectron起動
 - サマリー表示、価格取得、チャート、日次目標、簡易アラートが動くこと
+- 日次目標レポート（保存/再読込/クリア）が動くこと
 
 ## 4) API boundary check
 - `status`, `capabilities`, `contract`, `api-readiness` が取得できること
-- `alert-preview`, `chart`, `impact`, `daily-goal`, `trade-preview`, `download-history` がエラーなく返ること
+- `alert-preview`（`simple/rolling/sustained`）, `chart`, `impact`, `daily-goal`, `trade-preview`, `download-history` がエラーなく返ること
 - `npm run smoke` が成功すること（主要ルートの最小スモーク）
 - GitHub Actions `Smoke Check` が成功していること（PR / main push）
 
