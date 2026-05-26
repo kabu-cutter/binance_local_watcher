@@ -123,7 +123,7 @@ function calculateDailyGoal(body = {}) {
   const maxOpp = Math.max(minOpp, safeInt(body.max_opportunities, minOpp));
   const stopPct = Math.max(0, safeFloat(body.stop_loss_pct));
   const cancelRates = parseCancelRates(body.cancel_rates_text);
-  const costPct = DEFAULT_ROUNDTRIP_COST_PCT;
+  const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
   const targetPct = (target / capital) * 100;
   const onePct = targetPct + costPct;
   const minPct = (target / capital / minOpp) * 100 + costPct;
@@ -131,6 +131,7 @@ function calculateDailyGoal(body = {}) {
   const lossPerStop = -(capital * (stopPct + costPct) / 100);
   const suggestion = [
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
+    `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     `1回で全部狙うと、コスト込みで約 ${onePct.toFixed(3)}% のNet変動が必要なので、まず重さを見る基準になります。`,
     `${minOpp}回で分けると1回あたり約 ${(target / minOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${minPct.toFixed(3)}% です。`,
     `${maxOpp}回で分けると1回あたり約 ${(target / maxOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${maxPct.toFixed(3)}% です。`,
@@ -172,7 +173,12 @@ function calculateDailyGoal(body = {}) {
       });
     }
   }
-  return { suggestion, plan_cards: planCards, scenarios };
+  return {
+    suggestion,
+    plan_cards: planCards,
+    scenarios,
+    roundtrip_cost_pct: costPct,
+  };
 }
 
 function summarizeChartPoints(points) {

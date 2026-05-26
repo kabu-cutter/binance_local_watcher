@@ -251,6 +251,7 @@ async function calcDaily() {
     max_opportunities: Number(document.getElementById('dailyMaxOpp').value),
     stop_loss_pct: Number(document.getElementById('dailyStopPct').value),
     cancel_rates_text: document.getElementById('dailyCancelRates').value,
+    roundtrip_cost_pct: 0.28,
   };
   const data = await postJson('/api/daily-goal', payload);
   document.getElementById('dailySuggestion').textContent = data.suggestion;
