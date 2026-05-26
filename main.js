@@ -16,11 +16,14 @@ function registerLocalEngineIpc() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 1080,
-    minHeight: 720,
-    backgroundColor: '#f4f6f8',
+    // HD横画面(1366x768など)でも下が切れにくい初期サイズ。
+    // 画面内に収まらない場合も、main/sidebarがそれぞれスクロールする。
+    width: 1240,
+    height: 700,
+    minWidth: 980,
+    minHeight: 560,
+    backgroundColor: '#fff5fb',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,

@@ -247,6 +247,7 @@ async function fetchPrices() {
     await loadStatus();
     await loadSummary();
     await loadImpact();
+    await loadSummaryMiniCharts();
     await loadChart();
   } catch (e) {
     document.getElementById('summaryMemo').textContent = `価格取得に失敗しました。\n${e.message}`;
@@ -408,6 +409,93 @@ function renderChart(data) {
 
   const errorText = data.errors?.length ? ` / エラー: ${data.errors.join(' / ')}` : '';
   document.getElementById('chartMeta').textContent = `${data.symbol} / ${data.rows}点 / ${data.source} / ${data.message} 価格範囲: ${yen(data.min_price)} - ${yen(data.max_price)}${errorText}`;
+}
+
+function drawSmallSvgChart(svg, points, options = {}) {
+  if (!svg) return;
+  const width = options.width || 420;
+  const height = options.height || 150;
+  const pad = options.pad || 18;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.innerHTML = '';
+
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', '0');
+  bg.setAttribute('y', '0');
+  bg.setAttribute('width', width);
+  bg.setAttribute('height', height);
+  bg.setAttribute('rx', '14');
+  bg.setAttribute('class', 'chart-bg mini-chart-bg');
+  svg.appendChild(bg);
+
+  for (let i = 0; i < 3; i += 1) {
+    const y = pad + (i / 2) * (height - pad * 2);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', pad);
+    line.setAttribute('x2', width - pad);
+    line.setAttribute('y1', y);
+    line.setAttribute('y2', y);
+    line.setAttribute('class', 'chart-grid mini-chart-grid-line');
+    svg.appendChild(line);
+  }
+
+  if (!points || points.length < 2) {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', width / 2);
+    text.setAttribute('y', height / 2);
+    text.setAttribute('class', 'mini-chart-empty');
+    text.setAttribute('text-anchor', 'middle');
+    text.textContent = 'データ待ち';
+    svg.appendChild(text);
+    return;
+  }
+
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', makeSvgPath(points, width, height, pad));
+  path.setAttribute('class', 'chart-line mini-chart-line');
+  svg.appendChild(path);
+
+  const last = points[points.length - 1];
+  const prices = points.map((p) => Number(p.price)).filter((n) => Number.isFinite(n));
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const span = Math.max(max - min, Math.abs(max) * 0.0001, 1);
+  const x = width - pad;
+  const y = height - pad - ((Number(last.price) - min) / span) * (height - pad * 2);
+  const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  dot.setAttribute('cx', x);
+  dot.setAttribute('cy', y);
+  dot.setAttribute('r', '4.5');
+  dot.setAttribute('class', 'chart-dot mini-chart-dot');
+  svg.appendChild(dot);
+}
+
+function renderSummaryMiniChart(symbol, data) {
+  const svg = document.getElementById(`summaryMiniChart${symbol}`);
+  const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
+  const points = data.points || [];
+  drawSmallSvgChart(svg, points, { width: 420, height: 150, pad: 18 });
+  if (meta) {
+    const latest = points.length ? points[points.length - 1] : null;
+    const latestText = latest ? `${yen(latest.price)} / ${latest.timestamp || ''}` : 'データなし';
+    const errorText = data.errors?.length ? ` / ${data.errors.join(' / ')}` : '';
+    meta.textContent = `${latestText} / ${data.source || 'source?'}${errorText}`;
+  }
+}
+
+async function loadSummaryMiniCharts() {
+  const symbols = ['BTCJPY', 'ETHJPY'];
+  await Promise.all(symbols.map(async (symbol) => {
+    try {
+      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=local&interval=1m&limit=90`);
+      renderSummaryMiniChart(symbol, data);
+    } catch (error) {
+      const svg = document.getElementById(`summaryMiniChart${symbol}`);
+      drawSmallSvgChart(svg, [], { width: 420, height: 150, pad: 18 });
+      const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
+      if (meta) meta.textContent = `取得失敗: ${error.message}`;
+    }
+  }));
 }
 
 async function loadChart() {
@@ -650,6 +738,7 @@ async function refreshAll() {
   await loadImpact();
   await loadAlertPreview();
   await loadApiReadiness();
+  await loadSummaryMiniCharts();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -661,6 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
+  document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
   document.getElementById('chartSource').addEventListener('change', loadChart);

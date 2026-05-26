@@ -52,6 +52,25 @@
           </div>
         </div>
         <div class="grid two" id="summaryCards"></div>
+        <div class="card summary-mini-chart-card">
+          <div class="card-head compact-head">
+            <div>
+              <h3>ミニチャート</h3>
+              <p class="card-desc">サマリー上でBTC/ETHの直近の形を軽く確認します。詳細はチャートタブで見ます。</p>
+            </div>
+            <button class="secondary" id="reloadSummaryMiniCharts">ミニチャート更新</button>
+          </div>
+          <div class="summary-mini-chart-grid" id="summaryMiniCharts">
+            <div class="mini-chart-panel">
+              <div class="mini-chart-head"><strong>BTCJPY</strong><span id="summaryMiniChartBTCJPYMeta">読み込み中</span></div>
+              <div class="summary-chart-box"><svg id="summaryMiniChartBTCJPY" viewBox="0 0 420 150" preserveAspectRatio="none"></svg></div>
+            </div>
+            <div class="mini-chart-panel">
+              <div class="mini-chart-head"><strong>ETHJPY</strong><span id="summaryMiniChartETHJPYMeta">読み込み中</span></div>
+              <div class="summary-chart-box"><svg id="summaryMiniChartETHJPY" viewBox="0 0 420 150" preserveAspectRatio="none"></svg></div>
+            </div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head">
             <h3>読み取りメモ</h3>
