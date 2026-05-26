@@ -674,6 +674,27 @@ async function fetchAllPrices() {
   return { rows, errors };
 }
 
+async function fetchSymbolTradeRules(symbol) {
+  try {
+    const data = await fetchJson('/api/v3/exchangeInfo', { symbol }, 12000);
+    const item = Array.isArray(data.symbols) ? data.symbols[0] : null;
+    if (!item) return null;
+    const filterMap = Object.fromEntries((item.filters || []).map((f) => [f.filterType, f]));
+    const priceFilter = filterMap.PRICE_FILTER || {};
+    const lotSize = filterMap.LOT_SIZE || {};
+    const minNotional = filterMap.MIN_NOTIONAL || filterMap.NOTIONAL || {};
+    return {
+      tick_size: safeFloat(priceFilter.tickSize, NaN),
+      step_size: safeFloat(lotSize.stepSize, NaN),
+      min_qty: safeFloat(lotSize.minQty, NaN),
+      min_notional: safeFloat(minNotional.minNotional, NaN),
+      source: '/api/v3/exchangeInfo',
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function status() {
   const { source } = await currentPriceData();
   const { rows } = await readHistoryRows();
@@ -750,6 +771,9 @@ async function apiReadiness() {
   let authApiError = '';
   let accountType = '';
   let canTrade = null;
+  let feeApiOk = false;
+  let feeApiError = '';
+  let feeSample = [];
   if (hasApiKey && hasApiSecret) {
     try {
       const account = await fetchSignedJson('/api/v3/account', {}, 10000);
@@ -758,6 +782,20 @@ async function apiReadiness() {
       canTrade = typeof account.canTrade === 'boolean' ? account.canTrade : null;
     } catch (error) {
       authApiError = error.body ? `${error.message} ${error.body}` : error.message;
+    }
+    if (authApiOk) {
+      try {
+        const fees = await fetchSignedJson('/sapi/v1/asset/tradeFee', {}, 10000);
+        const list = Array.isArray(fees) ? fees : [];
+        feeApiOk = true;
+        feeSample = list.slice(0, 5).map((row) => ({
+          symbol: String(row.symbol || ''),
+          makerCommission: safeFloat(row.makerCommission, NaN),
+          takerCommission: safeFloat(row.takerCommission, NaN),
+        }));
+      } catch (error) {
+        feeApiError = error.body ? `${error.message} ${error.body}` : error.message;
+      }
     }
   }
   return {
@@ -771,7 +809,10 @@ async function apiReadiness() {
     auth_api_error: authApiError,
     account_type: accountType,
     can_trade: canTrade,
-    fee_fetch_ready: Boolean(publicApiOk && hasApiKey && hasApiSecret),
+    fee_api_ok: feeApiOk,
+    fee_api_error: feeApiError,
+    fee_sample: feeSample,
+    fee_fetch_ready: Boolean(publicApiOk && hasApiKey && hasApiSecret && authApiOk),
     note: '読み取り専用チェックです。APIキー/Secretの保存処理は行いません。',
   };
 }
@@ -783,8 +824,10 @@ async function impact(params = {}) {
 
 async function alertPreview(params = {}) {
   const windowMinutes = Math.max(1, Math.min(240, safeInt(params.window_minutes, 15)));
-  const alertMode = String(params.alert_mode || 'simple').trim().toLowerCase() === 'rolling' ? 'rolling' : 'simple';
+  const modeText = String(params.alert_mode || 'simple').trim().toLowerCase();
+  const alertMode = ['simple', 'rolling', 'sustained'].includes(modeText) ? modeText : 'simple';
   const rollingMinPoints = Math.max(2, Math.min(20, safeInt(params.rolling_min_points, 3)));
+  const risingRatioThreshold = Math.max(1, Math.min(100, safeFloat(params.alert_rising_ratio, 60)));
   const thresholdPct = Math.max(0, safeFloat(params.threshold_pct, 0.2));
   const thresholdsText = String(params.thresholds || '').trim();
   const thresholdsBySymbol = {};
@@ -863,31 +906,40 @@ async function alertPreview(params = {}) {
       else break;
     }
     let rollingStreak = 0;
+    let upSteps = 0;
+    let totalSteps = 0;
     for (let i = windowRows.length - 1; i > 0; i -= 1) {
       const curr = windowRows[i];
       const prev = windowRows[i - 1];
       if (!curr || !prev || !Number.isFinite(curr.price) || !Number.isFinite(prev.price) || prev.price <= 0) break;
       const stepPct = ((curr.price - prev.price) / prev.price) * 100;
+      totalSteps += 1;
+      if (stepPct > 0) upSteps += 1;
       if (stepPct > 0) rollingStreak += 1;
       else break;
     }
+    const risingRatio = totalSteps > 0 ? (upSteps / totalSteps) * 100 : 0;
     const simpleHit = movePct >= thresholdForSymbol;
     const rollingHit = rollingStreak >= rollingMinPoints && movePct >= Math.max(thresholdForSymbol * 0.4, 0.02);
-    const hit = alertMode === 'rolling' ? rollingHit : simpleHit;
+    const sustainedHit = movePct >= thresholdForSymbol && risingRatio >= risingRatioThreshold;
+    const hit = alertMode === 'rolling' ? rollingHit : alertMode === 'sustained' ? sustainedHit : simpleHit;
     return {
       symbol,
-      status: hit ? (alertMode === 'rolling' ? 'ローリング上昇アラート' : '上昇アラート') : '監視中',
+      status: hit
+        ? (alertMode === 'rolling' ? 'ローリング上昇アラート' : alertMode === 'sustained' ? '持続上昇アラート' : '上昇アラート')
+        : '監視中',
       move_pct: movePct,
       threshold_pct: thresholdForSymbol,
       streak_count: streakCount,
       rolling_streak: rollingStreak,
+      rising_ratio: risingRatio,
       samples: windowRows.length,
       latest_price: latest.price,
       base_price: base.price,
       latest_time: formatJst(latest.timestamp),
     };
   });
-  const alertCount = resultRows.filter((row) => row.status === '上昇アラート').length;
+  const alertCount = resultRows.filter((row) => String(row.status).includes('アラート')).length;
   const ranked = resultRows.filter((row) => Number.isFinite(row.move_pct)).sort((a, b) => b.move_pct - a.move_pct);
   const topAlert = ranked.length ? ranked[0] : null;
   let historySaved = 0;
@@ -895,7 +947,7 @@ async function alertPreview(params = {}) {
     const existing = await readAlertHistory();
     const nowText = nowJstIso();
     const appendItems = resultRows
-      .filter((row) => row.status === '上昇アラート')
+      .filter((row) => String(row.status).includes('アラート'))
       .map((row) => ({
         timestamp_jst: nowText,
         symbol: row.symbol,
@@ -903,6 +955,7 @@ async function alertPreview(params = {}) {
         threshold_pct: row.threshold_pct,
         window_minutes: windowMinutes,
         streak_count: row.streak_count,
+        rising_ratio: row.rising_ratio,
       }));
     const merged = existing.concat(appendItems).slice(-historyLimit);
     await writeAlertHistory(merged);
@@ -911,6 +964,7 @@ async function alertPreview(params = {}) {
   return {
     alert_mode: alertMode,
     rolling_min_points: rollingMinPoints,
+    alert_rising_ratio: risingRatioThreshold,
     window_minutes: windowMinutes,
     threshold_pct: thresholdPct,
     thresholds_by_symbol: thresholdsBySymbol,
@@ -1125,11 +1179,14 @@ async function fetchPrices() {
 
 async function tradePreview(body = {}) {
   const { symbols } = await currentPriceData();
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
+  const rules = await fetchSymbolTradeRules(symbol);
   return calculations.calculateTradePreview({
-    body,
+    body: { ...body, symbol },
     summaries: symbols,
     mockPrices: MOCK_PRICES,
     symbols: SYMBOLS,
+    symbolRules: rules,
   });
 }
 

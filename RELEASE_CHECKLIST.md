@@ -22,6 +22,8 @@
 
 ## 5) Read-only API readiness
 - `api-readiness` で `public_api_ok` が確認できること
+- APIキー/Secretを設定した場合、`auth_api_ok` が確認できること（`/api/v3/account` 読み取り専用）
+- APIキー/Secretを設定した場合、`fee_api_ok` が確認できること（`/sapi/v1/asset/tradeFee` 読み取り専用）
 - APIキー/Secretを使う場合は環境変数 or `.env` 読み取りのみで、保存処理がないこと
 
 ## 6) Packaging prep

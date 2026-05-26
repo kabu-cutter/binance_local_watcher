@@ -163,7 +163,14 @@ function calculateImpactRows({ summaries, amountsText }) {
   return rows;
 }
 
-function calculateTradePreview({ body = {}, summaries, mockPrices, symbols }) {
+function isAligned(value, step) {
+  if (!Number.isFinite(value) || !Number.isFinite(step) || step <= 0) return true;
+  const q = Math.round(value / step);
+  const aligned = Math.abs(value - (q * step));
+  return aligned <= Math.max(step * 1e-6, 1e-12);
+}
+
+function calculateTradePreview({ body = {}, summaries, mockPrices, symbols, symbolRules = null }) {
   const prices = Object.fromEntries(summaries.map((summary) => [summary.symbol, summary.price_jpy]));
   const symbol = symbols.includes(body.symbol) ? body.symbol : symbols[0];
   const amount = Math.max(0, safeFloat(body.amount_jpy));
@@ -175,6 +182,20 @@ function calculateTradePreview({ body = {}, summaries, mockPrices, symbols }) {
   const gross = quantity * (exitPrice - price);
   const cost = amount * costPct / 100;
   const net = gross - cost;
+  const ruleCheck = symbolRules ? {
+    source: symbolRules.source || '',
+    tick_size: symbolRules.tick_size,
+    step_size: symbolRules.step_size,
+    min_qty: symbolRules.min_qty,
+    min_notional: symbolRules.min_notional,
+    price_tick_ok: isAligned(price, symbolRules.tick_size),
+    qty_step_ok: isAligned(quantity, symbolRules.step_size),
+    qty_min_ok: Number.isFinite(symbolRules.min_qty) ? quantity >= symbolRules.min_qty : true,
+    notional_min_ok: Number.isFinite(symbolRules.min_notional) ? amount >= symbolRules.min_notional : true,
+  } : null;
+  const ruleSummary = ruleCheck
+    ? `ルール確認(exchInfo): tick=${ruleCheck.price_tick_ok ? 'ok' : 'ng'} / qtyStep=${ruleCheck.qty_step_ok ? 'ok' : 'ng'} / minQty=${ruleCheck.qty_min_ok ? 'ok' : 'ng'} / minNotional=${ruleCheck.notional_min_ok ? 'ok' : 'ng'}`
+    : 'ルール確認(exchInfo): 取得できなかったため未判定';
   return {
     symbol,
     amount_jpy: amount,
@@ -184,8 +205,9 @@ function calculateTradePreview({ body = {}, summaries, mockPrices, symbols }) {
     gross_pl_yen: gross,
     net_pl_yen: net,
     roundtrip_cost_pct: costPct,
+    rule_check: ruleCheck,
     accuracy: '概算',
-    memo: `${symbol} を ${amount.toLocaleString('ja-JP')}円ぶん想定。現在価格から ${exitPct >= 0 ? '+' : ''}${exitPct.toFixed(3)}% 動くと、Grossは約${gross.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円、往復コスト${costPct.toFixed(2)}%を引いたNetは約${net.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円です。これは実注文ではなく、Electron main process のローカル概算プレビューです。APIキーやSecretは使いません。`,
+    memo: `${symbol} を ${amount.toLocaleString('ja-JP')}円ぶん想定。現在価格から ${exitPct >= 0 ? '+' : ''}${exitPct.toFixed(3)}% 動くと、Grossは約${gross.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円、往復コスト${costPct.toFixed(2)}%を引いたNetは約${net.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円です。${ruleSummary}。これは実注文ではなく、Electron main process のローカル概算プレビューです。APIキーやSecretは使いません。`,
   };
 }
 

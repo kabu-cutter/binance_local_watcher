@@ -27,8 +27,8 @@
         "response": ["rows"]
       },
       "alert-preview": {
-        "query": ["window_minutes", "alert_mode", "rolling_min_points", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
-        "response": ["alert_mode", "rolling_min_points", "window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
+        "query": ["window_minutes", "alert_mode", "rolling_min_points", "alert_rising_ratio", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
+        "response": ["alert_mode", "rolling_min_points", "alert_rising_ratio", "window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
       },
       "alert-history": {
         "query": ["limit"],
@@ -48,7 +48,7 @@
       },
       "api-readiness": {
         "query": {},
-        "response": ["has_api_key", "has_api_secret", "api_key_source", "api_secret_source", "public_api_ok", "public_api_error", "auth_api_ok", "auth_api_error", "account_type", "can_trade", "fee_fetch_ready", "note"]
+        "response": ["has_api_key", "has_api_secret", "api_key_source", "api_secret_source", "public_api_ok", "public_api_error", "auth_api_ok", "auth_api_error", "account_type", "can_trade", "fee_api_ok", "fee_api_error", "fee_sample", "fee_fetch_ready", "note"]
       }
     },
     "POST": {
@@ -62,7 +62,7 @@
       },
       "trade-preview": {
         "body": ["symbol", "amount_jpy", "exit_change_pct", "roundtrip_cost_pct"],
-        "response": ["symbol", "amount_jpy", "current_price", "exit_price", "quantity", "gross_pl_yen", "net_pl_yen", "roundtrip_cost_pct", "accuracy", "memo"]
+        "response": ["symbol", "amount_jpy", "current_price", "exit_price", "quantity", "gross_pl_yen", "net_pl_yen", "roundtrip_cost_pct", "rule_check", "accuracy", "memo"]
       },
       "daily-goal": {
         "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],

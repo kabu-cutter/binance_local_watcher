@@ -179,14 +179,20 @@ async function loadStatus() {
 
 async function loadApiReadiness() {
   const memo = document.getElementById('apiReadinessMemo');
+  const feeMemo = document.getElementById('apiFeeSampleMemo');
+  const dailyLine = document.getElementById('dailyApiReadinessLine');
   try {
     const r = await getJson('/api/api-readiness');
+    if (dailyLine) {
+      dailyLine.textContent = `API準備度: public=${r.public_api_ok ? 'ok' : 'ng'} / key=${r.has_api_key ? 'set' : 'unset'} / auth=${r.auth_api_ok ? 'ok' : 'ng'} / fee=${r.fee_api_ok ? 'ok' : 'ng'}（保存なし）`;
+    }
     memo.textContent = r.note || '読み取り専用チェック結果です。';
     const rows = [
       { item: '公開API到達', value: r.public_api_ok ? 'ok' : 'ng', detail: r.public_api_error || '—' },
       { item: 'API Key', value: r.has_api_key ? 'set' : 'unset', detail: r.api_key_source || 'none' },
       { item: 'API Secret', value: r.has_api_secret ? 'set' : 'unset', detail: r.api_secret_source || 'none' },
       { item: '署名API認証', value: r.auth_api_ok ? 'ok' : 'ng', detail: r.auth_api_error || '—' },
+      { item: '手数料API', value: r.fee_api_ok ? 'ok' : 'ng', detail: r.fee_api_error || (Array.isArray(r.fee_sample) ? `${r.fee_sample.length}件サンプル取得` : '—') },
       { item: '口座タイプ', value: r.account_type || '—', detail: r.can_trade === null ? '—' : `canTrade=${r.can_trade}` },
       { item: '手数料取得準備', value: r.fee_fetch_ready ? 'ready' : 'not-ready', detail: '保存処理なし' },
     ];
@@ -195,9 +201,25 @@ async function loadApiReadiness() {
       ['value', '状態'],
       ['detail', '詳細'],
     ], rows);
+    const feeRows = Array.isArray(r.fee_sample) ? r.fee_sample.map((row) => ({
+      symbol: row.symbol || '—',
+      maker: Number.isFinite(Number(row.makerCommission)) ? `${(Number(row.makerCommission) * 100).toFixed(4)}%` : '—',
+      taker: Number.isFinite(Number(row.takerCommission)) ? `${(Number(row.takerCommission) * 100).toFixed(4)}%` : '—',
+    })) : [];
+    feeMemo.textContent = r.fee_api_ok
+      ? `手数料サンプル取得: ${feeRows.length}件（先頭のみ表示）`
+      : `手数料サンプル取得NG: ${r.fee_api_error || '未取得'}`;
+    renderTable(document.getElementById('apiFeeSampleTable'), [
+      ['symbol', '通貨ペア'],
+      ['maker', 'Maker'],
+      ['taker', 'Taker'],
+    ], feeRows);
   } catch (e) {
     memo.textContent = `API準備度の取得に失敗: ${e.message}`;
+    if (dailyLine) dailyLine.textContent = `API準備度: 取得失敗 (${e.message})`;
     renderTable(document.getElementById('apiReadinessTable'), [['item', '項目'], ['value', '状態'], ['detail', '詳細']], []);
+    feeMemo.textContent = '手数料サンプルは取得できませんでした。';
+    renderTable(document.getElementById('apiFeeSampleTable'), [['symbol', '通貨ペア'], ['maker', 'Maker'], ['taker', 'Taker']], []);
   }
 }
 
@@ -254,6 +276,7 @@ async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
   const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
+  const risingRatio = Number(document.getElementById('alertRisingRatio').value);
   const thresholdPct = Number(document.getElementById('alertThresholdPct').value);
   const btcThreshold = Number(document.getElementById('alertThresholdBTC').value);
   const ethThreshold = Number(document.getElementById('alertThresholdETH').value);
@@ -271,8 +294,8 @@ async function loadAlertPreview() {
   if (Number.isFinite(btcThreshold) && btcThreshold >= 0) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
   if (Number.isFinite(ethThreshold) && ethThreshold >= 0) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
   const thresholdsQuery = thresholdPairs.join(',');
-  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
-  document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
+  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
+  document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 上昇比率 ${pct(data.alert_rising_ratio, 1)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
     ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} (${top.status})`
@@ -284,6 +307,7 @@ async function loadAlertPreview() {
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
     streak: `${row.streak_count ?? 0}`,
     rolling_streak: `${row.rolling_streak ?? 0}`,
+    rising_ratio: row.rising_ratio === null || row.rising_ratio === undefined ? '—' : pct(row.rising_ratio, 1),
     samples: `${row.samples ?? 0}`,
     latest: yen(row.latest_price),
     base: yen(row.base_price),
@@ -296,6 +320,7 @@ async function loadAlertPreview() {
     ['threshold', '適用しきい値'],
     ['streak', '連続回数'],
     ['rolling_streak', 'rolling連続'],
+    ['rising_ratio', '上昇比率'],
     ['samples', 'サンプル数'],
     ['latest', '最新価格'],
     ['base', '起点価格'],
@@ -653,6 +678,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
   document.getElementById('alertMode').addEventListener('change', loadAlertPreview);
   document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdPct').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdBTC').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
