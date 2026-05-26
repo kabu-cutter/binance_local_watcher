@@ -19,6 +19,13 @@ Electron rendererをUI、Electron main processのNodeエンジンを計算・公
 - ローカル履歴または公開klineからSVGチャートを表示
 - Python backend と同じ返却形を保ち、比較しやすくする
 
+## 現在地
+
+- ルート直下のElectron版は `npm start` で起動確認済み
+- 通常起動ではPython backendを起動しない
+- GitHub `main` は初回同期済み
+- `price_history.csv`、`.env`、`node_modules/`、ローカル状態ファイルはGit除外済み
+
 ## 起動
 
 ```powershell
@@ -30,7 +37,7 @@ npm start
 Windowsなら以下でもOKです。
 
 ```powershell
-.\start_electron_python_ui.bat
+.\start_electron_local_engine.bat
 ```
 
 ## 既存のプロジェクトフォルダを使う
@@ -70,4 +77,5 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 - Streamlit版 candidate の計算ルール・実commission・BNBチェックを `local_engine.js` へ移植
 - チャートをサマリーへ小さく表示
 - Electron UIをさらに運用画面寄りに整理
+- 読み取り専用APIキーを使う場合の保存先を `.env` から始め、将来はOS資格情報ストアへ寄せる
 - 実注文・注文テストはまだ入れない
