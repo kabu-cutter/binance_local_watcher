@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const calculations = require('./local_engine_calculations');
 
 const VERSION = 'electron-node-engine-v0.4';
@@ -180,6 +181,70 @@ function fetchJson(apiPath, params = {}, timeoutMs = 10000) {
           error.statusCode = res.statusCode;
           error.usedWeight = res.headers['x-mbx-used-weight-1m'] || '';
           reject(error);
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('request timeout')));
+    req.on('error', reject);
+  });
+}
+
+function credentialsFromEnv() {
+  const envFileValues = parseSimpleEnvFile(envFilePath());
+  const envApiKey = String(process.env.BINANCE_API_KEY || '').trim();
+  const envApiSecret = String(process.env.BINANCE_API_SECRET || '').trim();
+  const fileApiKey = String(envFileValues.BINANCE_API_KEY || '').trim();
+  const fileApiSecret = String(envFileValues.BINANCE_API_SECRET || '').trim();
+  return {
+    apiKey: envApiKey || fileApiKey,
+    apiSecret: envApiSecret || fileApiSecret,
+    keySource: envApiKey ? 'environment' : fileApiKey ? '.env' : 'none',
+    secretSource: envApiSecret ? 'environment' : fileApiSecret ? '.env' : 'none',
+  };
+}
+
+function signQuery(params, secret) {
+  const query = new URLSearchParams(params).toString();
+  const signature = crypto.createHmac('sha256', secret).update(query).digest('hex');
+  return `${query}&signature=${signature}`;
+}
+
+function fetchSignedJson(apiPath, params = {}, timeoutMs = 10000) {
+  const { apiKey, apiSecret } = credentialsFromEnv();
+  if (!apiKey || !apiSecret) {
+    throw new Error('API key/secret が未設定です。');
+  }
+  const signedParams = {
+    ...params,
+    recvWindow: safeInt(params.recvWindow, 5000),
+    timestamp: Date.now(),
+  };
+  const queryWithSig = signQuery(signedParams, apiSecret);
+  const url = new URL(apiPath, BINANCE_BASE_URL);
+  url.search = queryWithSig;
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      timeout: timeoutMs,
+      headers: {
+        'User-Agent': 'BinanceLocalWatcherElectronNodeEngine/0.4',
+        'X-MBX-APIKEY': apiKey,
+      },
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          const err = new Error(`${res.statusCode} ${res.statusMessage}`);
+          err.body = body;
+          err.statusCode = res.statusCode;
+          reject(err);
           return;
         }
         try {
@@ -670,15 +735,9 @@ async function summary() {
 }
 
 async function apiReadiness() {
-  const envFileValues = parseSimpleEnvFile(envFilePath());
-  const envApiKey = String(process.env.BINANCE_API_KEY || '').trim();
-  const envApiSecret = String(process.env.BINANCE_API_SECRET || '').trim();
-  const fileApiKey = String(envFileValues.BINANCE_API_KEY || '').trim();
-  const fileApiSecret = String(envFileValues.BINANCE_API_SECRET || '').trim();
-  const hasApiKey = Boolean(envApiKey || fileApiKey);
-  const hasApiSecret = Boolean(envApiSecret || fileApiSecret);
-  const keySource = envApiKey ? 'environment' : fileApiKey ? '.env' : 'none';
-  const secretSource = envApiSecret ? 'environment' : fileApiSecret ? '.env' : 'none';
+  const { apiKey, apiSecret, keySource, secretSource } = credentialsFromEnv();
+  const hasApiKey = Boolean(apiKey);
+  const hasApiSecret = Boolean(apiSecret);
   let publicApiOk = false;
   let publicApiError = '';
   try {
@@ -687,6 +746,20 @@ async function apiReadiness() {
   } catch (error) {
     publicApiError = error.message;
   }
+  let authApiOk = false;
+  let authApiError = '';
+  let accountType = '';
+  let canTrade = null;
+  if (hasApiKey && hasApiSecret) {
+    try {
+      const account = await fetchSignedJson('/api/v3/account', {}, 10000);
+      authApiOk = true;
+      accountType = String(account.accountType || '');
+      canTrade = typeof account.canTrade === 'boolean' ? account.canTrade : null;
+    } catch (error) {
+      authApiError = error.body ? `${error.message} ${error.body}` : error.message;
+    }
+  }
   return {
     has_api_key: hasApiKey,
     has_api_secret: hasApiSecret,
@@ -694,8 +767,12 @@ async function apiReadiness() {
     api_secret_source: secretSource,
     public_api_ok: publicApiOk,
     public_api_error: publicApiError,
+    auth_api_ok: authApiOk,
+    auth_api_error: authApiError,
+    account_type: accountType,
+    can_trade: canTrade,
     fee_fetch_ready: Boolean(publicApiOk && hasApiKey && hasApiSecret),
-    note: '読み取り専用の最小チェックです。キー保存は行いません。',
+    note: '読み取り専用チェックです。APIキー/Secretの保存処理は行いません。',
   };
 }
 

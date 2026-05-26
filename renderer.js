@@ -169,11 +169,35 @@ async function loadStatus() {
     const contract = await getJson('/api/contract');
     document.getElementById('apiBackendText').textContent += `\n\nAPI Contract: GET ${Object.keys(contract.routes?.GET || {}).length} / POST ${Object.keys(contract.routes?.POST || {}).length}`;
     const readiness = await getJson('/api/api-readiness');
-    document.getElementById('apiBackendText').textContent += `\nAPI Readiness: public=${readiness.public_api_ok ? 'ok' : 'ng'} / key=${readiness.has_api_key ? 'set' : 'unset'}(${readiness.api_key_source}) / secret=${readiness.has_api_secret ? 'set' : 'unset'}(${readiness.api_secret_source}) / fee=${readiness.fee_fetch_ready ? 'ready' : 'not-ready'}`;
+    document.getElementById('apiBackendText').textContent += `\nAPI Readiness: public=${readiness.public_api_ok ? 'ok' : 'ng'} / key=${readiness.has_api_key ? 'set' : 'unset'}(${readiness.api_key_source}) / secret=${readiness.has_api_secret ? 'set' : 'unset'}(${readiness.api_secret_source}) / auth=${readiness.auth_api_ok ? 'ok' : 'ng'} / fee=${readiness.fee_fetch_ready ? 'ready' : 'not-ready'}`;
   } catch (e) {
     pill.textContent = 'Local Engine NG';
     pill.className = 'status-pill bad';
     document.getElementById('apiBackendText').textContent = `ローカルエンジンを呼び出せません。\n${e.message}`;
+  }
+}
+
+async function loadApiReadiness() {
+  const memo = document.getElementById('apiReadinessMemo');
+  try {
+    const r = await getJson('/api/api-readiness');
+    memo.textContent = r.note || '読み取り専用チェック結果です。';
+    const rows = [
+      { item: '公開API到達', value: r.public_api_ok ? 'ok' : 'ng', detail: r.public_api_error || '—' },
+      { item: 'API Key', value: r.has_api_key ? 'set' : 'unset', detail: r.api_key_source || 'none' },
+      { item: 'API Secret', value: r.has_api_secret ? 'set' : 'unset', detail: r.api_secret_source || 'none' },
+      { item: '署名API認証', value: r.auth_api_ok ? 'ok' : 'ng', detail: r.auth_api_error || '—' },
+      { item: '口座タイプ', value: r.account_type || '—', detail: r.can_trade === null ? '—' : `canTrade=${r.can_trade}` },
+      { item: '手数料取得準備', value: r.fee_fetch_ready ? 'ready' : 'not-ready', detail: '保存処理なし' },
+    ];
+    renderTable(document.getElementById('apiReadinessTable'), [
+      ['item', '項目'],
+      ['value', '状態'],
+      ['detail', '詳細'],
+    ], rows);
+  } catch (e) {
+    memo.textContent = `API準備度の取得に失敗: ${e.message}`;
+    renderTable(document.getElementById('apiReadinessTable'), [['item', '項目'], ['value', '状態'], ['detail', '詳細']], []);
   }
 }
 
@@ -591,6 +615,7 @@ async function refreshAll() {
   await loadSummary();
   await loadImpact();
   await loadAlertPreview();
+  await loadApiReadiness();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -600,6 +625,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
+  document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);

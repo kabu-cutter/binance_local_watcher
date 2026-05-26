@@ -45,6 +45,10 @@
       "contract": {
         "query": {},
         "response": ["version", "mode", "forbidden", "routes"]
+      },
+      "api-readiness": {
+        "query": {},
+        "response": ["has_api_key", "has_api_secret", "api_key_source", "api_secret_source", "public_api_ok", "public_api_error", "auth_api_ok", "auth_api_error", "account_type", "can_trade", "fee_fetch_ready", "note"]
       }
     },
     "POST": {

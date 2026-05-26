@@ -72,6 +72,18 @@ API契約は `API_CONTRACT.json` を参照してください。
 - `api_key_storage`
 - `secret_storage`
 
+## APIキー準備（保存しない）
+
+APIキー/Secretはアプリ内保存しません。`環境変数` か `.env` の読み取りのみです。  
+APIタブの「API準備度（最小）」で、公開API到達と署名API認証（読み取り専用）を確認できます。
+
+`.env` 例:
+
+```env
+BINANCE_API_KEY=your_key
+BINANCE_API_SECRET=your_secret
+```
+
 ## Legacy (Streamlit)
 
 - `app.py` は legacy / 参照専用
