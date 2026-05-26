@@ -481,7 +481,16 @@ async function calcTrade() {
   document.getElementById('tradeMemo').textContent = data.memo;
 }
 
+function syncRoundtripCostFromTrade() {
+  const tradeCostEl = document.getElementById('tradeCostPct');
+  const dailyCostEl = document.getElementById('dailyCostPct');
+  if (!tradeCostEl || !dailyCostEl) return;
+  dailyCostEl.value = tradeCostEl.value;
+}
+
 function buildDailyPayload() {
+  syncRoundtripCostFromTrade();
+  const linkedCost = Number(document.getElementById('tradeCostPct').value);
   return {
     strategy_template: document.getElementById('dailyTemplate').value,
     symbol: document.getElementById('dailySymbol').value,
@@ -490,7 +499,7 @@ function buildDailyPayload() {
     min_opportunities: Number(document.getElementById('dailyMinOpp').value),
     max_opportunities: Number(document.getElementById('dailyMaxOpp').value),
     stop_loss_pct: Number(document.getElementById('dailyStopPct').value),
-    roundtrip_cost_pct: Number(document.getElementById('dailyCostPct').value),
+    roundtrip_cost_pct: linkedCost,
     cancel_rates_text: document.getElementById('dailyCancelRates').value,
     virtual_fill_rate_pct: Number(document.getElementById('dailyFillRate').value),
     virtual_fill_rate_auto: document.getElementById('dailyFillRateAuto').checked,
@@ -660,6 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyStartHour').addEventListener('change', loadChart);
   document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
+  document.getElementById('tradeCostPct').addEventListener('input', syncRoundtripCostFromTrade);
   document.getElementById('applyDailyTemplate').addEventListener('click', applyDailyTemplate);
   document.querySelectorAll('#dailyTemplateTabs .seg-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -675,6 +685,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyDate').value = todayJstDateText();
   setDailyTemplateTab(document.getElementById('dailyTemplate').value || 'market_priority');
   applyDailyTemplate();
+  syncRoundtripCostFromTrade();
   document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
   document.getElementById('alertMode').addEventListener('change', loadAlertPreview);
   document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
