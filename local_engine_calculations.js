@@ -18,6 +18,10 @@ const STRATEGY_TEMPLATES = {
     label: 'レンジ逆張り',
     note: '小さい値動きを狙う前提。レンジ内は勝率を上げやすい可能性があり、レンジ抜け時の損切り確認を優先。',
   },
+  custom: {
+    label: 'カスタム',
+    note: '固定前提を持たず、入力した条件で重さを診断します。',
+  },
 };
 
 function safeFloat(value, fallback = 0) {
@@ -233,7 +237,9 @@ function calculateDailyGoal(body = {}) {
   const overallLabel = realityLabel(Math.max(labelLevel(fillLabel), labelLevel(winLabel), labelLevel(moveLabel)));
   const movementRatio = recentMoveAbsPct > 0 ? virtualNeededPct / recentMoveAbsPct : null;
   const suggestion = [
-    template ? `テンプレート: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
+    template ? `今日の見方: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
+    '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
+    '有効約定回数 = 機会回数 - 未約定回数 として、何回勝つ必要があるかを診断します。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     `仮想約定率${virtualFillRate.toFixed(0)}%なら、有効約定は約${virtualEffective}回、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
@@ -243,21 +249,21 @@ function calculateDailyGoal(body = {}) {
   ].join('\n');
   const readinessCards = [
     {
-      title: '仮想約定率',
+      title: '約定現実度',
       main: `${virtualFillRate.toFixed(0)}%`,
       sub: `${maxOpp}機会中、約${virtualEffective}回の約定として見る / 現実度 ${fillLabel}`,
       tag: fillLabel,
       kind: realityKind(fillLabel),
     },
     {
-      title: '必要勝率',
+      title: '勝率現実度',
       main: `${virtualNeededWinRate.toFixed(1)}%`,
       sub: `${recentMoveLabel}を勝ち幅、損切り${stopPct.toFixed(2)}%として概算 / 現実度 ${winLabel}`,
       tag: winLabel,
       kind: realityKind(winLabel),
     },
     {
-      title: '値動き比較',
+      title: '値動き現実度',
       main: movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`,
       sub: `必要変動率 ${virtualNeededPct.toFixed(3)}% / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
       tag: moveLabel,
@@ -338,8 +344,15 @@ function calculateDailyGoal(body = {}) {
       });
     }
   }
+  const diagnosticSummary = [
+    `約定現実度: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 有効約定 約${virtualEffective}回）`,
+    `勝率現実度: ${winLabel}（必要勝率 ${virtualNeededWinRate.toFixed(1)}%）`,
+    `値動き現実度: ${moveLabel}（1回必要変動率 ${virtualNeededPct.toFixed(3)}%）`,
+    `総合: ${overallLabel}。未約定増加と損切り回数の増加で条件が急に重くなるかを優先確認してください。`,
+  ].join('\n');
   return {
     suggestion,
+    diagnostic_summary: diagnosticSummary,
     readiness_cards: readinessCards,
     prep_notes: prepNotes,
     plan_cards: planCards,

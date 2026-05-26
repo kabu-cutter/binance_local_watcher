@@ -430,6 +430,25 @@ h1 {
   flex: 0 0 auto;
 }
 
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.seg-btn {
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.78);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 850;
+}
+.seg-btn.active {
+  border-color: rgba(232,112,173,0.52);
+  background: linear-gradient(135deg, #ffd7e9, #ffc1dc);
+  color: #7d315f;
+}
+
 input, select {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);

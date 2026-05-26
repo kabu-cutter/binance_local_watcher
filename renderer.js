@@ -44,6 +44,15 @@ const DAILY_TEMPLATES = {
     autoFill: false,
     memo: '小さい値動きを狙う前提です。レンジ抜け時の損切り負担を必ず確認します。',
   },
+  custom: {
+    label: 'カスタム',
+    fillRate: 70,
+    stopPct: 0.5,
+    costPct: 0.28,
+    cancelRates: '10,30,50,70',
+    autoFill: true,
+    memo: '固定前提を持たず、入力条件をそのまま診断します。',
+  },
 };
 
 function yen(v, digits = 0, signed = false) {
@@ -468,6 +477,7 @@ async function calcDaily() {
   document.getElementById('dailyTemplateMemo').textContent = data.strategy_template_note
     || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
   document.getElementById('dailySuggestion').textContent = data.suggestion;
+  document.getElementById('dailyDiagnosticSummary').textContent = data.diagnostic_summary || '総合診断はまだありません。';
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
     || '仮想約定率は手入力値を使っています。';
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
@@ -553,6 +563,14 @@ function applyDailyTemplate() {
   document.getElementById('dailyTemplateMemo').textContent = `${template.label}: ${template.memo}（売買推奨ではなく条件テンプレートです）`;
 }
 
+function setDailyTemplateTab(templateId) {
+  const hidden = document.getElementById('dailyTemplate');
+  hidden.value = templateId;
+  document.querySelectorAll('#dailyTemplateTabs .seg-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.template === templateId);
+  });
+}
+
 function setupNav() {
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -592,15 +610,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
   document.getElementById('applyDailyTemplate').addEventListener('click', applyDailyTemplate);
-  document.getElementById('dailyTemplate').addEventListener('change', async () => {
-    applyDailyTemplate();
-    await calcDaily();
+  document.querySelectorAll('#dailyTemplateTabs .seg-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      setDailyTemplateTab(btn.dataset.template);
+      applyDailyTemplate();
+      await calcDaily();
+    });
   });
   document.getElementById('calcDaily').addEventListener('click', calcDaily);
   document.getElementById('saveDailyReport').addEventListener('click', saveDailyReport);
   document.getElementById('reloadDailyReports').addEventListener('click', loadDailyReports);
   document.getElementById('clearDailyReports').addEventListener('click', clearDailyReports);
   document.getElementById('historyDate').value = todayJstDateText();
+  setDailyTemplateTab(document.getElementById('dailyTemplate').value || 'market_priority');
   applyDailyTemplate();
   document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
   document.getElementById('alertMode').addEventListener('change', loadAlertPreview);

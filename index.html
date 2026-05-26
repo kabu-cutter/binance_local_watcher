@@ -212,13 +212,15 @@
             </div>
           </div>
           <div class="form-grid daily-form">
-            <label>条件テンプレート
-              <select id="dailyTemplate">
-                <option value="market_priority">約定優先・成行寄り</option>
-                <option value="pullback_limit">押し目指値待ち</option>
-                <option value="breakout_follow">ブレイクアウト追随</option>
-                <option value="range_reversion">レンジ逆張り</option>
-              </select>
+            <label>今日の見方
+              <input id="dailyTemplate" type="hidden" value="market_priority" />
+              <div class="segmented" id="dailyTemplateTabs">
+                <button type="button" class="seg-btn active" data-template="market_priority">約定優先</button>
+                <button type="button" class="seg-btn" data-template="pullback_limit">押し目待ち</button>
+                <button type="button" class="seg-btn" data-template="breakout_follow">ブレイクアウト</button>
+                <button type="button" class="seg-btn" data-template="range_reversion">レンジ逆張り</button>
+                <button type="button" class="seg-btn" data-template="custom">カスタム</button>
+              </div>
             </label>
             <label>通貨
               <select id="dailySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
@@ -261,10 +263,12 @@
         </div>
         <div class="card">
           <h3>今日の準備サジェスト</h3>
+          <p class="memo-text">これは売買指示ではありません。今日の目標に対する条件の重さを診断するための表示です。</p>
           <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
           <p class="memo-text" id="dailyErrorMemo"></p>
           <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
           <p class="memo-text" id="dailyFillRateMemo">仮想約定率は手入力または履歴ベース推定で使います。</p>
+          <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
         </div>
         <div class="grid three" id="dailyReadinessCards"></div>
         <div class="card">
