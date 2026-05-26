@@ -1,0 +1,17 @@
+{
+  "notes": "Copy to config.local.json for machine-specific settings. Do not commit config.local.json.",
+  "binance": {
+    "apiKeyEnv": "BINANCE_API_KEY",
+    "apiSecretEnv": "BINANCE_API_SECRET",
+    "recvWindow": 5000,
+    "intendedPermission": "read-only"
+  },
+  "localData": {
+    "projectDir": "",
+    "historyFile": "price_history.csv"
+  },
+  "ollama": {
+    "url": "http://127.0.0.1:11434",
+    "model": ""
+  }
+}

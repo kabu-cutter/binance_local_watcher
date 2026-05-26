@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Binance Local Watcher - Electron Local Engine</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">BLW</div>
+        <div>
+          <div class="brand-title">Binance Local Watcher</div>
+          <div class="brand-subtitle">Electron UI / Node engine</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-section="summary">サマリー</button>
+        <button class="nav-item" data-section="chart">チャート</button>
+        <button class="nav-item" data-section="impact">値動き影響</button>
+        <button class="nav-item" data-section="trade">損益プレビュー</button>
+        <button class="nav-item" data-section="daily">日次目標</button>
+        <button class="nav-item" data-section="api">API・準備度</button>
+      </nav>
+      <div class="side-note">
+        <div class="note-title">安全メモ</div>
+        <p>Electron内のローカルエンジンで公開マーケットデータとローカル計算だけを扱います。APIキー、Secret、実注文、自動売買、出金は扱いません。</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">サマリー</h1>
+          <p id="pageSubtitle">Electron main process が公開データ取得・履歴・計算を担当します。</p>
+        </div>
+        <div class="status-pill" id="backendStatus">Local Engine確認中...</div>
+      </header>
+
+      <section class="section active" id="summary">
+        <div class="hero-card">
+          <div>
+            <p class="eyebrow">Today Monitor</p>
+            <h2>価格、履歴、計算結果をローカルで確認する</h2>
+            <p>rendererは表示と入力、Electron main process は公開価格取得・履歴CSV・チャートデータ・概算計算を担当します。</p>
+          </div>
+          <div class="hero-actions">
+            <button class="primary" id="fetchPrices">現在価格を取得して保存</button>
+            <button class="secondary" id="refreshAll">表示を更新</button>
+          </div>
+        </div>
+        <div class="grid two" id="summaryCards"></div>
+        <div class="card">
+          <div class="card-head">
+            <h3>読み取りメモ</h3>
+            <span class="tag soft">補助</span>
+          </div>
+          <p id="summaryMemo" class="memo-text">読み込み中です。</p>
+        </div>
+      </section>
+
+      <section class="section" id="chart">
+        <div class="card highlight">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Price Chart</p>
+              <h3>価格グラフ</h3>
+              <p class="card-desc">Electron main process で price_history.csv または Binance公開APIのklineからチャート用データを作ります。</p>
+            </div>
+            <div class="inline-form wrap">
+              <label>通貨</label>
+              <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+              <label>データ</label>
+              <select id="chartSource"><option value="local">ローカル履歴</option><option value="klines">公開kline</option></select>
+              <label>間隔</label>
+              <select id="chartInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
+              <button class="primary" id="reloadChart">グラフ更新</button>
+            </div>
+          </div>
+          <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
+          <div class="chart-box">
+            <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="impact">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>値動き影響</h3>
+              <p class="card-desc">「その金額ぶん持っていたら、今回の値動きで何円くらい動いたか」を見る場所です。</p>
+            </div>
+            <div class="inline-form">
+              <label>金額</label>
+              <input id="impactAmounts" value="1000,10000,100000" />
+              <button class="secondary" id="reloadImpact">再計算</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="impactTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="trade">
+        <div class="form-grid">
+          <label>通貨
+            <select id="tradeSymbol">
+              <option>BTCJPY</option>
+              <option>ETHJPY</option>
+            </select>
+          </label>
+          <label>投入額 JPY
+            <input id="tradeAmount" type="number" value="2000" />
+          </label>
+          <label>想定変動率 %
+            <input id="tradeExitPct" type="number" value="0.8" step="0.1" />
+          </label>
+          <label>往復コスト概算 %
+            <input id="tradeCostPct" type="number" value="0.28" step="0.01" />
+          </label>
+        </div>
+        <button class="primary" id="calcTrade">損益プレビューをローカル計算</button>
+        <div class="grid three" id="tradeCards"></div>
+        <div class="card">
+          <h3>概算メモ</h3>
+          <p class="memo-text" id="tradeMemo">まだ計算していません。</p>
+        </div>
+      </section>
+
+      <section class="section" id="daily">
+        <div class="card highlight">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Daily Goal</p>
+              <h3>日次目標の条件を整理する</h3>
+              <p class="card-desc">目標額、投入額、機会回数、未約定率から条件の重さをElectron内で整理します。</p>
+            </div>
+          </div>
+          <div class="form-grid daily-form">
+            <label>日次目標利益
+              <input id="dailyTarget" type="number" value="100" />
+            </label>
+            <label>資金 / 主投入額
+              <input id="dailyCapital" type="number" value="2000" />
+            </label>
+            <label>最小機会回数
+              <input id="dailyMinOpp" type="number" value="5" />
+            </label>
+            <label>最大機会回数
+              <input id="dailyMaxOpp" type="number" value="10" />
+            </label>
+            <label>損切り逆行率 %
+              <input id="dailyStopPct" type="number" value="0.5" step="0.1" />
+            </label>
+            <label>未約定シナリオ %
+              <input id="dailyCancelRates" value="10,30,50,70" />
+            </label>
+          </div>
+          <button class="primary" id="calcDaily">今日の準備をローカル計算</button>
+        </div>
+        <div class="card">
+          <h3>今日の準備サジェスト</h3>
+          <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
+        </div>
+        <div class="grid three" id="dailyPlanCards"></div>
+        <div class="card">
+          <h3>未約定シナリオ比較</h3>
+          <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
+        </div>
+      </section>
+
+      <section class="section" id="api">
+        <div class="grid two">
+          <div class="card">
+            <h3>ローカルエンジン</h3>
+            <p class="memo-text" id="apiBackendText">確認中です。</p>
+          </div>
+          <div class="card">
+            <h3>API境界</h3>
+            <ul class="check-list">
+              <li>Electron UI: 表示と入力</li>
+              <li>Electron Main: 公開価格取得、履歴保存、チャート用データ作成、概算計算</li>
+              <li>実注文: 未実装</li>
+              <li>自動売買: 未実装</li>
+              <li>出金機能: 未実装</li>
+              <li>APIキー/Secret保存: 未実装</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

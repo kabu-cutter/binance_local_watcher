@@ -1,0 +1,58 @@
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+config.local.json
+config.*.local.json
+secrets.json
+*.secret.json
+api_keys.json
+credentials.json
+token.json
+
+# Local app settings and runtime state
+settings.json
+price_collector_status.json
+ollama_job.json
+ollama_comment.json
+*.log
+*.tmp
+
+# Local market data / generated data
+price_history.csv
+price_history_old.csv
+downloaded_price_history.csv
+long_data/
+**/price_history.csv
+**/price_history_old.csv
+**/downloaded_price_history.csv
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Node / Electron
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dist/
+out/
+build/
+release/
+
+# Archives and generated snapshots
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
