@@ -7,7 +7,7 @@ async function invokeEngine(route, payload) {
 }
 
 contextBridge.exposeInMainWorld('blw', {
-  version: 'electron-node-engine-v0.3',
+  version: 'electron-node-engine-v0.4',
   engineMode: 'electron-main-node-engine',
   safetyMode: 'read-only-market-data-and-local-calculation',
   capabilities: {

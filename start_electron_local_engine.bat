@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-echo Binance Local Watcher Electron Local Engine v0.3
+echo Binance Local Watcher Electron Local Engine v0.4
 echo.
 echo First launch may install Electron dependencies.
 echo.

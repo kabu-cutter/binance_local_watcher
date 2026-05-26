@@ -1,4 +1,4 @@
-# Binance Local Watcher Electron UI v0.3 local engine
+# Binance Local Watcher Electron UI v0.4 local engine
 
 Electron rendererをUI、Electron main processのNodeエンジンを計算・公開価格取得・履歴保存・チャート用データ生成に使う版です。
 
@@ -19,12 +19,20 @@ Electron rendererをUI、Electron main processのNodeエンジンを計算・公
 - ローカル履歴または公開klineからSVGチャートを表示
 - Python backend と同じ返却形を保ち、比較しやすくする
 
+## v0.4で変えたこと
+
+- 計算式を `local_engine_calculations.js` に分離
+- `local_engine.js` はCSV、公開API取得、IPCルートの窓口に整理
+- summary、impact、chart集計、損益プレビュー、日次目標を副作用のない関数として扱う
+- Electron main process がI/Oを持ち、rendererは `window.blw.api` だけを呼ぶ形を維持
+
 ## 現在地
 
 - ルート直下のElectron版は `npm start` で起動確認済み
 - 通常起動ではPython backendを起動しない
 - GitHub `main` は初回同期済み
 - `price_history.csv`、`.env`、`node_modules/`、ローカル状態ファイルはGit除外済み
+- 計算まわりは `local_engine_calculations.js` を中心に拡張する
 
 ## 起動
 
@@ -54,7 +62,8 @@ npm start
 
 - Electron renderer: 表示、入力、画面遷移、SVGグラフ描画
 - preload: rendererへ安全な `window.blw.api` だけを公開
-- Electron main / `local_engine.js`: 公開価格取得、履歴CSV保存、履歴読み込み、チャート用データ生成、概算計算
+- Electron main / `local_engine.js`: 公開価格取得、履歴CSV保存、履歴読み込み、IPCルート
+- `local_engine_calculations.js`: summary、impact、chart集計、損益プレビュー、日次目標の計算
 
 ## API境界
 
@@ -74,7 +83,7 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 
 ## 次の候補
 
-- Streamlit版 candidate の計算ルール・実commission・BNBチェックを `local_engine.js` へ移植
+- Streamlit版 candidate の計算ルール・実commission・BNBチェックを `local_engine_calculations.js` へ移植
 - チャートをサマリーへ小さく表示
 - Electron UIをさらに運用画面寄りに整理
 - 読み取り専用APIキーを使う場合の保存先を `.env` から始め、将来はOS資格情報ストアへ寄せる

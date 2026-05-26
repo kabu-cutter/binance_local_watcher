@@ -1,6 +1,6 @@
 {
   "name": "binance-local-watcher-electron-local-engine",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Binance Local Watcher Electron UI with a local Node calculation engine. No real orders.",
   "main": "main.js",
   "scripts": {

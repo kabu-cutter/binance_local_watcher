@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const calculations = require('./local_engine_calculations');
 
-const VERSION = 'electron-node-engine-v0.3';
+const VERSION = 'electron-node-engine-v0.4';
 const SYMBOLS = ['BTCJPY', 'ETHJPY'];
 const HISTORY_COLUMNS = ['timestamp', 'symbol', 'price_jpy'];
 const BINANCE_BASE_URL = 'https://api.binance.com';
@@ -57,13 +58,11 @@ function toCsvValue(value) {
 }
 
 function safeFloat(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
+  return calculations.safeFloat(value, fallback);
 }
 
 function safeInt(value, fallback = 0) {
-  const number = Math.trunc(Number(value));
-  return Number.isFinite(number) ? number : fallback;
+  return calculations.safeInt(value, fallback);
 }
 
 function parseTimestamp(text) {
@@ -193,53 +192,12 @@ async function loadHistorySummary() {
 async function currentPriceData() {
   const { result, source } = await loadHistorySummary();
   const data = result || MOCK_PRICES;
-  const symbols = SYMBOLS.map((symbol) => {
-    const item = data[symbol] || MOCK_PRICES[symbol];
-    const price = safeFloat(item.price);
-    const prev = safeFloat(item.prev, price);
-    const shortBase = safeFloat(item.short_base, prev);
-    const prevDiff = price - prev;
-    const shortDiff = price - shortBase;
-    const prevPct = prev ? (prevDiff / prev) * 100 : 0;
-    const shortPct = shortBase ? (shortDiff / shortBase) * 100 : 0;
-    const status = shortDiff > 0 ? '上昇' : shortDiff < 0 ? '下落' : '横ばい';
-    return {
-      symbol,
-      price_jpy: price,
-      prev_price: prev,
-      prev_diff_yen: prevDiff,
-      prev_pct: prevPct,
-      short_diff_yen: shortDiff,
-      short_pct: shortPct,
-      status,
-      note: `短期 ${status} / ${shortPct >= 0 ? '+' : ''}${shortPct.toFixed(4)}%`,
-      timestamp: item.timestamp || '',
-    };
+  const symbols = calculations.buildSymbolSummaries({
+    symbols: SYMBOLS,
+    sourceData: data,
+    mockPrices: MOCK_PRICES,
   });
   return { symbols, source };
-}
-
-function parseAmounts(text) {
-  const amounts = String(text || '').replace(/、/g, ',').replace(/円/g, '').split(',')
-    .map((part) => safeFloat(part.trim(), 0))
-    .filter((value) => value > 0);
-  return amounts.length ? amounts : [1000, 10000, 100000];
-}
-
-function parseCancelRates(text) {
-  const values = [];
-  String(text || '').replace(/、/g, ',').replace(/%/g, '').split(',').forEach((part) => {
-    const value = Math.max(0, Math.min(95, safeFloat(part.trim(), NaN)));
-    if (Number.isFinite(value) && !values.includes(value)) values.push(value);
-  });
-  return values.length ? values : [10, 30, 50, 70];
-}
-
-function riskLabel(neededPct) {
-  if (neededPct < 0.3) return '軽め';
-  if (neededPct < 0.8) return '中くらい';
-  if (neededPct < 1.5) return '重め';
-  return 'かなり重い';
 }
 
 async function localChartPoints(symbol, limit = 160) {
@@ -295,6 +253,7 @@ async function status() {
     history_rows: rows.length,
     data_source: source,
     api_boundary: API_BOUNDARY,
+    calculation_engine: 'local_engine_calculations.js',
   };
 }
 
@@ -308,6 +267,11 @@ async function capabilities() {
       POST: ['fetch-prices', 'trade-preview', 'daily-goal'],
     },
     api_boundary: API_BOUNDARY,
+    calculation_engine: {
+      module: 'local_engine_calculations.js',
+      style: 'pure functions called from Electron main process',
+      io_owner: 'local_engine.js',
+    },
   };
 }
 
@@ -320,24 +284,8 @@ async function summary() {
 }
 
 async function impact(params = {}) {
-  const amounts = parseAmounts(params.amounts);
   const { symbols } = await currentPriceData();
-  const rows = [];
-  for (const s of symbols) {
-    const price = safeFloat(s.price_jpy);
-    for (const amount of amounts) {
-      const quantity = price ? amount / price : 0;
-      rows.push({
-        symbol: s.symbol,
-        amount_jpy: amount,
-        price_jpy: price,
-        quantity,
-        prev_impact_yen: quantity * safeFloat(s.prev_diff_yen),
-        short_impact_yen: quantity * safeFloat(s.short_diff_yen),
-      });
-    }
-  }
-  return { rows };
+  return { rows: calculations.calculateImpactRows({ summaries: symbols, amountsText: params.amounts }) };
 }
 
 async function chart(params = {}) {
@@ -368,16 +316,14 @@ async function chart(params = {}) {
       }
     }
   }
-  const prices = points.map((point) => safeFloat(point.price)).filter(Number.isFinite);
+  const chartSummary = calculations.summarizeChartPoints(points);
   return {
     symbol,
     points,
     source: usedSource,
     message,
     errors,
-    min_price: prices.length ? Math.min(...prices) : null,
-    max_price: prices.length ? Math.max(...prices) : null,
-    rows: points.length,
+    ...chartSummary,
   };
 }
 
@@ -401,88 +347,16 @@ async function fetchPrices() {
 
 async function tradePreview(body = {}) {
   const { symbols } = await currentPriceData();
-  const prices = Object.fromEntries(symbols.map((s) => [s.symbol, s.price_jpy]));
-  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
-  const amount = Math.max(0, safeFloat(body.amount_jpy));
-  const price = safeFloat(prices[symbol], MOCK_PRICES[symbol].price);
-  const exitPct = safeFloat(body.exit_change_pct);
-  const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct));
-  const exitPrice = price * (1 + exitPct / 100);
-  const quantity = price ? amount / price : 0;
-  const gross = quantity * (exitPrice - price);
-  const cost = amount * costPct / 100;
-  const net = gross - cost;
-  return {
-    symbol,
-    amount_jpy: amount,
-    current_price: price,
-    exit_price: exitPrice,
-    quantity,
-    gross_pl_yen: gross,
-    net_pl_yen: net,
-    roundtrip_cost_pct: costPct,
-    accuracy: '概算',
-    memo: `${symbol} を ${amount.toLocaleString('ja-JP')}円ぶん想定。現在価格から ${exitPct >= 0 ? '+' : ''}${exitPct.toFixed(3)}% 動くと、Grossは約${gross.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円、往復コスト${costPct.toFixed(2)}%を引いたNetは約${net.toLocaleString('ja-JP', { maximumFractionDigits: 2, signDisplay: 'always' })}円です。これは実注文ではなく、Electron main process のローカル概算プレビューです。APIキーやSecretは使いません。`,
-  };
+  return calculations.calculateTradePreview({
+    body,
+    summaries: symbols,
+    mockPrices: MOCK_PRICES,
+    symbols: SYMBOLS,
+  });
 }
 
 async function dailyGoal(body = {}) {
-  const target = Math.max(0, safeFloat(body.target_profit_jpy));
-  const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
-  const minOpp = Math.max(1, safeInt(body.min_opportunities, 1));
-  const maxOpp = Math.max(minOpp, safeInt(body.max_opportunities, minOpp));
-  const stopPct = Math.max(0, safeFloat(body.stop_loss_pct));
-  const cancelRates = parseCancelRates(body.cancel_rates_text);
-  const costPct = 0.28;
-  const targetPct = (target / capital) * 100;
-  const onePct = targetPct + costPct;
-  const minPct = (target / capital / minOpp) * 100 + costPct;
-  const maxPct = (target / capital / maxOpp) * 100 + costPct;
-  const lossPerStop = -(capital * (stopPct + costPct) / 100);
-  const suggestion = [
-    `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
-    `1回で全部狙うと、コスト込みで約 ${onePct.toFixed(3)}% のNet変動が必要なので、まず重さを見る基準になります。`,
-    `${minOpp}回で分けると1回あたり約 ${(target / minOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${minPct.toFixed(3)}% です。`,
-    `${maxOpp}回で分けると1回あたり約 ${(target / maxOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${maxPct.toFixed(3)}% です。`,
-    `損切り逆行率を ${stopPct.toFixed(2)}% と見る場合、1回の損切りは概算で約 ${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。未約定が増えるほど、残りの約定1回あたりの必要Netが重くなります。`,
-    'これは売買指示ではなく、今日の条件がどれくらい厳しいかを見る準備サジェストです。',
-  ].join('\n');
-  const planCards = [
-    ['1回で達成', 1],
-    [`${minOpp}回で分ける`, minOpp],
-    [`${maxOpp}回で分ける`, maxOpp],
-  ].map(([title, opp]) => {
-    const neededNet = target / opp;
-    const neededPct = (neededNet / capital) * 100 + costPct;
-    return {
-      title,
-      main: `${neededPct.toFixed(3)}%`,
-      sub: `1回必要Net 約${neededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 損切り1回 約${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
-      tag: riskLabel(neededPct),
-      kind: neededPct >= 1.5 ? 'bad' : neededPct < 0.8 ? 'good' : 'warn',
-    };
-  });
-  const scenarios = [];
-  for (const rate of cancelRates) {
-    for (const opp of [minOpp, maxOpp]) {
-      const nofill = Math.round((opp * rate) / 100);
-      if (nofill <= 0) continue;
-      const effective = Math.max(1, opp - nofill);
-      const neededNet = target / effective;
-      const neededPct = (neededNet / capital) * 100 + costPct;
-      scenarios.push({
-        cancel_rate: rate,
-        opportunities: opp,
-        nofill,
-        effective,
-        needed_net_per_trade: neededNet,
-        needed_move_pct: neededPct,
-        risk: riskLabel(neededPct),
-        memo: `未約定${nofill}回なら、有効約定${effective}回で目標を見る`,
-      });
-    }
-  }
-  return { suggestion, plan_cards: planCards, scenarios };
+  return calculations.calculateDailyGoal(body);
 }
 
 async function invoke(route, payload = {}) {
@@ -511,4 +385,5 @@ module.exports = {
   fetchPrices,
   tradePreview,
   dailyGoal,
+  calculations,
 };
