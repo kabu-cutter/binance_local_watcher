@@ -13,6 +13,9 @@
 
 ## 起動（Electron）
 
+前提:
+- Node.js 20 以上（推奨 20 LTS）
+
 ```powershell
 cd C:\Projects\binance_local_watcher
 npm install
@@ -32,6 +35,15 @@ npm run smoke
 ```
 
 `scripts/smoke_local_engine.js` が主要ルートを最小確認します。
+
+## ビルド（Windows）
+
+```powershell
+npm run build
+```
+
+`electron-builder` を使って `dist/` に出力します。  
+Node 14 ではビルドできないため、Node 20 以上で実行してください。
 
 ## 役割分担
 

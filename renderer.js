@@ -74,6 +74,7 @@ async function getJson(path) {
     if (url.pathname === '/api/summary') return window.blw.api.getSummary();
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
     if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
+    if (url.pathname === '/api/alert-history') return window.blw.api.getAlertHistory(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     throw new Error(`未対応のローカルエンジンGET: ${url.pathname}`);
   }
@@ -85,6 +86,7 @@ async function postJson(path, body) {
     if (path === '/api/download-history') return window.blw.api.downloadHistory(body || {});
     if (path === '/api/trade-preview') return window.blw.api.tradePreview(body || {});
     if (path === '/api/daily-goal') return window.blw.api.dailyGoal(body || {});
+    if (path === '/api/clear-alert-history') return window.blw.api.clearAlertHistory();
     throw new Error(`未対応のローカルエンジンPOST: ${path}`);
   }
   throw new Error('Electron preload の window.blw.api が見つかりません。npm start から起動してください。');
@@ -259,6 +261,34 @@ async function loadAlertPreview() {
     ['base', '起点価格'],
     ['latest_time', '最新時刻'],
   ], rows);
+  await loadAlertHistory();
+}
+
+async function loadAlertHistory() {
+  const data = await getJson('/api/alert-history?limit=20');
+  document.getElementById('alertHistoryMemo').textContent = `保存件数: ${data.count} / 表示: ${data.rows.length} / ${data.file}`;
+  const rows = (data.rows || []).map((row) => ({
+    timestamp: row.timestamp_jst || '—',
+    symbol: row.symbol || '—',
+    move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
+    threshold: row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2),
+    streak: `${row.streak_count ?? 0}`,
+    window: `${row.window_minutes ?? 0}`,
+  }));
+  renderTable(document.getElementById('alertHistoryTable'), [
+    ['timestamp', '時刻'],
+    ['symbol', '通貨'],
+    ['move_pct', '変動率'],
+    ['threshold', 'しきい値'],
+    ['streak', '連続回数'],
+    ['window', '窓(分)'],
+  ], rows);
+}
+
+async function clearAlertHistory() {
+  const result = await postJson('/api/clear-alert-history', {});
+  document.getElementById('alertHistoryMemo').textContent = result.message;
+  await loadAlertHistory();
 }
 
 function makeSvgPath(points, width, height, pad) {
@@ -499,6 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices').addEventListener('click', fetchPrices);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
+  document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);

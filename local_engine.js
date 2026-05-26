@@ -627,8 +627,8 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'chart', 'contract', 'api-readiness'],
-      POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'chart', 'contract', 'api-readiness'],
+      POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'clear-alert-history'],
     },
     api_boundary: API_BOUNDARY,
     calculation_engine: {
@@ -647,8 +647,8 @@ async function contract() {
       mode: 'electron-ui + electron-main-node-engine',
       forbidden: API_BOUNDARY.forbidden,
       routes: {
-        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'chart', 'api-readiness'],
-        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal'],
+        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'chart', 'api-readiness'],
+        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'clear-alert-history'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
     };
@@ -827,6 +827,27 @@ async function alertPreview(params = {}) {
   };
 }
 
+async function alertHistory(params = {}) {
+  const limit = Math.max(1, Math.min(200, safeInt(params.limit, 20)));
+  const items = await readAlertHistory();
+  const rows = items.slice(-limit).reverse();
+  return {
+    rows,
+    count: items.length,
+    limit,
+    file: alertHistoryFilePath(),
+  };
+}
+
+async function clearAlertHistory() {
+  await writeAlertHistory([]);
+  return {
+    ok: true,
+    message: 'alert_history.json をクリアしました。',
+    file: alertHistoryFilePath(),
+  };
+}
+
 async function chart(params = {}) {
   const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
   const sourceMode = params.source || 'local';
@@ -961,6 +982,7 @@ async function invoke(route, payload = {}) {
     case 'summary': return summary();
     case 'impact': return impact(query);
     case 'alert-preview': return alertPreview(query);
+    case 'alert-history': return alertHistory(query);
     case 'chart': return chart(query);
     case 'contract': return contract();
     case 'api-readiness': return apiReadiness();
@@ -968,6 +990,7 @@ async function invoke(route, payload = {}) {
     case 'download-history': return downloadHistoricalKlines(body);
     case 'trade-preview': return tradePreview(body);
     case 'daily-goal': return dailyGoal(body);
+    case 'clear-alert-history': return clearAlertHistory();
     default: throw new Error(`Unknown local engine route: ${route}`);
   }
 }

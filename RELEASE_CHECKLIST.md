@@ -9,6 +9,7 @@
 - `git status --ignored` でローカルデータが除外されていること
 
 ## 3) Startup check
+- Node.js 20 以上を使用していること
 - `npm install` 済み
 - `npm start` でElectron起動
 - サマリー表示、価格取得、チャート、日次目標、簡易アラートが動くこと
@@ -26,6 +27,7 @@
 ## 6) Packaging prep
 - 生成物出力先(`dist/`, `out/`, `build/`, `release/`)がGit追跡対象外であること
 - 起動バッチ(`start_electron_local_engine.bat`)で起動確認できること
+- `npm run build` が成功すること（Node 20+）
 
 ## 7) Final policy check
 - 実注文・自動売買・出金・秘密情報保存を追加していないことを再確認

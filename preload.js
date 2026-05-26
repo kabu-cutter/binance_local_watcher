@@ -23,10 +23,12 @@ contextBridge.exposeInMainWorld('blw', {
     getSummary: () => invokeEngine('summary'),
     getImpact: (query) => invokeEngine('impact', { query }),
     getAlertPreview: (query) => invokeEngine('alert-preview', { query }),
+    getAlertHistory: (query) => invokeEngine('alert-history', { query }),
     getChart: (query) => invokeEngine('chart', { query }),
     fetchPrices: () => invokeEngine('fetch-prices'),
     downloadHistory: (body) => invokeEngine('download-history', { body }),
     tradePreview: (body) => invokeEngine('trade-preview', { body }),
     dailyGoal: (body) => invokeEngine('daily-goal', { body }),
+    clearAlertHistory: () => invokeEngine('clear-alert-history'),
   },
 });
