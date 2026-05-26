@@ -166,11 +166,14 @@
           <div class="card-head">
             <div>
               <p class="eyebrow">Daily Goal</p>
-              <h3>日次目標の条件を整理する</h3>
-              <p class="card-desc">目標額、投入額、機会回数、未約定率から条件の重さをElectron内で整理します。</p>
+              <h3>日次目標の現実度を見る</h3>
+              <p class="card-desc">約定率・勝率・値動きを中心に、今日の目標が今の相場でどれくらい重いかを整理します。</p>
             </div>
           </div>
           <div class="form-grid daily-form">
+            <label>通貨
+              <select id="dailySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+            </label>
             <label>日次目標利益
               <input id="dailyTarget" type="number" value="100" />
             </label>
@@ -189,6 +192,9 @@
             <label>未約定シナリオ %
               <input id="dailyCancelRates" value="10,30,50,70" />
             </label>
+            <label>仮想約定率 %
+              <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
+            </label>
           </div>
           <button class="primary" id="calcDaily">今日の準備をローカル計算</button>
         </div>
@@ -205,7 +211,7 @@
         </div>
         <div class="grid three" id="dailyPlanCards"></div>
         <div class="card">
-          <h3>未約定シナリオ比較</h3>
+          <h3>約定率・勝率・値動きシナリオ比較</h3>
           <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
         </div>
       </section>

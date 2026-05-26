@@ -644,7 +644,14 @@ async function tradePreview(body = {}) {
 }
 
 async function dailyGoal(body = {}) {
-  return calculations.calculateDailyGoal(body);
+  const { symbols } = await currentPriceData();
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
+  const summary = symbols.find((item) => item.symbol === symbol);
+  return calculations.calculateDailyGoal({
+    ...body,
+    recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
+    recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
+  });
 }
 
 async function invoke(route, payload = {}) {

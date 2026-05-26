@@ -3,7 +3,7 @@ const titles = {
   chart: ['チャート', 'Electron main process で履歴または公開klineを読み、rendererでSVGチャートを描きます。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
-  daily: ['日次目標', '今日の目標額・資金・機会回数から条件を整理します。'],
+  daily: ['日次目標', '約定率・勝率・値動きから今日の現実度を整理します。'],
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
@@ -293,12 +293,14 @@ async function calcTrade() {
 
 async function calcDaily() {
   const payload = {
+    symbol: document.getElementById('dailySymbol').value,
     target_profit_jpy: Number(document.getElementById('dailyTarget').value),
     capital_jpy: Number(document.getElementById('dailyCapital').value),
     min_opportunities: Number(document.getElementById('dailyMinOpp').value),
     max_opportunities: Number(document.getElementById('dailyMaxOpp').value),
     stop_loss_pct: Number(document.getElementById('dailyStopPct').value),
     cancel_rates_text: document.getElementById('dailyCancelRates').value,
+    virtual_fill_rate_pct: Number(document.getElementById('dailyFillRate').value),
     roundtrip_cost_pct: 0.28,
   };
   const data = await postJson('/api/daily-goal', payload);
@@ -319,14 +321,16 @@ async function calcDaily() {
     kind: p.kind,
   })).join('');
   renderTable(document.getElementById('dailyScenarioTable'), [
-    ['cancel_rate', '未約定率'], ['opportunities', '機会'], ['effective', '有効約定'], ['needed_net', '1回必要Net'], ['needed_pct', '必要変動率'], ['risk', '準備感'], ['memo', 'メモ'],
+    ['fill_rate', '約定率'], ['opportunities', '機会'], ['effective', '約定'], ['needed_pct', '必要変動率'], ['needed_win', '必要勝率'], ['movement_ratio', '値動き比'], ['reality', '現実度'],
   ], data.scenarios.map((r) => ({
-    cancel_rate: `${r.cancel_rate}%`,
+    fill_rate: `${Number(r.fill_rate).toFixed(0)}%`,
     opportunities: `${r.opportunities}回`,
     effective: `${r.effective}回`,
     needed_net: yen(r.needed_net_per_trade, 2),
     needed_pct: pct(r.needed_move_pct, 3),
-    risk: r.risk,
+    needed_win: pct(r.needed_win_rate_pct, 1),
+    movement_ratio: r.movement_ratio === null ? '比較不可' : `${Number(r.movement_ratio).toFixed(2)}倍`,
+    reality: r.reality,
     memo: r.memo,
   })));
 }

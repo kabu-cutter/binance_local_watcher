@@ -33,16 +33,61 @@ function parseCancelRates(text) {
 }
 
 function riskLabel(neededPct) {
-  if (neededPct < 0.3) return '軽め';
-  if (neededPct < 0.8) return '中くらい';
-  if (neededPct < 1.5) return '重め';
+  if (neededPct < 0.3) return '軽い';
+  if (neededPct < 0.8) return '普通';
+  if (neededPct < 1.5) return '重い';
   return 'かなり重い';
 }
 
 function riskKind(label) {
-  if (label === '軽め' || label === '中くらい') return 'good';
-  if (label === '重め') return 'warn';
+  if (label === '軽い' || label === '普通') return 'good';
+  if (label === '重い') return 'warn';
   return 'bad';
+}
+
+function realityLabel(level) {
+  if (level <= 0) return '軽い';
+  if (level === 1) return '普通';
+  if (level === 2) return '重い';
+  return 'かなり重い';
+}
+
+function realityKind(label) {
+  return riskKind(label);
+}
+
+function labelLevel(label) {
+  return ['軽い', '普通', '重い', 'かなり重い'].indexOf(label);
+}
+
+function fillRealityLabel(fillRate) {
+  if (fillRate >= 80) return '軽い';
+  if (fillRate >= 60) return '普通';
+  if (fillRate >= 40) return '重い';
+  return 'かなり重い';
+}
+
+function movementRealityLabel(neededPct, recentMoveAbsPct) {
+  if (recentMoveAbsPct <= 0) return 'かなり重い';
+  const ratio = neededPct / recentMoveAbsPct;
+  if (ratio <= 0.7) return '軽い';
+  if (ratio <= 1.1) return '普通';
+  if (ratio <= 1.8) return '重い';
+  return 'かなり重い';
+}
+
+function winRealityLabel(winRate) {
+  if (winRate <= 45) return '軽い';
+  if (winRate <= 60) return '普通';
+  if (winRate <= 75) return '重い';
+  return 'かなり重い';
+}
+
+function neededWinRatePct({ target, capital, attempts, recentMoveAbsPct, costPct, lossAbs }) {
+  const winNet = capital * Math.max(recentMoveAbsPct - costPct, 0) / 100;
+  if (attempts <= 0 || winNet <= 0) return 100;
+  const rate = ((target + attempts * lossAbs) / (attempts * (winNet + lossAbs))) * 100;
+  return Math.max(0, Math.min(100, rate));
 }
 
 function formatSignedPct(value, digits = 4) {
@@ -130,6 +175,10 @@ function calculateDailyGoal(body = {}) {
   const stopPct = Math.max(0, safeFloat(body.stop_loss_pct));
   const cancelRates = parseCancelRates(body.cancel_rates_text);
   const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
+  const virtualFillRate = Math.max(0, Math.min(100, safeFloat(body.virtual_fill_rate_pct, 70)));
+  const recentMovePct = safeFloat(body.recent_move_pct, 0);
+  const recentMoveAbsPct = Math.abs(recentMovePct);
+  const recentMoveLabel = body.recent_move_label || '直近値動き';
   const targetPct = (target / capital) * 100;
   const onePct = targetPct + costPct;
   const minPct = (target / capital / minOpp) * 100 + costPct;
@@ -148,46 +197,62 @@ function calculateDailyGoal(body = {}) {
   const worstNeededPct = (worstNeededNet / capital) * 100 + costPct;
   const nofillMultiplier = balancedNet > 0 ? worstNeededNet / balancedNet : 1;
   const stopPressurePct = target > 0 ? (lossAbs / target) * 100 : 0;
+  const virtualEffective = Math.max(1, Math.round(maxOpp * virtualFillRate / 100));
+  const virtualNeededNet = target / virtualEffective;
+  const virtualNeededPct = (virtualNeededNet / capital) * 100 + costPct;
+  const virtualNeededWinRate = neededWinRatePct({
+    target,
+    capital,
+    attempts: virtualEffective,
+    recentMoveAbsPct,
+    costPct,
+    lossAbs,
+  });
+  const fillLabel = fillRealityLabel(virtualFillRate);
+  const winLabel = winRealityLabel(virtualNeededWinRate);
+  const moveLabel = movementRealityLabel(virtualNeededPct, recentMoveAbsPct);
+  const overallLabel = realityLabel(Math.max(labelLevel(fillLabel), labelLevel(winLabel), labelLevel(moveLabel)));
+  const movementRatio = recentMoveAbsPct > 0 ? virtualNeededPct / recentMoveAbsPct : null;
   const suggestion = [
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
-    `1回で全部狙うと、コスト込みで約 ${onePct.toFixed(3)}% のNet変動が必要なので、まず重さを見る基準になります。`,
-    `${minOpp}回で分けると1回あたり約 ${(target / minOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${minPct.toFixed(3)}% です。`,
-    `${maxOpp}回で分けると1回あたり約 ${(target / maxOpp).toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、必要変動率は約 ${maxPct.toFixed(3)}% です。`,
-    `損切り逆行率を ${stopPct.toFixed(2)}% と見る場合、1回の損切りは概算で約 ${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。未約定が増えるほど、残りの約定1回あたりの必要Netが重くなります。`,
-    'これは売買指示ではなく、今日の条件がどれくらい厳しいかを見る準備サジェストです。',
+    `仮想約定率${virtualFillRate.toFixed(0)}%なら、有効約定は約${virtualEffective}回、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
+    `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、必要変動率${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
+    `この前提の現実度は「${overallLabel}」です。約定率・勝率・値動きのどれが重いかを下のカードで見ます。`,
+    'これは売買指示ではなく、今日の条件が今の相場で現実的かを見る準備サジェストです。',
   ].join('\n');
   const readinessCards = [
     {
-      title: '今日の重さ',
-      main: weightLabel,
-      sub: `${balancedOpp}回想定なら1回必要Net 約${balancedNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 必要変動率 約${balancedPct.toFixed(3)}%`,
-      tag: `${balancedPct.toFixed(3)}%`,
-      kind: riskKind(weightLabel),
+      title: '仮想約定率',
+      main: `${virtualFillRate.toFixed(0)}%`,
+      sub: `${maxOpp}機会中、約${virtualEffective}回の約定として見る / 現実度 ${fillLabel}`,
+      tag: fillLabel,
+      kind: realityKind(fillLabel),
     },
     {
-      title: '損切り1回の重さ',
-      main: `${lossAbs.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
-      sub: allowedStopsBeforeTargetBreak === null
-        ? '損切り逆行率が0%なので損切り負担はほぼ見ていません'
-        : `目標比 約${stopPressurePct.toFixed(1)}% / ${allowedStopsBeforeTargetBreak}回で目標余力をほぼ使います`,
-      tag: stopPressurePct >= 50 ? '要注意' : stopPressurePct >= 25 ? '重め' : '確認',
-      kind: stopPressurePct >= 50 ? 'bad' : stopPressurePct >= 25 ? 'warn' : 'good',
+      title: '必要勝率',
+      main: `${virtualNeededWinRate.toFixed(1)}%`,
+      sub: `${recentMoveLabel}を勝ち幅、損切り${stopPct.toFixed(2)}%として概算 / 現実度 ${winLabel}`,
+      tag: winLabel,
+      kind: realityKind(winLabel),
     },
     {
-      title: '未約定の悪化',
-      main: `${nofillMultiplier.toFixed(2)}倍`,
-      sub: `未約定${worstCancelRate}%なら有効約定${worstEffective}回 / 1回必要Net 約${worstNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
-      tag: riskLabel(worstNeededPct),
-      kind: riskKind(riskLabel(worstNeededPct)),
+      title: '値動き比較',
+      main: movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`,
+      sub: `必要変動率 ${virtualNeededPct.toFixed(3)}% / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
+      tag: moveLabel,
+      kind: realityKind(moveLabel),
     },
   ];
   const prepNotes = [
-    weightLabel === 'かなり重い'
+    overallLabel === 'かなり重い'
       ? '今日の目標はかなり重い条件です。回数、投入額、損切り幅、コスト前提を先に見直す候補です。'
-      : weightLabel === '重め'
-        ? '今日の目標はやや重めです。未約定が増えた時の1回あたり負担を先に確認すると安全です。'
-        : '今日の目標は条件上は軽めから中くらいです。実際の値動きとコスト負けだけ確認します。',
+      : overallLabel === '重い'
+        ? '今日の目標は重い条件です。未約定が増えた時の1回あたり負担を先に確認すると安全です。'
+        : '今日の目標は条件上は軽いから普通の範囲です。実際の値動きとコスト負けだけ確認します。',
+    moveLabel === 'かなり重い'
+      ? '直近値動きに対して必要変動率が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
+      : '必要変動率は直近値動きと比較できる範囲です。約定率と勝率の前提を合わせて見ます。',
     stopPressurePct >= 50
       ? '損切り1回の影響が大きいです。何回狙うかより、逆行時にどこで止めるかが先に効きます。'
       : '損切り1回の影響は目標内で確認できる範囲です。連続ミス時の崩れ方だけ見ておきます。',
@@ -219,15 +284,36 @@ function calculateDailyGoal(body = {}) {
       const effective = Math.max(1, opp - nofill);
       const neededNet = target / effective;
       const neededPct = (neededNet / capital) * 100 + costPct;
+      const fillRate = ((effective / opp) * 100);
+      const scenarioWinRate = neededWinRatePct({
+        target,
+        capital,
+        attempts: effective,
+        recentMoveAbsPct,
+        costPct,
+        lossAbs,
+      });
+      const scenarioMoveLabel = movementRealityLabel(neededPct, recentMoveAbsPct);
+      const scenarioWinLabel = winRealityLabel(scenarioWinRate);
+      const scenarioFillLabel = fillRealityLabel(fillRate);
+      const scenarioReality = realityLabel(Math.max(
+        labelLevel(scenarioMoveLabel),
+        labelLevel(scenarioWinLabel),
+        labelLevel(scenarioFillLabel),
+      ));
       scenarios.push({
         cancel_rate: rate,
+        fill_rate: fillRate,
         opportunities: opp,
         nofill,
         effective,
         needed_net_per_trade: neededNet,
         needed_move_pct: neededPct,
-        risk: riskLabel(neededPct),
-        memo: `未約定${nofill}回なら、有効約定${effective}回で目標を見る`,
+        needed_win_rate_pct: scenarioWinRate,
+        movement_ratio: recentMoveAbsPct > 0 ? neededPct / recentMoveAbsPct : null,
+        reality: scenarioReality,
+        risk: scenarioReality,
+        memo: `約定${effective}回 / ${recentMoveLabel}比で見る`,
       });
     }
   }
