@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('blw', {
     getImpact: (query) => invokeEngine('impact', { query }),
     getChart: (query) => invokeEngine('chart', { query }),
     fetchPrices: () => invokeEngine('fetch-prices'),
+    downloadHistory: (body) => invokeEngine('download-history', { body }),
     tradePreview: (body) => invokeEngine('trade-preview', { body }),
     dailyGoal: (body) => invokeEngine('daily-goal', { body }),
   },

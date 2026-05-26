@@ -40,6 +40,7 @@ async function getJson(path) {
 async function postJson(path, body) {
   if (window.blw?.api) {
     if (path === '/api/fetch-prices') return window.blw.api.fetchPrices();
+    if (path === '/api/download-history') return window.blw.api.downloadHistory(body || {});
     if (path === '/api/trade-preview') return window.blw.api.tradePreview(body || {});
     if (path === '/api/daily-goal') return window.blw.api.dailyGoal(body || {});
     throw new Error(`未対応のローカルエンジンPOST: ${path}`);
@@ -223,8 +224,55 @@ async function loadChart() {
   const symbol = document.getElementById('chartSymbol').value;
   const source = document.getElementById('chartSource').value;
   const interval = document.getElementById('chartInterval').value;
-  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&limit=160`);
+  const date = document.getElementById('historyDate').value;
+  const startHour = document.getElementById('historyStartHour').value;
+  const endHour = document.getElementById('historyEndHour').value;
+  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=160`);
   renderChart(data);
+}
+
+function todayJstDateText() {
+  const now = new Date();
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 10);
+}
+
+async function downloadHistory() {
+  const btn = document.getElementById('downloadHistory');
+  const old = btn.textContent;
+  const memo = document.getElementById('historyDownloadMemo');
+  const payload = {
+    symbol: document.getElementById('historySymbol').value,
+    interval: document.getElementById('historyInterval').value,
+    date: document.getElementById('historyDate').value,
+    start_hour: Number(document.getElementById('historyStartHour').value),
+    end_hour: Number(document.getElementById('historyEndHour').value),
+    skip_existing: document.getElementById('historySkipExisting').checked,
+    wait_ms: 450,
+  };
+  btn.textContent = '取得中...';
+  btn.disabled = true;
+  memo.textContent = '1時間チャンクに分けて取得しています。';
+  try {
+    const data = await postJson('/api/download-history', payload);
+    const downloaded = (data.chunks || []).filter((c) => c.status === 'downloaded').length;
+    const skipped = (data.chunks || []).filter((c) => c.status === 'skipped').length;
+    memo.textContent = [
+      data.message,
+      `取得: ${downloaded} / スキップ: ${skipped} / エラー: ${data.errors?.length || 0}`,
+      `統合CSV: ${data.merged_file}`,
+      data.errors?.length ? `エラー: ${data.errors.map((e) => `${e.label}: ${e.error}`).join(' / ')}` : '',
+    ].filter(Boolean).join('\n');
+    document.getElementById('chartSymbol').value = payload.symbol;
+    document.getElementById('chartInterval').value = payload.interval;
+    document.getElementById('chartSource').value = 'combined';
+    await loadChart();
+  } catch (e) {
+    memo.textContent = `履歴DLに失敗しました。\n${e.message}`;
+  } finally {
+    btn.textContent = old;
+    btn.disabled = false;
+  }
 }
 
 async function calcTrade() {
@@ -310,9 +358,15 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices').addEventListener('click', fetchPrices);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
+  document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
   document.getElementById('chartSource').addEventListener('change', loadChart);
+  document.getElementById('chartInterval').addEventListener('change', loadChart);
+  document.getElementById('historyDate').addEventListener('change', loadChart);
+  document.getElementById('historyStartHour').addEventListener('change', loadChart);
+  document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
   document.getElementById('calcDaily').addEventListener('click', calcDaily);
+  document.getElementById('historyDate').value = todayJstDateText();
   refreshAll().then(loadChart).catch(console.error);
 });

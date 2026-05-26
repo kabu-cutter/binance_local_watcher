@@ -446,6 +446,12 @@ input:focus, select:focus {
   font-weight: 850;
 }
 .daily-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.history-form { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.check-field input {
+  width: 18px;
+  height: 18px;
+  align-self: start;
+}
 
 .table-wrap {
   overflow: auto;
@@ -521,7 +527,8 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   .grid.two,
   .grid.three,
   .form-grid,
-  .daily-form { grid-template-columns: 1fr; }
+  .daily-form,
+  .history-form { grid-template-columns: 1fr; }
   .topbar,
   .hero-card,
   .card-head { flex-direction: column; align-items: stretch; }

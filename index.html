@@ -73,7 +73,7 @@
               <label>通貨</label>
               <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
               <label>データ</label>
-              <select id="chartSource"><option value="local">ローカル履歴</option><option value="klines">公開kline</option></select>
+              <select id="chartSource"><option value="local">ローカル履歴</option><option value="downloaded">DL済み過去データ</option><option value="combined">ローカル+DL済み</option><option value="klines">公開kline</option></select>
               <label>間隔</label>
               <select id="chartInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
               <button class="primary" id="reloadChart">グラフ更新</button>
@@ -83,6 +83,36 @@
           <div class="chart-box">
             <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
           </div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h3>履歴データDL</h3>
+              <p class="card-desc">Binance公開klineを1時間チャンクに分けて取得し、long_dataへ保存します。取得済みチャンクはスキップできます。</p>
+            </div>
+          </div>
+          <div class="form-grid history-form">
+            <label>通貨
+              <select id="historySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+            </label>
+            <label>間隔
+              <select id="historyInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
+            </label>
+            <label>日付
+              <input id="historyDate" type="date" />
+            </label>
+            <label>開始時
+              <input id="historyStartHour" type="number" value="0" min="0" max="23" />
+            </label>
+            <label>終了時
+              <input id="historyEndHour" type="number" value="24" min="1" max="24" />
+            </label>
+            <label class="check-field">取得済みスキップ
+              <input id="historySkipExisting" type="checkbox" checked />
+            </label>
+          </div>
+          <button class="primary" id="downloadHistory">履歴を分割DL</button>
+          <p class="memo-text" id="historyDownloadMemo">未取得です。丸1日なら開始0、終了24にします。</p>
         </div>
       </section>
 

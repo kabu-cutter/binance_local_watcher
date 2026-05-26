@@ -16,8 +16,9 @@ Electron rendererをUI、Electron main processのNodeエンジンを計算・公
 - renderer から `preload.js` 経由で IPC 呼び出し
 - Nodeエンジンが `BTCJPY` / `ETHJPY` の価格を公開APIから取得
 - `price_history.csv` へ追記保存
-- ローカル履歴または公開klineからSVGチャートを表示
+- ローカル履歴、DL済み過去データ、統合表示、公開klineからSVGチャートを表示
 - Python backend と同じ返却形を保ち、比較しやすくする
+- Binance公開klineを1時間チャンクで `long_data/` へ保存する履歴DLを追加
 
 ## v0.4で変えたこと
 
@@ -75,6 +76,7 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 - `getImpact`: 金額ごとの値動き影響
 - `getChart`: チャート用データ
 - `fetchPrices`: 公開APIから現在価格を取得してCSVへ追記
+- `downloadHistory`: 指定日のklineを1時間チャンクで取得し、統合CSVを作成
 - `tradePreview`: 実注文なしの損益概算
 - `dailyGoal`: 日次目標の条件整理
 
@@ -89,6 +91,18 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 - 今日の重さ、損切り1回の重さ、未約定時の悪化をカードで見る
 - 準備コメントは売買指示ではなく、条件の厳しさと確認点を示す
 - 実注文、自動売買、出金、APIキー保存は扱わない
+
+## 履歴データDL
+
+チャートタブの履歴データDLは、指定日・通貨・間隔・開始時・終了時を受け取り、内部では1時間単位に分割してBinance公開klineを取得します。
+
+- 時刻指定はJST
+- Binance APIへはJSTをUTCミリ秒へ変換して送る
+- 保存先はGit除外済みの `long_data/`
+- チャンクCSVとmerged CSVのファイル名には `_JST` を付ける
+- 取得済みチャンクはスキップ可能
+- チャートの「DL済み過去データ」「ローカル+DL済み」は、この日付・時間帯を使って `long_data/` と `price_history.csv` を表示する
+- 後で仮想未約定率を計算するための元データとして使う
 
 ## 次の候補
 
