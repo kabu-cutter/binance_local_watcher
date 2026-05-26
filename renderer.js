@@ -7,6 +7,45 @@ const titles = {
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
+const DAILY_TEMPLATES = {
+  market_priority: {
+    label: '約定優先・成行寄り',
+    fillRate: 85,
+    stopPct: 0.5,
+    costPct: 0.34,
+    cancelRates: '10,20,30',
+    autoFill: false,
+    memo: '約定率は高めですが、往復コストは重めです。小さい値動き狙いは手数料負けを重点確認します。',
+  },
+  pullback_limit: {
+    label: '押し目指値待ち',
+    fillRate: 55,
+    stopPct: 0.45,
+    costPct: 0.24,
+    cancelRates: '30,40,50',
+    autoFill: false,
+    memo: '未約定が増えやすい前提です。未約定30〜50%シナリオを重点に見ます。',
+  },
+  breakout_follow: {
+    label: 'ブレイクアウト追随',
+    fillRate: 78,
+    stopPct: 0.8,
+    costPct: 0.30,
+    cancelRates: '15,25,35',
+    autoFill: false,
+    memo: '約定率は高めですが、必要変動率と損切り幅が中〜大になりやすく、ダマシ耐性を確認します。',
+  },
+  range_reversion: {
+    label: 'レンジ逆張り',
+    fillRate: 68,
+    stopPct: 0.35,
+    costPct: 0.26,
+    cancelRates: '20,30,40',
+    autoFill: false,
+    memo: '小さい値動きを狙う前提です。レンジ抜け時の損切り負担を必ず確認します。',
+  },
+};
+
 function yen(v, digits = 0, signed = false) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
   const n = Number(v);
@@ -30,8 +69,11 @@ async function getJson(path) {
     const query = Object.fromEntries(url.searchParams.entries());
     if (url.pathname === '/api/status') return window.blw.api.getStatus();
     if (url.pathname === '/api/capabilities') return window.blw.api.getCapabilities();
+    if (url.pathname === '/api/contract') return window.blw.api.getContract();
+    if (url.pathname === '/api/api-readiness') return window.blw.api.getApiReadiness();
     if (url.pathname === '/api/summary') return window.blw.api.getSummary();
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
+    if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     throw new Error(`未対応のローカルエンジンGET: ${url.pathname}`);
   }
@@ -110,6 +152,10 @@ async function loadStatus() {
       '',
       formatBoundary(status.api_boundary),
     ].join('\n');
+    const contract = await getJson('/api/contract');
+    document.getElementById('apiBackendText').textContent += `\n\nAPI Contract: GET ${Object.keys(contract.routes?.GET || {}).length} / POST ${Object.keys(contract.routes?.POST || {}).length}`;
+    const readiness = await getJson('/api/api-readiness');
+    document.getElementById('apiBackendText').textContent += `\nAPI Readiness: public=${readiness.public_api_ok ? 'ok' : 'ng'} / key=${readiness.has_api_key ? 'set' : 'unset'}(${readiness.api_key_source}) / secret=${readiness.has_api_secret ? 'set' : 'unset'}(${readiness.api_secret_source}) / fee=${readiness.fee_fetch_ready ? 'ready' : 'not-ready'}`;
   } catch (e) {
     pill.textContent = 'Local Engine NG';
     pill.className = 'status-pill bad';
@@ -163,6 +209,55 @@ async function loadImpact() {
   }));
   renderTable(document.getElementById('impactTable'), [
     ['symbol', '通貨'], ['amount', '想定額'], ['price', '現在価格'], ['quantity', '概算数量'], ['prev', '前回比影響'], ['short', '短期影響'],
+  ], rows);
+}
+
+async function loadAlertPreview() {
+  const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
+  const thresholdPct = Number(document.getElementById('alertThresholdPct').value);
+  const btcThreshold = Number(document.getElementById('alertThresholdBTC').value);
+  const ethThreshold = Number(document.getElementById('alertThresholdETH').value);
+  const saveHistory = document.getElementById('alertSaveHistory').checked;
+  const selectedSymbols = Array.from(document.querySelectorAll('.alertSymbol:checked')).map((el) => el.value);
+  if (!selectedSymbols.length) {
+    document.getElementById('alertPreviewMemo').textContent = '判定対象の通貨を1つ以上選んでください。';
+    document.getElementById('alertTopMemo').textContent = '上位通知は表示できません。';
+    renderTable(document.getElementById('alertPreviewTable'), [
+      ['symbol', '通貨'], ['status', '状態'],
+    ], []);
+    return;
+  }
+  const thresholdPairs = [];
+  if (Number.isFinite(btcThreshold) && btcThreshold >= 0) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
+  if (Number.isFinite(ethThreshold) && ethThreshold >= 0) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
+  const thresholdsQuery = thresholdPairs.join(',');
+  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
+  document.getElementById('alertPreviewMemo').textContent = `${data.message} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
+  const top = data.top_alert;
+  document.getElementById('alertTopMemo').textContent = top
+    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} (${top.status})`
+    : '上位通知はまだありません。';
+  const rows = (data.rows || []).map((row) => ({
+    symbol: row.symbol,
+    status: row.status,
+    move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
+    threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
+    streak: `${row.streak_count ?? 0}`,
+    samples: `${row.samples ?? 0}`,
+    latest: yen(row.latest_price),
+    base: yen(row.base_price),
+    latest_time: row.latest_time || '—',
+  }));
+  renderTable(document.getElementById('alertPreviewTable'), [
+    ['symbol', '通貨'],
+    ['status', '状態'],
+    ['move_pct', `変動率(${data.window_minutes}分)`],
+    ['threshold', '適用しきい値'],
+    ['streak', '連続回数'],
+    ['samples', 'サンプル数'],
+    ['latest', '最新価格'],
+    ['base', '起点価格'],
+    ['latest_time', '最新時刻'],
   ], rows);
 }
 
@@ -292,19 +387,48 @@ async function calcTrade() {
 }
 
 async function calcDaily() {
+  const templateId = document.getElementById('dailyTemplate').value;
+  const errorMemo = document.getElementById('dailyErrorMemo');
   const payload = {
+    strategy_template: templateId,
     symbol: document.getElementById('dailySymbol').value,
     target_profit_jpy: Number(document.getElementById('dailyTarget').value),
     capital_jpy: Number(document.getElementById('dailyCapital').value),
     min_opportunities: Number(document.getElementById('dailyMinOpp').value),
     max_opportunities: Number(document.getElementById('dailyMaxOpp').value),
     stop_loss_pct: Number(document.getElementById('dailyStopPct').value),
+    roundtrip_cost_pct: Number(document.getElementById('dailyCostPct').value),
     cancel_rates_text: document.getElementById('dailyCancelRates').value,
     virtual_fill_rate_pct: Number(document.getElementById('dailyFillRate').value),
-    roundtrip_cost_pct: 0.28,
+    virtual_fill_rate_auto: document.getElementById('dailyFillRateAuto').checked,
+    interval: document.getElementById('historyInterval').value,
+    date: document.getElementById('historyDate').value,
+    start_hour: Number(document.getElementById('historyStartHour').value),
+    end_hour: Number(document.getElementById('historyEndHour').value),
   };
+  const errors = [];
+  if (!Number.isFinite(payload.target_profit_jpy) || payload.target_profit_jpy < 0) errors.push('日次目標利益は0以上で入力してください。');
+  if (!Number.isFinite(payload.capital_jpy) || payload.capital_jpy <= 0) errors.push('資金 / 主投入額は0より大きい値にしてください。');
+  if (!Number.isFinite(payload.min_opportunities) || payload.min_opportunities < 1) errors.push('最小機会回数は1以上にしてください。');
+  if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大機会回数は最小機会回数以上にしてください。');
+  if (!Number.isFinite(payload.stop_loss_pct) || payload.stop_loss_pct < 0) errors.push('損切り逆行率は0以上で入力してください。');
+  if (!Number.isFinite(payload.roundtrip_cost_pct) || payload.roundtrip_cost_pct < 0) errors.push('往復コストは0以上で入力してください。');
+  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('仮想約定率は0〜100%で入力してください。');
+  if (errors.length) {
+    errorMemo.textContent = `入力エラー: ${errors.join(' / ')}`;
+    return;
+  }
+  errorMemo.textContent = '';
   const data = await postJson('/api/daily-goal', payload);
+  if (Number.isFinite(Number(data.virtual_fill_rate_pct_used))) {
+    document.getElementById('dailyFillRate').value = Number(data.virtual_fill_rate_pct_used).toFixed(0);
+  }
+  document.getElementById('dailyCostPct').value = Number(data.roundtrip_cost_pct || payload.roundtrip_cost_pct).toFixed(2);
+  document.getElementById('dailyTemplateMemo').textContent = data.strategy_template_note
+    || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
   document.getElementById('dailySuggestion').textContent = data.suggestion;
+  document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
+    || '仮想約定率は手入力値を使っています。';
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
     title: p.title,
     value: p.main,
@@ -335,6 +459,18 @@ async function calcDaily() {
   })));
 }
 
+function applyDailyTemplate() {
+  const templateId = document.getElementById('dailyTemplate').value;
+  const template = DAILY_TEMPLATES[templateId];
+  if (!template) return;
+  document.getElementById('dailyFillRate').value = String(template.fillRate);
+  document.getElementById('dailyStopPct').value = String(template.stopPct);
+  document.getElementById('dailyCostPct').value = String(template.costPct);
+  document.getElementById('dailyCancelRates').value = template.cancelRates;
+  document.getElementById('dailyFillRateAuto').checked = template.autoFill;
+  document.getElementById('dailyTemplateMemo').textContent = `${template.label}: ${template.memo}（売買推奨ではなく条件テンプレートです）`;
+}
+
 function setupNav() {
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -354,6 +490,7 @@ async function refreshAll() {
   await loadStatus();
   await loadSummary();
   await loadImpact();
+  await loadAlertPreview();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -361,6 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('refreshAll').addEventListener('click', refreshAll);
   document.getElementById('fetchPrices').addEventListener('click', fetchPrices);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
+  document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
@@ -370,7 +508,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyStartHour').addEventListener('change', loadChart);
   document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
+  document.getElementById('applyDailyTemplate').addEventListener('click', applyDailyTemplate);
+  document.getElementById('dailyTemplate').addEventListener('change', async () => {
+    applyDailyTemplate();
+    await calcDaily();
+  });
   document.getElementById('calcDaily').addEventListener('click', calcDaily);
   document.getElementById('historyDate').value = todayJstDateText();
+  applyDailyTemplate();
+  document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertThresholdPct').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertThresholdBTC').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertSaveHistory').addEventListener('change', loadAlertPreview);
+  document.querySelectorAll('.alertSymbol').forEach((el) => el.addEventListener('change', loadAlertPreview));
   refreshAll().then(loadChart).catch(console.error);
 });

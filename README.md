@@ -74,7 +74,10 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 - `getCapabilities`: 利用可能ルートと禁止機能
 - `getSummary`: 最新価格サマリー
 - `getImpact`: 金額ごとの値動き影響
+- `getAlertPreview`: 直近N分しきい値の簡易上昇アラート
 - `getChart`: チャート用データ
+- `getContract`: API契約情報（`API_CONTRACT.json`）
+- `getApiReadiness`: 公開API接続可否と読み取り専用準備可否
 - `fetchPrices`: 公開APIから現在価格を取得してCSVへ追記
 - `downloadHistory`: 指定日のklineを1時間チャンクで取得し、統合CSVを作成
 - `tradePreview`: 実注文なしの損益概算
@@ -82,6 +85,10 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 
 禁止範囲はローカルエンジンの `getStatus` と `getCapabilities` でも返します。
 `real_order`, `auto_trading`, `withdrawal`, `api_key_storage`, `secret_storage` は実装しません。
+
+## 配布前チェック
+
+配布前の確認手順は `RELEASE_CHECKLIST.md` を使います。
 
 ## 日次目標の考え方
 

@@ -1,6 +1,24 @@
 const DEFAULT_AMOUNTS = [1000, 10000, 100000];
 const DEFAULT_CANCEL_RATES = [10, 30, 50, 70];
 const DEFAULT_ROUNDTRIP_COST_PCT = 0.28;
+const STRATEGY_TEMPLATES = {
+  market_priority: {
+    label: '約定優先・成行寄り',
+    note: '約定率は高め、未約定は少なめ、往復コストは重め。小さい値動き狙いは手数料負けを重点確認。',
+  },
+  pullback_limit: {
+    label: '押し目指値待ち',
+    note: '未約定が増えやすい前提。約定できればコストを抑えやすい。未約定30〜50%を重点確認。',
+  },
+  breakout_follow: {
+    label: 'ブレイクアウト追随',
+    note: '約定率は高め。必要変動率は中〜大。損切り幅が広くなりやすく、ダマシ耐性を確認。',
+  },
+  range_reversion: {
+    label: 'レンジ逆張り',
+    note: '小さい値動きを狙う前提。レンジ内は勝率を上げやすい可能性があり、レンジ抜け時の損切り確認を優先。',
+  },
+};
 
 function safeFloat(value, fallback = 0) {
   const number = Number(value);
@@ -168,6 +186,7 @@ function calculateTradePreview({ body = {}, summaries, mockPrices, symbols }) {
 }
 
 function calculateDailyGoal(body = {}) {
+  const template = STRATEGY_TEMPLATES[body.strategy_template] || null;
   const target = Math.max(0, safeFloat(body.target_profit_jpy));
   const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
   const minOpp = Math.max(1, safeInt(body.min_opportunities, 1));
@@ -214,6 +233,7 @@ function calculateDailyGoal(body = {}) {
   const overallLabel = realityLabel(Math.max(labelLevel(fillLabel), labelLevel(winLabel), labelLevel(moveLabel)));
   const movementRatio = recentMoveAbsPct > 0 ? virtualNeededPct / recentMoveAbsPct : null;
   const suggestion = [
+    template ? `テンプレート: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     `仮想約定率${virtualFillRate.toFixed(0)}%なら、有効約定は約${virtualEffective}回、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
@@ -245,6 +265,7 @@ function calculateDailyGoal(body = {}) {
     },
   ];
   const prepNotes = [
+    template ? `テンプレート補助: ${template.note}` : 'テンプレート補助: 売買推奨ではなく、条件の置き方を比較するための表示です。',
     overallLabel === 'かなり重い'
       ? '今日の目標はかなり重い条件です。回数、投入額、損切り幅、コスト前提を先に見直す候補です。'
       : overallLabel === '重い'
@@ -324,6 +345,13 @@ function calculateDailyGoal(body = {}) {
     plan_cards: planCards,
     scenarios,
     roundtrip_cost_pct: costPct,
+    strategy_template: body.strategy_template || '',
+    strategy_template_label: template?.label || '',
+    strategy_template_note: template
+      ? `テンプレート「${template.label}」: ${template.note}（売買推奨ではなく条件比較の補助です）`
+      : 'テンプレートは売買シグナルではなく、日次目標の条件比較を補助するためのものです。',
+    virtual_fill_rate_pct_used: safeFloat(body.virtual_fill_rate_pct_used, virtualFillRate),
+    virtual_fill_rate_note: body.virtual_fill_rate_note || '',
   };
 }
 

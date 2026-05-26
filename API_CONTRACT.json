@@ -1,0 +1,61 @@
+{
+  "version": "electron-node-engine-v0.4",
+  "mode": "electron-ui + electron-main-node-engine",
+  "forbidden": [
+    "real_order",
+    "auto_trading",
+    "withdrawal",
+    "api_key_storage",
+    "secret_storage"
+  ],
+  "routes": {
+    "GET": {
+      "status": {
+        "query": {},
+        "response": ["ok", "version", "mode", "project_dir", "history_file", "history_rows", "data_source", "api_boundary", "calculation_engine"]
+      },
+      "capabilities": {
+        "query": {},
+        "response": ["ok", "version", "symbols", "routes", "api_boundary", "calculation_engine"]
+      },
+      "summary": {
+        "query": {},
+        "response": ["symbols", "data_source", "memo"]
+      },
+      "impact": {
+        "query": ["amounts"],
+        "response": ["rows"]
+      },
+      "alert-preview": {
+        "query": ["window_minutes", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
+        "response": ["window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
+      },
+      "chart": {
+        "query": ["symbol", "source", "interval", "date", "start_hour", "end_hour", "limit"],
+        "response": ["symbol", "points", "source", "message", "errors", "min_price", "max_price", "rows"]
+      },
+      "contract": {
+        "query": {},
+        "response": ["version", "mode", "forbidden", "routes"]
+      }
+    },
+    "POST": {
+      "fetch-prices": {
+        "body": {},
+        "response": ["ok", "fetched", "errors", "added_rows", "history_file", "symbols", "data_source", "message"]
+      },
+      "download-history": {
+        "body": ["symbol", "interval", "date", "start_hour", "end_hour", "skip_existing", "wait_ms", "dry_run"],
+        "response": ["ok", "dry_run", "symbol", "interval", "date", "start_hour", "end_hour", "chunks", "errors", "merged_file", "merged_rows", "message"]
+      },
+      "trade-preview": {
+        "body": ["symbol", "amount_jpy", "exit_change_pct", "roundtrip_cost_pct"],
+        "response": ["symbol", "amount_jpy", "current_price", "exit_price", "quantity", "gross_pl_yen", "net_pl_yen", "roundtrip_cost_pct", "accuracy", "memo"]
+      },
+      "daily-goal": {
+        "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],
+        "response": ["suggestion", "readiness_cards", "prep_notes", "plan_cards", "scenarios", "roundtrip_cost_pct", "strategy_template", "strategy_template_label", "strategy_template_note", "virtual_fill_rate_pct_used", "virtual_fill_rate_note"]
+      }
+    }
+  }
+}

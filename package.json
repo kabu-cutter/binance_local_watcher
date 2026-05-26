@@ -4,7 +4,8 @@
   "description": "Binance Local Watcher Electron UI with a local Node calculation engine. No real orders.",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "smoke": "node scripts/smoke_local_engine.js"
   },
   "devDependencies": {
     "electron": "^31.7.7"

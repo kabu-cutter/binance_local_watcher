@@ -18,8 +18,11 @@ contextBridge.exposeInMainWorld('blw', {
   api: {
     getStatus: () => invokeEngine('status'),
     getCapabilities: () => invokeEngine('capabilities'),
+    getContract: () => invokeEngine('contract'),
+    getApiReadiness: () => invokeEngine('api-readiness'),
     getSummary: () => invokeEngine('summary'),
     getImpact: (query) => invokeEngine('impact', { query }),
+    getAlertPreview: (query) => invokeEngine('alert-preview', { query }),
     getChart: (query) => invokeEngine('chart', { query }),
     fetchPrices: () => invokeEngine('fetch-prices'),
     downloadHistory: (body) => invokeEngine('download-history', { body }),

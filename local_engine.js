@@ -38,12 +38,24 @@ function projectDir() {
   return path.resolve(process.env.BLW_PROJECT_DIR || __dirname);
 }
 
+function contractFilePath() {
+  return path.join(projectDir(), 'API_CONTRACT.json');
+}
+
 function historyFilePath() {
   return path.join(projectDir(), 'price_history.csv');
 }
 
 function longDataDir() {
   return path.join(projectDir(), 'long_data');
+}
+
+function alertHistoryFilePath() {
+  return path.join(projectDir(), 'alert_history.json');
+}
+
+function envFilePath() {
+  return path.join(projectDir(), '.env');
 }
 
 function parseCsvLine(line) {
@@ -128,6 +140,23 @@ function hourLabel(hour) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseSimpleEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  const result = {};
+  const text = fs.readFileSync(filePath, 'utf8');
+  text.split(/\r?\n/).forEach((line) => {
+    const trimmed = String(line || '').trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const idx = trimmed.indexOf('=');
+    if (idx <= 0) return;
+    const key = trimmed.slice(0, idx).trim();
+    const raw = trimmed.slice(idx + 1).trim();
+    const value = raw.replace(/^['"]|['"]$/g, '');
+    result[key] = value;
+  });
+  return result;
 }
 
 function fetchJson(apiPath, params = {}, timeoutMs = 10000) {
@@ -367,6 +396,24 @@ async function readLongDataRows(filePath) {
   });
 }
 
+async function readAlertHistory() {
+  const filePath = alertHistoryFilePath();
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const text = await fs.promises.readFile(filePath, 'utf8');
+    const data = JSON.parse(text);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeAlertHistory(items) {
+  const filePath = alertHistoryFilePath();
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, JSON.stringify(items, null, 2), 'utf8');
+}
+
 async function downloadedChartPoints(params = {}) {
   const plan = buildKlineDownloadPlan(params);
   const files = fs.existsSync(plan.merged_file)
@@ -395,6 +442,72 @@ async function downloadedChartPoints(params = {}) {
     source: files.length ? files.join('; ') : plan.merged_file,
     planned_file: plan.merged_file,
   };
+}
+
+async function downloadedKlineRows(params = {}) {
+  const plan = buildKlineDownloadPlan(params);
+  const files = fs.existsSync(plan.merged_file)
+    ? [plan.merged_file]
+    : plan.chunks.map((chunk) => chunk.file).filter((file) => fs.existsSync(file));
+  const rowsByTime = new Map();
+  for (const file of files) {
+    const rows = await readLongDataRows(file);
+    rows.forEach((row) => {
+      if (row.symbol !== plan.symbol || row.interval !== plan.interval) return;
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      if (!Number.isFinite(timeMs)) return;
+      if (timeMs < plan.chunks[0].start_ms || timeMs >= plan.chunks[plan.chunks.length - 1].end_ms) return;
+      rowsByTime.set(timeMs, row);
+    });
+  }
+  return {
+    rows: Array.from(rowsByTime.values()).sort((a, b) => safeFloat(a.open_time_ms) - safeFloat(b.open_time_ms)),
+    files,
+    plan,
+  };
+}
+
+async function estimateVirtualFillRate(body = {}) {
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
+  const interval = ['1m', '5m', '15m', '1h'].includes(body.interval) ? body.interval : '1m';
+  const date = String(body.date || '').trim();
+  if (!date) {
+    return { rate: null, note: '仮想約定率の自動推定: 日付が未指定のため手入力値を使います。' };
+  }
+  try {
+    const target = Math.max(0, safeFloat(body.target_profit_jpy));
+    const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
+    const maxOpp = Math.max(1, safeInt(body.max_opportunities, 1));
+    const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, 0.28));
+    const requiredMovePct = (target / capital / maxOpp) * 100 + costPct;
+    const { rows, files } = await downloadedKlineRows({
+      symbol,
+      interval,
+      date,
+      start_hour: body.start_hour,
+      end_hour: body.end_hour,
+    });
+    if (rows.length < 10) {
+      return { rate: null, note: '仮想約定率の自動推定: DL済み履歴が不足しているため手入力値を使います。' };
+    }
+    let fillable = 0;
+    rows.forEach((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || open <= 0) return;
+      const rangePct = ((high - low) / open) * 100;
+      if (rangePct >= requiredMovePct) fillable += 1;
+    });
+    const rawRate = rows.length ? (fillable / rows.length) * 100 : 0;
+    const rate = Math.max(5, Math.min(95, rawRate));
+    return {
+      rate,
+      note: `仮想約定率の自動推定: ${date} ${interval} 足 ${rows.length}本（${files.length}ファイル）から、必要変動率 ${requiredMovePct.toFixed(3)}% を満たす足の割合を使い ${rate.toFixed(1)}% としました。`,
+    };
+  } catch (error) {
+    return { rate: null, note: `仮想約定率の自動推定: ${error.message} のため手入力値を使います。` };
+  }
 }
 
 function combineChartPoints(downloadedPoints, localPoints, limit) {
@@ -514,7 +627,7 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'chart'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'chart', 'contract', 'api-readiness'],
       POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal'],
     },
     api_boundary: API_BOUNDARY,
@@ -526,6 +639,24 @@ async function capabilities() {
   };
 }
 
+async function contract() {
+  const filePath = contractFilePath();
+  if (!fs.existsSync(filePath)) {
+    return {
+      version: VERSION,
+      mode: 'electron-ui + electron-main-node-engine',
+      forbidden: API_BOUNDARY.forbidden,
+      routes: {
+        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'chart', 'api-readiness'],
+        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal'],
+      },
+      note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
+    };
+  }
+  const text = await fs.promises.readFile(filePath, 'utf8');
+  return JSON.parse(text);
+}
+
 async function summary() {
   const { symbols, source } = await currentPriceData();
   const memo = source === 'mock'
@@ -534,9 +665,166 @@ async function summary() {
   return { symbols, data_source: source, memo };
 }
 
+async function apiReadiness() {
+  const envFileValues = parseSimpleEnvFile(envFilePath());
+  const envApiKey = String(process.env.BINANCE_API_KEY || '').trim();
+  const envApiSecret = String(process.env.BINANCE_API_SECRET || '').trim();
+  const fileApiKey = String(envFileValues.BINANCE_API_KEY || '').trim();
+  const fileApiSecret = String(envFileValues.BINANCE_API_SECRET || '').trim();
+  const hasApiKey = Boolean(envApiKey || fileApiKey);
+  const hasApiSecret = Boolean(envApiSecret || fileApiSecret);
+  const keySource = envApiKey ? 'environment' : fileApiKey ? '.env' : 'none';
+  const secretSource = envApiSecret ? 'environment' : fileApiSecret ? '.env' : 'none';
+  let publicApiOk = false;
+  let publicApiError = '';
+  try {
+    await fetchJson('/api/v3/time', {}, 8000);
+    publicApiOk = true;
+  } catch (error) {
+    publicApiError = error.message;
+  }
+  return {
+    has_api_key: hasApiKey,
+    has_api_secret: hasApiSecret,
+    api_key_source: keySource,
+    api_secret_source: secretSource,
+    public_api_ok: publicApiOk,
+    public_api_error: publicApiError,
+    fee_fetch_ready: Boolean(publicApiOk && hasApiKey && hasApiSecret),
+    note: '読み取り専用の最小チェックです。キー保存は行いません。',
+  };
+}
+
 async function impact(params = {}) {
   const { symbols } = await currentPriceData();
   return { rows: calculations.calculateImpactRows({ summaries: symbols, amountsText: params.amounts }) };
+}
+
+async function alertPreview(params = {}) {
+  const windowMinutes = Math.max(1, Math.min(240, safeInt(params.window_minutes, 15)));
+  const thresholdPct = Math.max(0, safeFloat(params.threshold_pct, 0.2));
+  const thresholdsText = String(params.thresholds || '').trim();
+  const thresholdsBySymbol = {};
+  if (thresholdsText) {
+    thresholdsText.split(',').forEach((part) => {
+      const [symbolText, thresholdText] = String(part).split(':').map((v) => String(v || '').trim());
+      if (!SYMBOLS.includes(symbolText)) return;
+      const value = safeFloat(thresholdText, NaN);
+      if (!Number.isFinite(value) || value < 0) return;
+      thresholdsBySymbol[symbolText] = value;
+    });
+  }
+  const selectedSymbols = Array.isArray(params.symbols)
+    ? params.symbols
+    : String(params.symbols || '').split(',').map((v) => String(v).trim()).filter(Boolean);
+  const targetSymbols = selectedSymbols.length
+    ? SYMBOLS.filter((symbol) => selectedSymbols.includes(symbol))
+    : SYMBOLS.slice();
+  const saveHistory = params.save_history !== false;
+  const historyLimit = Math.max(20, Math.min(500, safeInt(params.history_limit, 200)));
+  const { rows, source } = await readHistoryRows();
+  if (!rows.length) {
+    return {
+      window_minutes: windowMinutes,
+      threshold_pct: thresholdPct,
+      source,
+      symbols: targetSymbols,
+      rows: targetSymbols.map((symbol) => ({
+        symbol,
+        status: 'データ不足',
+        move_pct: null,
+        samples: 0,
+        latest_price: null,
+        base_price: null,
+        latest_time: '',
+      })),
+      message: '履歴データがないためアラート判定は未実施です。',
+    };
+  }
+  const resultRows = targetSymbols.map((symbol) => {
+    const symbolRows = rows.filter((row) => row.symbol === symbol).sort((a, b) => a.timestamp - b.timestamp);
+    if (symbolRows.length < 2) {
+      return {
+        symbol,
+        status: 'データ不足',
+        move_pct: null,
+        samples: symbolRows.length,
+        latest_price: symbolRows[0]?.price ?? null,
+        base_price: symbolRows[0]?.price ?? null,
+        latest_time: symbolRows[0] ? formatJst(symbolRows[0].timestamp) : '',
+      };
+    }
+    const latest = symbolRows[symbolRows.length - 1];
+    const windowStart = new Date(latest.timestamp.getTime() - windowMinutes * 60 * 1000);
+    const windowRows = symbolRows.filter((row) => row.timestamp >= windowStart && row.timestamp <= latest.timestamp);
+    const base = windowRows[0];
+    if (!base || base.price <= 0) {
+      return {
+        symbol,
+        status: 'データ不足',
+        move_pct: null,
+        samples: windowRows.length,
+        latest_price: latest.price,
+        base_price: null,
+        latest_time: formatJst(latest.timestamp),
+      };
+    }
+    const movePct = ((latest.price - base.price) / base.price) * 100;
+    const thresholdForSymbol = Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct;
+    let streakCount = 0;
+    for (let i = windowRows.length - 1; i >= 0; i -= 1) {
+      const pivot = windowRows[i];
+      if (!pivot || !Number.isFinite(pivot.price) || pivot.price <= 0) break;
+      const moveFromPivot = ((latest.price - pivot.price) / pivot.price) * 100;
+      if (moveFromPivot >= thresholdForSymbol) streakCount += 1;
+      else break;
+    }
+    return {
+      symbol,
+      status: movePct >= thresholdForSymbol ? '上昇アラート' : '監視中',
+      move_pct: movePct,
+      threshold_pct: thresholdForSymbol,
+      streak_count: streakCount,
+      samples: windowRows.length,
+      latest_price: latest.price,
+      base_price: base.price,
+      latest_time: formatJst(latest.timestamp),
+    };
+  });
+  const alertCount = resultRows.filter((row) => row.status === '上昇アラート').length;
+  const ranked = resultRows.filter((row) => Number.isFinite(row.move_pct)).sort((a, b) => b.move_pct - a.move_pct);
+  const topAlert = ranked.length ? ranked[0] : null;
+  let historySaved = 0;
+  if (saveHistory && alertCount > 0) {
+    const existing = await readAlertHistory();
+    const nowText = nowJstIso();
+    const appendItems = resultRows
+      .filter((row) => row.status === '上昇アラート')
+      .map((row) => ({
+        timestamp_jst: nowText,
+        symbol: row.symbol,
+        move_pct: row.move_pct,
+        threshold_pct: row.threshold_pct,
+        window_minutes: windowMinutes,
+        streak_count: row.streak_count,
+      }));
+    const merged = existing.concat(appendItems).slice(-historyLimit);
+    await writeAlertHistory(merged);
+    historySaved = appendItems.length;
+  }
+  return {
+    window_minutes: windowMinutes,
+    threshold_pct: thresholdPct,
+    thresholds_by_symbol: thresholdsBySymbol,
+    source,
+    symbols: targetSymbols,
+    top_alert: topAlert,
+    history_saved: historySaved,
+    rows: resultRows,
+    message: alertCount
+      ? `${alertCount}通貨がしきい値超えです。`
+      : 'しきい値を超えた通貨はありません。',
+  };
 }
 
 async function chart(params = {}) {
@@ -647,8 +935,18 @@ async function dailyGoal(body = {}) {
   const { symbols } = await currentPriceData();
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
   const summary = symbols.find((item) => item.symbol === symbol);
+  const manualFillRate = Math.max(0, Math.min(100, safeFloat(body.virtual_fill_rate_pct, 70)));
+  const autoEnabled = body.virtual_fill_rate_auto !== false;
+  const estimated = autoEnabled ? await estimateVirtualFillRate(body) : null;
+  const fillRateToUse = Number.isFinite(estimated?.rate) ? estimated.rate : manualFillRate;
+  const fillRateNote = autoEnabled
+    ? (estimated?.note || '仮想約定率の自動推定を試し、手入力値を使いました。')
+    : '仮想約定率は手入力値を使っています。';
   return calculations.calculateDailyGoal({
     ...body,
+    virtual_fill_rate_pct: fillRateToUse,
+    virtual_fill_rate_pct_used: fillRateToUse,
+    virtual_fill_rate_note: fillRateNote,
     recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
     recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
   });
@@ -662,7 +960,10 @@ async function invoke(route, payload = {}) {
     case 'capabilities': return capabilities();
     case 'summary': return summary();
     case 'impact': return impact(query);
+    case 'alert-preview': return alertPreview(query);
     case 'chart': return chart(query);
+    case 'contract': return contract();
+    case 'api-readiness': return apiReadiness();
     case 'fetch-prices': return fetchPrices();
     case 'download-history': return downloadHistoricalKlines(body);
     case 'trade-preview': return tradePreview(body);
@@ -677,6 +978,7 @@ module.exports = {
   capabilities,
   summary,
   impact,
+  contract,
   chart,
   downloadHistoricalKlines,
   buildKlineDownloadPlan,
