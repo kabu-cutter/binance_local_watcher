@@ -75,6 +75,7 @@ async function getJson(path) {
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
     if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
     if (url.pathname === '/api/alert-history') return window.blw.api.getAlertHistory(query);
+    if (url.pathname === '/api/daily-goal-reports') return window.blw.api.getDailyGoalReports(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     throw new Error(`未対応のローカルエンジンGET: ${url.pathname}`);
   }
@@ -86,7 +87,9 @@ async function postJson(path, body) {
     if (path === '/api/download-history') return window.blw.api.downloadHistory(body || {});
     if (path === '/api/trade-preview') return window.blw.api.tradePreview(body || {});
     if (path === '/api/daily-goal') return window.blw.api.dailyGoal(body || {});
+    if (path === '/api/save-daily-goal-report') return window.blw.api.saveDailyGoalReport(body || {});
     if (path === '/api/clear-alert-history') return window.blw.api.clearAlertHistory();
+    if (path === '/api/clear-daily-goal-reports') return window.blw.api.clearDailyGoalReports();
     throw new Error(`未対応のローカルエンジンPOST: ${path}`);
   }
   throw new Error('Electron preload の window.blw.api が見つかりません。npm start から起動してください。');
@@ -420,11 +423,9 @@ async function calcTrade() {
   document.getElementById('tradeMemo').textContent = data.memo;
 }
 
-async function calcDaily() {
-  const templateId = document.getElementById('dailyTemplate').value;
-  const errorMemo = document.getElementById('dailyErrorMemo');
-  const payload = {
-    strategy_template: templateId,
+function buildDailyPayload() {
+  return {
+    strategy_template: document.getElementById('dailyTemplate').value,
     symbol: document.getElementById('dailySymbol').value,
     target_profit_jpy: Number(document.getElementById('dailyTarget').value),
     capital_jpy: Number(document.getElementById('dailyCapital').value),
@@ -440,6 +441,12 @@ async function calcDaily() {
     start_hour: Number(document.getElementById('historyStartHour').value),
     end_hour: Number(document.getElementById('historyEndHour').value),
   };
+}
+
+async function calcDaily() {
+  const templateId = document.getElementById('dailyTemplate').value;
+  const errorMemo = document.getElementById('dailyErrorMemo');
+  const payload = buildDailyPayload();
   const errors = [];
   if (!Number.isFinite(payload.target_profit_jpy) || payload.target_profit_jpy < 0) errors.push('日次目標利益は0以上で入力してください。');
   if (!Number.isFinite(payload.capital_jpy) || payload.capital_jpy <= 0) errors.push('資金 / 主投入額は0より大きい値にしてください。');
@@ -491,6 +498,47 @@ async function calcDaily() {
     reality: r.reality,
     memo: r.memo,
   })));
+}
+
+async function loadDailyReports() {
+  const data = await getJson('/api/daily-goal-reports?limit=20');
+  document.getElementById('dailyReportsMemo').textContent = `保存件数: ${data.count} / 表示: ${data.rows.length} / ${data.file}`;
+  const rows = (data.rows || []).map((row) => ({
+    saved_at: String(row.saved_at_jst || '').replace('T', ' ').replace('+09:00', ' JST'),
+    template: row.strategy_template || '—',
+    symbol: row.symbol || '—',
+    target: yen(row.target_profit_jpy, 0),
+    capital: yen(row.capital_jpy, 0),
+    cost: pct(row.roundtrip_cost_pct, 2),
+    fill: pct(row.virtual_fill_rate_pct_used, 1),
+    need: pct(row.needed_move_pct, 3),
+    win: pct(row.needed_win_rate_pct, 1),
+    reality: row.reality || '—',
+  }));
+  renderTable(document.getElementById('dailyReportsTable'), [
+    ['saved_at', '保存時刻'],
+    ['template', 'テンプレ'],
+    ['symbol', '通貨'],
+    ['target', '目標'],
+    ['capital', '資金'],
+    ['cost', '往復コスト'],
+    ['fill', '仮想約定率'],
+    ['need', '必要変動率'],
+    ['win', '必要勝率'],
+    ['reality', '現実度'],
+  ], rows);
+}
+
+async function saveDailyReport() {
+  const result = await postJson('/api/save-daily-goal-report', buildDailyPayload());
+  document.getElementById('dailyReportsMemo').textContent = `${result.message} / ${result.file}`;
+  await loadDailyReports();
+}
+
+async function clearDailyReports() {
+  const result = await postJson('/api/clear-daily-goal-reports', {});
+  document.getElementById('dailyReportsMemo').textContent = result.message;
+  await loadDailyReports();
 }
 
 function applyDailyTemplate() {
@@ -549,6 +597,9 @@ document.addEventListener('DOMContentLoaded', () => {
     await calcDaily();
   });
   document.getElementById('calcDaily').addEventListener('click', calcDaily);
+  document.getElementById('saveDailyReport').addEventListener('click', saveDailyReport);
+  document.getElementById('reloadDailyReports').addEventListener('click', loadDailyReports);
+  document.getElementById('clearDailyReports').addEventListener('click', clearDailyReports);
   document.getElementById('historyDate').value = todayJstDateText();
   applyDailyTemplate();
   document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
@@ -559,5 +610,5 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
   document.getElementById('alertSaveHistory').addEventListener('change', loadAlertPreview);
   document.querySelectorAll('.alertSymbol').forEach((el) => el.addEventListener('change', loadAlertPreview));
-  refreshAll().then(loadChart).catch(console.error);
+  refreshAll().then(loadChart).then(loadDailyReports).catch(console.error);
 });

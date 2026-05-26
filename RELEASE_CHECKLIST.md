@@ -5,7 +5,7 @@
 - `API_CONTRACT.json` の禁止範囲と `local_engine.js` の `API_BOUNDARY.forbidden` が一致していること
 
 ## 2) Ignore / Local files
-- `.env`, `price_history.csv`, `long_data/`, `alert_history.json`, `node_modules/` がGit追跡対象外であること
+- `.env`, `price_history.csv`, `long_data/`, `alert_history.json`, `daily_goal_reports.csv`, `node_modules/` がGit追跡対象外であること
 - `git status --ignored` でローカルデータが除外されていること
 
 ## 3) Startup check

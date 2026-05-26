@@ -54,6 +54,10 @@ function alertHistoryFilePath() {
   return path.join(projectDir(), 'alert_history.json');
 }
 
+function dailyGoalReportFilePath() {
+  return path.join(projectDir(), 'daily_goal_reports.csv');
+}
+
 function envFilePath() {
   return path.join(projectDir(), '.env');
 }
@@ -627,8 +631,8 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'chart', 'contract', 'api-readiness'],
-      POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'clear-alert-history'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'contract', 'api-readiness'],
+      POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
     },
     api_boundary: API_BOUNDARY,
     calculation_engine: {
@@ -647,8 +651,8 @@ async function contract() {
       mode: 'electron-ui + electron-main-node-engine',
       forbidden: API_BOUNDARY.forbidden,
       routes: {
-        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'chart', 'api-readiness'],
-        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'clear-alert-history'],
+        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'api-readiness'],
+        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
     };
@@ -865,6 +869,89 @@ async function clearAlertHistory() {
   };
 }
 
+async function saveDailyGoalReport(body = {}) {
+  const daily = await dailyGoal(body);
+  const rows = Array.isArray(daily.scenarios) ? daily.scenarios : [];
+  const file = dailyGoalReportFilePath();
+  const header = [
+    'saved_at_jst',
+    'strategy_template',
+    'symbol',
+    'target_profit_jpy',
+    'capital_jpy',
+    'roundtrip_cost_pct',
+    'virtual_fill_rate_pct_used',
+    'cancel_rate',
+    'opportunities',
+    'effective',
+    'needed_move_pct',
+    'needed_win_rate_pct',
+    'movement_ratio',
+    'reality',
+  ];
+  const exists = fs.existsSync(file) && fs.statSync(file).size > 0;
+  const lines = [];
+  if (!exists) lines.push(header.join(','));
+  const now = nowJstIso();
+  rows.forEach((row) => {
+    lines.push([
+      now,
+      toCsvValue(daily.strategy_template || body.strategy_template || ''),
+      toCsvValue(body.symbol || ''),
+      safeFloat(body.target_profit_jpy, 0),
+      safeFloat(body.capital_jpy, 0),
+      safeFloat(daily.roundtrip_cost_pct, 0),
+      safeFloat(daily.virtual_fill_rate_pct_used, 0),
+      safeFloat(row.cancel_rate, 0),
+      safeInt(row.opportunities, 0),
+      safeInt(row.effective, 0),
+      safeFloat(row.needed_move_pct, 0),
+      safeFloat(row.needed_win_rate_pct, 0),
+      row.movement_ratio === null || row.movement_ratio === undefined ? '' : safeFloat(row.movement_ratio, 0),
+      toCsvValue(row.reality || ''),
+    ].join(','));
+  });
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  if (lines.length) await fs.promises.appendFile(file, `${lines.join('\n')}\n`, 'utf8');
+  return {
+    ok: true,
+    rows_saved: rows.length,
+    file,
+    message: `日次目標レポートを${rows.length}行保存しました。`,
+  };
+}
+
+async function dailyGoalReports(params = {}) {
+  const limit = Math.max(1, Math.min(300, safeInt(params.limit, 20)));
+  const file = dailyGoalReportFilePath();
+  if (!fs.existsSync(file)) return { rows: [], count: 0, limit, file };
+  const text = await fs.promises.readFile(file, 'utf8');
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return { rows: [], count: 0, limit, file };
+  const headers = parseCsvLine(lines[0]);
+  const allRows = lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    return Object.fromEntries(headers.map((header, idx) => [header, values[idx] ?? '']));
+  });
+  return {
+    rows: allRows.slice(-limit).reverse(),
+    count: allRows.length,
+    limit,
+    file,
+  };
+}
+
+async function clearDailyGoalReports() {
+  const file = dailyGoalReportFilePath();
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  await fs.promises.writeFile(file, '', 'utf8');
+  return {
+    ok: true,
+    message: 'daily_goal_reports.csv をクリアしました。',
+    file,
+  };
+}
+
 async function chart(params = {}) {
   const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
   const sourceMode = params.source || 'local';
@@ -1000,6 +1087,7 @@ async function invoke(route, payload = {}) {
     case 'impact': return impact(query);
     case 'alert-preview': return alertPreview(query);
     case 'alert-history': return alertHistory(query);
+    case 'daily-goal-reports': return dailyGoalReports(query);
     case 'chart': return chart(query);
     case 'contract': return contract();
     case 'api-readiness': return apiReadiness();
@@ -1007,7 +1095,9 @@ async function invoke(route, payload = {}) {
     case 'download-history': return downloadHistoricalKlines(body);
     case 'trade-preview': return tradePreview(body);
     case 'daily-goal': return dailyGoal(body);
+    case 'save-daily-goal-report': return saveDailyGoalReport(body);
     case 'clear-alert-history': return clearAlertHistory();
+    case 'clear-daily-goal-reports': return clearDailyGoalReports();
     default: throw new Error(`Unknown local engine route: ${route}`);
   }
 }
@@ -1025,5 +1115,8 @@ module.exports = {
   fetchPrices,
   tradePreview,
   dailyGoal,
+  saveDailyGoalReport,
+  dailyGoalReports,
+  clearDailyGoalReports,
   calculations,
 };

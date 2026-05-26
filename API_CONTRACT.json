@@ -34,6 +34,10 @@
         "query": ["limit"],
         "response": ["rows", "count", "limit", "file"]
       },
+      "daily-goal-reports": {
+        "query": ["limit"],
+        "response": ["rows", "count", "limit", "file"]
+      },
       "chart": {
         "query": ["symbol", "source", "interval", "date", "start_hour", "end_hour", "limit"],
         "response": ["symbol", "points", "source", "message", "errors", "min_price", "max_price", "rows"]
@@ -60,7 +64,15 @@
         "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],
         "response": ["suggestion", "readiness_cards", "prep_notes", "plan_cards", "scenarios", "roundtrip_cost_pct", "strategy_template", "strategy_template_label", "strategy_template_note", "virtual_fill_rate_pct_used", "virtual_fill_rate_note"]
       },
+      "save-daily-goal-report": {
+        "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],
+        "response": ["ok", "rows_saved", "file", "message"]
+      },
       "clear-alert-history": {
+        "body": {},
+        "response": ["ok", "message", "file"]
+      },
+      "clear-daily-goal-reports": {
         "body": {},
         "response": ["ok", "message", "file"]
       }

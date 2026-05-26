@@ -417,7 +417,18 @@ h1 {
   gap: 8px;
 }
 .inline-form.wrap { flex-wrap: wrap; justify-content: flex-end; }
-.inline-form label { color: var(--muted); font-size: 0.85rem; font-weight: 800; }
+.inline-form label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.inline-form input,
+.inline-form select,
+.inline-form button {
+  flex: 0 0 auto;
+}
 
 input, select {
   border: 1px solid var(--line);

@@ -23,9 +23,13 @@ price_history.csv
 price_history_old.csv
 downloaded_price_history.csv
 long_data/
+alert_history.json
+daily_goal_reports.csv
 **/price_history.csv
 **/price_history_old.csv
 **/downloaded_price_history.csv
+**/alert_history.json
+**/daily_goal_reports.csv
 
 # Python
 .venv/

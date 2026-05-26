@@ -65,7 +65,7 @@
               <h3>上昇アラート（簡易）</h3>
               <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。売買シグナルではありません。</p>
             </div>
-            <div class="inline-form">
+            <div class="inline-form wrap">
               <label>窓(分)</label>
               <input id="alertWindowMinutes" type="number" value="15" min="1" max="240" />
               <label>モード</label>
@@ -253,6 +253,11 @@
           </div>
           <button class="secondary" id="applyDailyTemplate">テンプレート条件を反映</button>
           <button class="primary" id="calcDaily">今日の準備をローカル計算</button>
+          <div class="inline-form">
+            <button class="secondary" id="saveDailyReport">結果をCSV保存</button>
+            <button class="secondary" id="reloadDailyReports">保存結果を再読込</button>
+            <button class="secondary" id="clearDailyReports">保存結果をクリア</button>
+          </div>
         </div>
         <div class="card">
           <h3>今日の準備サジェスト</h3>
@@ -272,6 +277,11 @@
         <div class="card">
           <h3>約定率・勝率・値動きシナリオ比較</h3>
           <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
+        </div>
+        <div class="card">
+          <h3>日次目標レポート（直近）</h3>
+          <p class="memo-text" id="dailyReportsMemo">まだ保存データを読み込んでいません。</p>
+          <div class="table-wrap"><table id="dailyReportsTable"></table></div>
         </div>
       </section>
 

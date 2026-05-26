@@ -62,8 +62,8 @@ API契約は `API_CONTRACT.json` を参照してください。
 利用可能ルートは `getCapabilities` / `getContract` でも確認できます。
 
 主なAPI:
-- GET: `status`, `capabilities`, `summary`, `impact`, `alert-preview`, `chart`, `contract`, `api-readiness`
-- POST: `fetch-prices`, `download-history`, `trade-preview`, `daily-goal`
+- GET: `status`, `capabilities`, `summary`, `impact`, `alert-preview`, `alert-history`, `daily-goal-reports`, `chart`, `contract`, `api-readiness`
+- POST: `fetch-prices`, `download-history`, `trade-preview`, `daily-goal`, `save-daily-goal-report`, `clear-alert-history`, `clear-daily-goal-reports`
 
 禁止範囲:
 - `real_order`
