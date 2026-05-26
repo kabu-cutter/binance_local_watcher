@@ -255,6 +255,14 @@ async function calcDaily() {
   };
   const data = await postJson('/api/daily-goal', payload);
   document.getElementById('dailySuggestion').textContent = data.suggestion;
+  document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
+    title: p.title,
+    value: p.main,
+    sub: p.sub,
+    tag: p.tag,
+    kind: p.kind,
+  })).join('');
+  document.getElementById('dailyPrepNotes').innerHTML = (data.prep_notes || []).map((note) => `<li>${note}</li>`).join('');
   document.getElementById('dailyPlanCards').innerHTML = data.plan_cards.map((p) => card({
     title: p.title,
     value: p.main,

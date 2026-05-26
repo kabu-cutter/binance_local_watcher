@@ -481,6 +481,17 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   color: var(--muted);
 }
 
+.prep-list {
+  margin: 8px 0 0;
+  padding-left: 1.15rem;
+  color: #60475b;
+  line-height: 1.8;
+}
+
+.prep-list li {
+  margin: 6px 0;
+}
+
 .chart-meta {
   margin: 0 0 10px;
   color: var(--muted);

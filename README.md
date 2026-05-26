@@ -81,6 +81,15 @@ rendererはHTTPサーバーではなく、`window.blw.api` から IPC で Electr
 禁止範囲はローカルエンジンの `getStatus` と `getCapabilities` でも返します。
 `real_order`, `auto_trading`, `withdrawal`, `api_key_storage`, `secret_storage` は実装しません。
 
+## 日次目標の考え方
+
+日次目標は利益額だけを見る場所ではなく、今日の条件がどれくらい重いかを見る準備ボードです。
+
+- 目標利益、投入額、機会回数、往復コスト、損切り幅、未約定率から条件を分解する
+- 今日の重さ、損切り1回の重さ、未約定時の悪化をカードで見る
+- 準備コメントは売買指示ではなく、条件の厳しさと確認点を示す
+- 実注文、自動売買、出金、APIキー保存は扱わない
+
 ## 次の候補
 
 - Streamlit版 candidate の計算ルール・実commission・BNBチェックを `local_engine_calculations.js` へ移植

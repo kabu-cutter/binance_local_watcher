@@ -39,6 +39,12 @@ function riskLabel(neededPct) {
   return 'かなり重い';
 }
 
+function riskKind(label) {
+  if (label === '軽め' || label === '中くらい') return 'good';
+  if (label === '重め') return 'warn';
+  return 'bad';
+}
+
 function formatSignedPct(value, digits = 4) {
   const number = safeFloat(value);
   return `${number >= 0 ? '+' : ''}${number.toFixed(digits)}%`;
@@ -129,6 +135,19 @@ function calculateDailyGoal(body = {}) {
   const minPct = (target / capital / minOpp) * 100 + costPct;
   const maxPct = (target / capital / maxOpp) * 100 + costPct;
   const lossPerStop = -(capital * (stopPct + costPct) / 100);
+  const lossAbs = Math.abs(lossPerStop);
+  const allowedStopsBeforeTargetBreak = lossAbs > 0 ? Math.max(0, Math.floor(target / lossAbs)) : null;
+  const balancedOpp = Math.max(1, Math.round((minOpp + maxOpp) / 2));
+  const balancedNet = target / balancedOpp;
+  const balancedPct = (balancedNet / capital) * 100 + costPct;
+  const weightLabel = riskLabel(balancedPct);
+  const worstCancelRate = Math.max(...cancelRates);
+  const worstNofill = Math.round((maxOpp * worstCancelRate) / 100);
+  const worstEffective = Math.max(1, maxOpp - worstNofill);
+  const worstNeededNet = target / worstEffective;
+  const worstNeededPct = (worstNeededNet / capital) * 100 + costPct;
+  const nofillMultiplier = balancedNet > 0 ? worstNeededNet / balancedNet : 1;
+  const stopPressurePct = target > 0 ? (lossAbs / target) * 100 : 0;
   const suggestion = [
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
@@ -138,6 +157,45 @@ function calculateDailyGoal(body = {}) {
     `損切り逆行率を ${stopPct.toFixed(2)}% と見る場合、1回の損切りは概算で約 ${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。未約定が増えるほど、残りの約定1回あたりの必要Netが重くなります。`,
     'これは売買指示ではなく、今日の条件がどれくらい厳しいかを見る準備サジェストです。',
   ].join('\n');
+  const readinessCards = [
+    {
+      title: '今日の重さ',
+      main: weightLabel,
+      sub: `${balancedOpp}回想定なら1回必要Net 約${balancedNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 必要変動率 約${balancedPct.toFixed(3)}%`,
+      tag: `${balancedPct.toFixed(3)}%`,
+      kind: riskKind(weightLabel),
+    },
+    {
+      title: '損切り1回の重さ',
+      main: `${lossAbs.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
+      sub: allowedStopsBeforeTargetBreak === null
+        ? '損切り逆行率が0%なので損切り負担はほぼ見ていません'
+        : `目標比 約${stopPressurePct.toFixed(1)}% / ${allowedStopsBeforeTargetBreak}回で目標余力をほぼ使います`,
+      tag: stopPressurePct >= 50 ? '要注意' : stopPressurePct >= 25 ? '重め' : '確認',
+      kind: stopPressurePct >= 50 ? 'bad' : stopPressurePct >= 25 ? 'warn' : 'good',
+    },
+    {
+      title: '未約定の悪化',
+      main: `${nofillMultiplier.toFixed(2)}倍`,
+      sub: `未約定${worstCancelRate}%なら有効約定${worstEffective}回 / 1回必要Net 約${worstNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
+      tag: riskLabel(worstNeededPct),
+      kind: riskKind(riskLabel(worstNeededPct)),
+    },
+  ];
+  const prepNotes = [
+    weightLabel === 'かなり重い'
+      ? '今日の目標はかなり重い条件です。回数、投入額、損切り幅、コスト前提を先に見直す候補です。'
+      : weightLabel === '重め'
+        ? '今日の目標はやや重めです。未約定が増えた時の1回あたり負担を先に確認すると安全です。'
+        : '今日の目標は条件上は軽めから中くらいです。実際の値動きとコスト負けだけ確認します。',
+    stopPressurePct >= 50
+      ? '損切り1回の影響が大きいです。何回狙うかより、逆行時にどこで止めるかが先に効きます。'
+      : '損切り1回の影響は目標内で確認できる範囲です。連続ミス時の崩れ方だけ見ておきます。',
+    nofillMultiplier >= 1.8
+      ? '未約定が増えると残った約定1回あたりの負担が跳ねます。指値待ちの前提は厳しめに見ます。'
+      : '未約定シナリオによる悪化は比較的読みやすい範囲です。チャンス回数の見積もりを更新しながら使います。',
+    'これは売買指示ではありません。今日の条件を希望ではなく準備項目へ分解するためのメモです。',
+  ];
   const planCards = [
     ['1回で達成', 1],
     [`${minOpp}回で分ける`, minOpp],
@@ -175,6 +233,8 @@ function calculateDailyGoal(body = {}) {
   }
   return {
     suggestion,
+    readiness_cards: readinessCards,
+    prep_notes: prepNotes,
     plan_cards: planCards,
     scenarios,
     roundtrip_cost_pct: costPct,
@@ -196,6 +256,7 @@ module.exports = {
   parsePositiveNumberList,
   parseCancelRates,
   riskLabel,
+  riskKind,
   buildSymbolSummaries,
   calculateImpactRows,
   calculateTradePreview,
