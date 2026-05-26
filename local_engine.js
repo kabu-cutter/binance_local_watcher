@@ -702,6 +702,8 @@ async function impact(params = {}) {
 
 async function alertPreview(params = {}) {
   const windowMinutes = Math.max(1, Math.min(240, safeInt(params.window_minutes, 15)));
+  const alertMode = String(params.alert_mode || 'simple').trim().toLowerCase() === 'rolling' ? 'rolling' : 'simple';
+  const rollingMinPoints = Math.max(2, Math.min(20, safeInt(params.rolling_min_points, 3)));
   const thresholdPct = Math.max(0, safeFloat(params.threshold_pct, 0.2));
   const thresholdsText = String(params.thresholds || '').trim();
   const thresholdsBySymbol = {};
@@ -779,12 +781,25 @@ async function alertPreview(params = {}) {
       if (moveFromPivot >= thresholdForSymbol) streakCount += 1;
       else break;
     }
+    let rollingStreak = 0;
+    for (let i = windowRows.length - 1; i > 0; i -= 1) {
+      const curr = windowRows[i];
+      const prev = windowRows[i - 1];
+      if (!curr || !prev || !Number.isFinite(curr.price) || !Number.isFinite(prev.price) || prev.price <= 0) break;
+      const stepPct = ((curr.price - prev.price) / prev.price) * 100;
+      if (stepPct > 0) rollingStreak += 1;
+      else break;
+    }
+    const simpleHit = movePct >= thresholdForSymbol;
+    const rollingHit = rollingStreak >= rollingMinPoints && movePct >= Math.max(thresholdForSymbol * 0.4, 0.02);
+    const hit = alertMode === 'rolling' ? rollingHit : simpleHit;
     return {
       symbol,
-      status: movePct >= thresholdForSymbol ? '上昇アラート' : '監視中',
+      status: hit ? (alertMode === 'rolling' ? 'ローリング上昇アラート' : '上昇アラート') : '監視中',
       move_pct: movePct,
       threshold_pct: thresholdForSymbol,
       streak_count: streakCount,
+      rolling_streak: rollingStreak,
       samples: windowRows.length,
       latest_price: latest.price,
       base_price: base.price,
@@ -813,6 +828,8 @@ async function alertPreview(params = {}) {
     historySaved = appendItems.length;
   }
   return {
+    alert_mode: alertMode,
+    rolling_min_points: rollingMinPoints,
     window_minutes: windowMinutes,
     threshold_pct: thresholdPct,
     thresholds_by_symbol: thresholdsBySymbol,

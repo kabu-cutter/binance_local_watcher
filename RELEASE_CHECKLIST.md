@@ -28,6 +28,7 @@
 - 生成物出力先(`dist/`, `out/`, `build/`, `release/`)がGit追跡対象外であること
 - 起動バッチ(`start_electron_local_engine.bat`)で起動確認できること
 - `npm run build` が成功すること（Node 20+）
+- `npm run build` 失敗時に、管理者実行またはWindows開発者モードでシンボリックリンク権限を確認すること
 
 ## 7) Final policy check
 - 実注文・自動売買・出金・秘密情報保存を追加していないことを再確認

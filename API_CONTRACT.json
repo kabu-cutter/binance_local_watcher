@@ -27,8 +27,8 @@
         "response": ["rows"]
       },
       "alert-preview": {
-        "query": ["window_minutes", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
-        "response": ["window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
+        "query": ["window_minutes", "alert_mode", "rolling_min_points", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
+        "response": ["alert_mode", "rolling_min_points", "window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
       },
       "alert-history": {
         "query": ["limit"],

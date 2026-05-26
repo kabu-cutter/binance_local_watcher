@@ -45,6 +45,10 @@ npm run build
 `electron-builder` を使って `dist/` に出力します。  
 Node 14 ではビルドできないため、Node 20 以上で実行してください。
 
+補足（Windows）:
+- `winCodeSign` 展開時にシンボリックリンク作成権限が必要です
+- 失敗する場合は「管理者PowerShellで実行」または「Windows開発者モードを有効化」してください
+
 ## 役割分担
 
 - `index.html` / `renderer.js`: UI表示と入力

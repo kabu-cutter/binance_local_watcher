@@ -216,6 +216,8 @@ async function loadImpact() {
 
 async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
+  const alertMode = document.getElementById('alertMode').value;
+  const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
   const thresholdPct = Number(document.getElementById('alertThresholdPct').value);
   const btcThreshold = Number(document.getElementById('alertThresholdBTC').value);
   const ethThreshold = Number(document.getElementById('alertThresholdETH').value);
@@ -233,8 +235,8 @@ async function loadAlertPreview() {
   if (Number.isFinite(btcThreshold) && btcThreshold >= 0) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
   if (Number.isFinite(ethThreshold) && ethThreshold >= 0) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
   const thresholdsQuery = thresholdPairs.join(',');
-  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
-  document.getElementById('alertPreviewMemo').textContent = `${data.message} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
+  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
+  document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
     ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} (${top.status})`
@@ -245,6 +247,7 @@ async function loadAlertPreview() {
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
     streak: `${row.streak_count ?? 0}`,
+    rolling_streak: `${row.rolling_streak ?? 0}`,
     samples: `${row.samples ?? 0}`,
     latest: yen(row.latest_price),
     base: yen(row.base_price),
@@ -256,6 +259,7 @@ async function loadAlertPreview() {
     ['move_pct', `変動率(${data.window_minutes}分)`],
     ['threshold', '適用しきい値'],
     ['streak', '連続回数'],
+    ['rolling_streak', 'rolling連続'],
     ['samples', 'サンプル数'],
     ['latest', '最新価格'],
     ['base', '起点価格'],
@@ -548,6 +552,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('historyDate').value = todayJstDateText();
   applyDailyTemplate();
   document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertMode').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdPct').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdBTC').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
