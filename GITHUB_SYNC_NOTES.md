@@ -5,11 +5,11 @@ This repository currently lives under `C:\Users\ringo`, so do not run `git add .
 Use explicit paths when staging this project, for example:
 
 ```powershell
-git -C C:\Users\ringo add binance_local_watcher/.gitignore
-git -C C:\Users\ringo add binance_local_watcher/.env.example
-git -C C:\Users\ringo add binance_local_watcher/config.local.example.json
-git -C C:\Users\ringo add binance_local_watcher/GITHUB_SYNC_NOTES.md
-git -C C:\Users\ringo add binance_local_watcher/electron_python_ui_v0_2_price_chart
+git -C C:\Users\xxxxx add binance_local_watcher/.gitignore
+git -C C:\Users\xxxxx add binance_local_watcher/.env.example
+git -C C:\Users\xxxxx add binance_local_watcher/config.local.example.json
+git -C C:\Users\xxxxx add binance_local_watcher/GITHUB_SYNC_NOTES.md
+git -C C:\Users\xxxxx add binance_local_watcher/electron_python_ui_v0_2_price_chart
 ```
 
 Do not commit these local files:
