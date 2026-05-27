@@ -7,7 +7,7 @@ async function invokeEngine(route, payload) {
 }
 
 contextBridge.exposeInMainWorld('blw', {
-  version: 'electron-node-engine-v0.4',
+  version: 'electron-node-engine-v0.5-chart-update-now',
   engineMode: 'electron-main-node-engine',
   safetyMode: 'read-only-market-data-and-local-calculation',
   capabilities: {
@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('blw', {
     getChart: (query) => invokeEngine('chart', { query }),
     fetchPrices: () => invokeEngine('fetch-prices'),
     downloadHistory: (body) => invokeEngine('download-history', { body }),
+    updateHistoryToNow: (body) => invokeEngine('update-history-to-now', { body }),
     tradePreview: (body) => invokeEngine('trade-preview', { body }),
     dailyGoal: (body) => invokeEngine('daily-goal', { body }),
     saveDailyGoalReport: (body) => invokeEngine('save-daily-goal-report', { body }),

@@ -72,6 +72,27 @@ function qty(v) {
   return Number(v).toFixed(8);
 }
 
+function elValue(id, fallback = '') {
+  const el = document.getElementById(id);
+  return el ? el.value : fallback;
+}
+function elNumber(id, fallback = 0) {
+  const value = Number(elValue(id, fallback));
+  return Number.isFinite(value) ? value : fallback;
+}
+function elChecked(id, fallback = false) {
+  const el = document.getElementById(id);
+  return el ? el.checked : fallback;
+}
+function setValueIfExists(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value;
+}
+function setCheckedIfExists(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.checked = value;
+}
+
 async function getJson(path) {
   if (window.blw?.api) {
     const url = new URL(path, 'http://local-engine');
@@ -94,6 +115,7 @@ async function postJson(path, body) {
   if (window.blw?.api) {
     if (path === '/api/fetch-prices') return window.blw.api.fetchPrices();
     if (path === '/api/download-history') return window.blw.api.downloadHistory(body || {});
+    if (path === '/api/update-history-to-now') return window.blw.api.updateHistoryToNow(body || {});
     if (path === '/api/trade-preview') return window.blw.api.tradePreview(body || {});
     if (path === '/api/daily-goal') return window.blw.api.dailyGoal(body || {});
     if (path === '/api/save-daily-goal-report') return window.blw.api.saveDailyGoalReport(body || {});
@@ -236,6 +258,86 @@ async function loadSummary() {
   document.getElementById('summaryMemo').textContent = data.memo;
 }
 
+function renderMiniChart(symbol, data) {
+  const svg = document.getElementById(`summaryMiniChart${symbol}`);
+  const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
+  if (!svg || !meta) return;
+
+  const width = 420;
+  const height = 150;
+  const pad = 14;
+  const points = (data?.points || []).filter((p) => Number.isFinite(Number(p.price)));
+  svg.innerHTML = '';
+
+  const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bg.setAttribute('x', '0');
+  bg.setAttribute('y', '0');
+  bg.setAttribute('width', String(width));
+  bg.setAttribute('height', String(height));
+  bg.setAttribute('rx', '14');
+  bg.setAttribute('class', 'chart-bg');
+  svg.appendChild(bg);
+
+  for (let i = 0; i < 3; i += 1) {
+    const y = pad + (i / 2) * (height - pad * 2);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', String(pad));
+    line.setAttribute('x2', String(width - pad));
+    line.setAttribute('y1', y.toFixed(2));
+    line.setAttribute('y2', y.toFixed(2));
+    line.setAttribute('class', 'chart-grid');
+    svg.appendChild(line);
+  }
+
+  if (points.length >= 2) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', makeSvgPath(points, width, height, pad));
+    path.setAttribute('class', 'mini-chart-line');
+    svg.appendChild(path);
+
+    const last = points[points.length - 1];
+    const prices = points.map((p) => Number(p.price));
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const span = Math.max(max - min, Math.abs(max) * 0.0001, 1);
+    const x = width - pad;
+    const y = height - pad - ((Number(last.price) - min) / span) * (height - pad * 2);
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', x.toFixed(2));
+    dot.setAttribute('cy', y.toFixed(2));
+    dot.setAttribute('r', '4');
+    dot.setAttribute('class', 'chart-dot');
+    svg.appendChild(dot);
+
+    const first = points[0];
+    const changePct = Number(first.price) ? ((Number(last.price) - Number(first.price)) / Number(first.price)) * 100 : null;
+    const lastTime = last.timestamp || last.timestamp_full || '';
+    meta.textContent = `${points.length}点 / ${pct(changePct, 3, true)} / 最新 ${yen(last.price)}${lastTime ? ` / ${lastTime}` : ''}`;
+  } else {
+    meta.textContent = data?.errors?.length
+      ? `表示できません: ${data.errors.join(' / ')}`
+      : 'データ不足';
+  }
+}
+
+async function loadSummaryMiniCharts() {
+  const symbols = ['BTCJPY', 'ETHJPY'];
+  await Promise.all(symbols.map(async (symbol) => {
+    const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
+    if (meta) meta.textContent = '読み込み中...';
+    try {
+      // サマリーのミニチャートは「直近の形」を軽く見る目的なので、
+      // チャートタブの日付指定には依存させず、ローカル履歴優先・不足時は公開klineへフォールバックします。
+      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=local&interval=1m&limit=80`);
+      renderMiniChart(symbol, data);
+    } catch (e) {
+      const svg = document.getElementById(`summaryMiniChart${symbol}`);
+      if (svg) svg.innerHTML = '';
+      if (meta) meta.textContent = `取得失敗: ${e.message}`;
+    }
+  }));
+}
+
 async function fetchPrices() {
   const btn = document.getElementById('fetchPrices');
   const old = btn.textContent;
@@ -246,6 +348,7 @@ async function fetchPrices() {
     document.getElementById('summaryMemo').textContent = `${data.message}\n保存先: ${data.history_file}${data.errors?.length ? `\nエラー: ${data.errors.join(' / ')}` : ''}`;
     await loadStatus();
     await loadSummary();
+    await loadSummaryMiniCharts();
     await loadImpact();
     await loadChart();
   } catch (e) {
@@ -465,6 +568,52 @@ async function downloadHistory() {
   }
 }
 
+async function updateHistoryToNow() {
+  const btn = document.getElementById('updateHistoryToNow');
+  const old = btn.textContent;
+  const memo = document.getElementById('historyDownloadMemo');
+  const symbol = elValue('historySymbol', elValue('chartSymbol', 'BTCJPY'));
+  const interval = elValue('historyInterval', elValue('chartInterval', '1m'));
+  const payload = {
+    symbol,
+    interval,
+    wait_ms: 250,
+    fallback_hours: 6,
+    include_unconfirmed: true,
+  };
+  btn.textContent = '現在まで更新中...';
+  btn.disabled = true;
+  memo.textContent = `${symbol} ${interval} のDL済み履歴を、保存済みの最後の足から現在時刻まで追加しています。`;
+  try {
+    const data = await postJson('/api/update-history-to-now', payload);
+    const files = (data.file_names || []).join(' / ');
+    memo.textContent = [
+      data.message,
+      `前回最新: ${data.latest_before_jst || 'なし'} / 更新後最新: ${data.latest_after_jst || 'なし'}`,
+      `取得: ${data.fetched_rows || 0}本 / 追加: ${data.inserted_rows || 0}本 / API回数: ${data.request_count || 0}`,
+      files ? `更新ファイル: ${files}` : '',
+      data.fallback_used ? 'DL済み履歴がなかったため、今日の直近分から取得しました。' : '',
+      data.unconfirmed_latest ? '注意: 最新足は未確定の可能性があります。条件診断では確定足だけを優先して見る予定です。' : '',
+      data.errors?.length ? `エラー: ${data.errors.join(' / ')}` : '',
+    ].filter(Boolean).join('\n');
+    setValueIfExists('historySymbol', symbol);
+    setValueIfExists('historyInterval', interval);
+    setValueIfExists('historyDate', todayJstDateText());
+    setValueIfExists('historyStartHour', '0');
+    setValueIfExists('historyEndHour', '24');
+    setValueIfExists('chartSymbol', symbol);
+    setValueIfExists('chartInterval', interval);
+    setValueIfExists('chartSource', 'combined');
+    await loadChart();
+    await loadSummaryMiniCharts();
+  } catch (e) {
+    memo.textContent = `現在時刻までの差分DLに失敗しました。\n${e.message}`;
+  } finally {
+    btn.textContent = old;
+    btn.disabled = false;
+  }
+}
+
 async function calcTrade() {
   const payload = {
     symbol: document.getElementById('tradeSymbol').value,
@@ -491,22 +640,28 @@ function syncRoundtripCostFromTrade() {
 function buildDailyPayload() {
   syncRoundtripCostFromTrade();
   const linkedCost = Number(document.getElementById('tradeCostPct').value);
+  const occurrenceInterval = elValue('dailyOccurrenceInterval', '1m');
   return {
-    strategy_template: document.getElementById('dailyTemplate').value,
-    symbol: document.getElementById('dailySymbol').value,
-    target_profit_jpy: Number(document.getElementById('dailyTarget').value),
-    capital_jpy: Number(document.getElementById('dailyCapital').value),
-    min_opportunities: Number(document.getElementById('dailyMinOpp').value),
-    max_opportunities: Number(document.getElementById('dailyMaxOpp').value),
-    stop_loss_pct: Number(document.getElementById('dailyStopPct').value),
+    strategy_template: elValue('dailyTemplate', 'market_priority'),
+    symbol: elValue('dailySymbol', 'BTCJPY'),
+    target_profit_jpy: elNumber('dailyTarget', 0),
+    capital_jpy: elNumber('dailyCapital', 1),
+    min_opportunities: elNumber('dailyMinOpp', 1),
+    max_opportunities: elNumber('dailyMaxOpp', 1),
+    stop_loss_pct: elNumber('dailyStopPct', 0),
     roundtrip_cost_pct: linkedCost,
-    cancel_rates_text: document.getElementById('dailyCancelRates').value,
-    virtual_fill_rate_pct: Number(document.getElementById('dailyFillRate').value),
-    virtual_fill_rate_auto: document.getElementById('dailyFillRateAuto').checked,
-    interval: document.getElementById('historyInterval').value,
-    date: document.getElementById('historyDate').value,
-    start_hour: Number(document.getElementById('historyStartHour').value),
-    end_hour: Number(document.getElementById('historyEndHour').value),
+    cancel_rates_text: elValue('dailyCancelRates', '10,30,50'),
+    virtual_fill_rate_pct: elNumber('dailyFillRate', 70),
+    // trueなら、約定率ではなく「必要値幅の出現率」を別計算します。
+    virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
+    occurrence_interval: occurrenceInterval,
+    occurrence_scope: elValue('dailyOccurrenceScope', 'latest'),
+    occurrence_start_date: elValue('dailyOccurrenceStartDate', ''),
+    occurrence_end_date: elValue('dailyOccurrenceEndDate', ''),
+    occurrence_start_hour: elNumber('dailyOccurrenceStartHour', 0),
+    occurrence_end_hour: elNumber('dailyOccurrenceEndHour', 24),
+    // 旧API互換用。日次目標側の参照設定であり、チャート/履歴DL欄とは切り離しています。
+    interval: occurrenceInterval,
   };
 }
 
@@ -534,10 +689,9 @@ async function calcDaily() {
     || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
   document.getElementById('dailySuggestion').textContent = data.suggestion;
   document.getElementById('dailyDiagnosticSummary').textContent = data.diagnostic_summary || '総合診断はまだありません。';
-  document.getElementById('dailyFillRateMemo').textContent = [
-    data.virtual_fill_rate_note || '仮想約定率は手入力値を使っています。',
-    data.required_move_occurrence_note || '',
-  ].filter(Boolean).join('\n');
+  document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
+    || '仮想約定率は手入力値またはテンプレート値です。必要値幅の履歴確認とは別扱いです。';
+  renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
     title: p.title,
     value: p.main,
@@ -566,6 +720,28 @@ async function calcDaily() {
     reality: r.reality,
     memo: r.memo,
   })));
+}
+
+function renderDailyOccurrence(data) {
+  const memoEl = document.getElementById('dailyOccurrenceMemo');
+  const tableEl = document.getElementById('dailyOccurrenceTable');
+  if (!memoEl || !tableEl) return;
+  const meta = data.required_move_occurrence_meta || {};
+  const files = Array.isArray(meta.referenced_files) ? meta.referenced_files : [];
+  memoEl.textContent = data.required_move_occurrence_note || '必要値幅の出現率はまだ計算していません。';
+  const rows = [
+    { item: '参照モード', value: meta.reference_scope_label || '—' },
+    { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || elValue('dailyOccurrenceInterval', '1m')}` },
+    { item: '候補ファイル数', value: meta.selected_file_count === undefined ? '—' : `${meta.selected_file_count}件` },
+    { item: '使用ファイル数', value: meta.referenced_file_count === undefined ? '—' : `${meta.referenced_file_count}件` },
+    { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
+    { item: '参照期間', value: meta.reference_period_text || '—' },
+    { item: '必要値幅', value: pct(meta.required_move_pct ?? data.required_move_occurrence_required_pct, 3) },
+    { item: '必要値幅を満たした足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
+    { item: '必要値幅出現率', value: pct(data.required_move_occurrence_rate_pct, 1) },
+    { item: '使用ファイル名', value: files.length ? files.slice(0, 8).join('\n') + (files.length > 8 ? `\nほか${files.length - 8}件` : '') : '—' },
+  ];
+  renderTable(tableEl, [['item', '項目'], ['value', '値']], rows);
 }
 
 async function loadDailyReports() {
@@ -612,14 +788,13 @@ async function clearDailyReports() {
 }
 
 function applyDailyTemplate() {
-  const templateId = document.getElementById('dailyTemplate').value;
-  const template = DAILY_TEMPLATES[templateId];
-  if (!template) return;
-  document.getElementById('dailyFillRate').value = String(template.fillRate);
-  document.getElementById('dailyStopPct').value = String(template.stopPct);
-  document.getElementById('dailyCostPct').value = String(template.costPct);
-  document.getElementById('dailyCancelRates').value = template.cancelRates;
-  document.getElementById('dailyFillRateAuto').checked = template.autoFill;
+  const templateId = elValue('dailyTemplate', 'market_priority');
+  const template = DAILY_TEMPLATES[templateId] || DAILY_TEMPLATES.custom;
+  setValueIfExists('dailyFillRate', String(template.fillRate));
+  setValueIfExists('dailyStopPct', String(template.stopPct));
+  setValueIfExists('dailyCostPct', String(template.costPct));
+  setValueIfExists('dailyCancelRates', template.cancelRates);
+  // テンプレートで仮想約定率は変えますが、必要値幅の履歴確認ON/OFFはユーザー設定を維持します。
   document.getElementById('dailyTemplateMemo').textContent = `${template.label}: ${template.memo}（売買推奨ではなく条件テンプレートです）`;
 }
 
@@ -641,6 +816,7 @@ function setupNav() {
       document.getElementById(section).classList.add('active');
       document.getElementById('pageTitle').textContent = titles[section][0];
       document.getElementById('pageSubtitle').textContent = titles[section][1];
+      if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
     });
   });
@@ -649,6 +825,7 @@ function setupNav() {
 async function refreshAll() {
   await loadStatus();
   await loadSummary();
+  await loadSummaryMiniCharts();
   await loadImpact();
   await loadAlertPreview();
   await loadApiReadiness();
@@ -658,12 +835,14 @@ document.addEventListener('DOMContentLoaded', () => {
   setupNav();
   document.getElementById('refreshAll').addEventListener('click', refreshAll);
   document.getElementById('fetchPrices').addEventListener('click', fetchPrices);
+  document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadChart').addEventListener('click', loadChart);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
+  document.getElementById('updateHistoryToNow').addEventListener('click', updateHistoryToNow);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
   document.getElementById('chartSource').addEventListener('change', loadChart);
   document.getElementById('chartInterval').addEventListener('change', loadChart);
@@ -685,6 +864,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reloadDailyReports').addEventListener('click', loadDailyReports);
   document.getElementById('clearDailyReports').addEventListener('click', clearDailyReports);
   document.getElementById('historyDate').value = todayJstDateText();
+  setValueIfExists('dailyOccurrenceStartDate', todayJstDateText());
+  setValueIfExists('dailyOccurrenceEndDate', todayJstDateText());
+  setCheckedIfExists('dailyOccurrenceEnabled', true);
   setDailyTemplateTab(document.getElementById('dailyTemplate').value || 'market_priority');
   applyDailyTemplate();
   syncRoundtripCostFromTrade();

@@ -1,5 +1,5 @@
 {
-  "version": "electron-node-engine-v0.4",
+  "version": "electron-node-engine-v0.5-chart-update-now",
   "mode": "electron-ui + electron-main-node-engine",
   "forbidden": [
     "real_order",
@@ -12,73 +12,315 @@
     "GET": {
       "status": {
         "query": {},
-        "response": ["ok", "version", "mode", "project_dir", "history_file", "history_rows", "data_source", "api_boundary", "calculation_engine"]
+        "response": [
+          "ok",
+          "version",
+          "mode",
+          "project_dir",
+          "history_file",
+          "history_rows",
+          "data_source",
+          "api_boundary",
+          "calculation_engine"
+        ]
       },
       "capabilities": {
         "query": {},
-        "response": ["ok", "version", "symbols", "routes", "api_boundary", "calculation_engine"]
+        "response": [
+          "ok",
+          "version",
+          "symbols",
+          "routes",
+          "api_boundary",
+          "calculation_engine"
+        ]
       },
       "summary": {
         "query": {},
-        "response": ["symbols", "data_source", "memo"]
+        "response": [
+          "symbols",
+          "data_source",
+          "memo"
+        ]
       },
       "impact": {
-        "query": ["amounts"],
-        "response": ["rows"]
+        "query": [
+          "amounts"
+        ],
+        "response": [
+          "rows"
+        ]
       },
       "alert-preview": {
-        "query": ["window_minutes", "alert_mode", "rolling_min_points", "alert_rising_ratio", "threshold_pct", "symbols", "thresholds", "save_history", "history_limit"],
-        "response": ["alert_mode", "rolling_min_points", "alert_rising_ratio", "window_minutes", "threshold_pct", "thresholds_by_symbol", "source", "symbols", "top_alert", "history_saved", "rows", "message"]
+        "query": [
+          "window_minutes",
+          "alert_mode",
+          "rolling_min_points",
+          "alert_rising_ratio",
+          "threshold_pct",
+          "symbols",
+          "thresholds",
+          "save_history",
+          "history_limit"
+        ],
+        "response": [
+          "alert_mode",
+          "rolling_min_points",
+          "alert_rising_ratio",
+          "window_minutes",
+          "threshold_pct",
+          "thresholds_by_symbol",
+          "source",
+          "symbols",
+          "top_alert",
+          "history_saved",
+          "rows",
+          "message"
+        ]
       },
       "alert-history": {
-        "query": ["limit"],
-        "response": ["rows", "count", "limit", "file"]
+        "query": [
+          "limit"
+        ],
+        "response": [
+          "rows",
+          "count",
+          "limit",
+          "file"
+        ]
       },
       "daily-goal-reports": {
-        "query": ["limit"],
-        "response": ["rows", "count", "limit", "file"]
+        "query": [
+          "limit"
+        ],
+        "response": [
+          "rows",
+          "count",
+          "limit",
+          "file"
+        ]
       },
       "chart": {
-        "query": ["symbol", "source", "interval", "date", "start_hour", "end_hour", "limit"],
-        "response": ["symbol", "points", "source", "message", "errors", "min_price", "max_price", "rows"]
+        "query": [
+          "symbol",
+          "source",
+          "interval",
+          "date",
+          "start_hour",
+          "end_hour",
+          "limit"
+        ],
+        "response": [
+          "symbol",
+          "points",
+          "source",
+          "message",
+          "errors",
+          "min_price",
+          "max_price",
+          "rows"
+        ]
       },
       "contract": {
         "query": {},
-        "response": ["version", "mode", "forbidden", "routes"]
+        "response": [
+          "version",
+          "mode",
+          "forbidden",
+          "routes"
+        ]
       },
       "api-readiness": {
         "query": {},
-        "response": ["has_api_key", "has_api_secret", "api_key_source", "api_secret_source", "public_api_ok", "public_api_error", "auth_api_ok", "auth_api_error", "account_type", "can_trade", "fee_api_ok", "fee_api_error", "fee_sample", "fee_fetch_ready", "note"]
+        "response": [
+          "has_api_key",
+          "has_api_secret",
+          "api_key_source",
+          "api_secret_source",
+          "public_api_ok",
+          "public_api_error",
+          "auth_api_ok",
+          "auth_api_error",
+          "account_type",
+          "can_trade",
+          "fee_api_ok",
+          "fee_api_error",
+          "fee_sample",
+          "fee_fetch_ready",
+          "note"
+        ]
       }
     },
     "POST": {
       "fetch-prices": {
         "body": {},
-        "response": ["ok", "fetched", "errors", "added_rows", "history_file", "symbols", "data_source", "message"]
+        "response": [
+          "ok",
+          "fetched",
+          "errors",
+          "added_rows",
+          "history_file",
+          "symbols",
+          "data_source",
+          "message"
+        ]
       },
       "download-history": {
-        "body": ["symbol", "interval", "date", "start_hour", "end_hour", "skip_existing", "wait_ms", "dry_run"],
-        "response": ["ok", "dry_run", "symbol", "interval", "date", "start_hour", "end_hour", "chunks", "errors", "merged_file", "merged_rows", "message"]
+        "body": [
+          "symbol",
+          "interval",
+          "date",
+          "start_hour",
+          "end_hour",
+          "skip_existing",
+          "wait_ms",
+          "dry_run"
+        ],
+        "response": [
+          "ok",
+          "dry_run",
+          "symbol",
+          "interval",
+          "date",
+          "start_hour",
+          "end_hour",
+          "chunks",
+          "errors",
+          "merged_file",
+          "merged_rows",
+          "message"
+        ]
+      },
+      "update-history-to-now": {
+        "body": [
+          "symbol",
+          "interval",
+          "wait_ms",
+          "fallback_hours",
+          "include_unconfirmed"
+        ],
+        "response": [
+          "ok",
+          "symbol",
+          "interval",
+          "fetched_rows",
+          "inserted_rows",
+          "request_count",
+          "files",
+          "file_names",
+          "errors",
+          "latest_before_jst",
+          "latest_after_jst",
+          "started_from_jst",
+          "updated_to_jst",
+          "unconfirmed_latest",
+          "fallback_used",
+          "message"
+        ]
       },
       "trade-preview": {
-        "body": ["symbol", "amount_jpy", "exit_change_pct", "roundtrip_cost_pct"],
-        "response": ["symbol", "amount_jpy", "current_price", "exit_price", "quantity", "gross_pl_yen", "net_pl_yen", "roundtrip_cost_pct", "rule_check", "accuracy", "memo"]
+        "body": [
+          "symbol",
+          "amount_jpy",
+          "exit_change_pct",
+          "roundtrip_cost_pct"
+        ],
+        "response": [
+          "symbol",
+          "amount_jpy",
+          "current_price",
+          "exit_price",
+          "quantity",
+          "gross_pl_yen",
+          "net_pl_yen",
+          "roundtrip_cost_pct",
+          "rule_check",
+          "accuracy",
+          "memo"
+        ]
       },
       "daily-goal": {
-        "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],
-        "response": ["suggestion", "readiness_cards", "prep_notes", "plan_cards", "scenarios", "roundtrip_cost_pct", "strategy_template", "strategy_template_label", "strategy_template_note", "virtual_fill_rate_pct_used", "virtual_fill_rate_note"]
+        "body": [
+          "strategy_template",
+          "symbol",
+          "target_profit_jpy",
+          "capital_jpy",
+          "min_opportunities",
+          "max_opportunities",
+          "stop_loss_pct",
+          "roundtrip_cost_pct",
+          "cancel_rates_text",
+          "virtual_fill_rate_pct",
+          "virtual_fill_rate_auto",
+          "occurrence_interval",
+          "occurrence_scope",
+          "occurrence_start_date",
+          "occurrence_end_date",
+          "occurrence_start_hour",
+          "occurrence_end_hour"
+        ],
+        "response": [
+          "suggestion",
+          "diagnostic_summary",
+          "readiness_cards",
+          "prep_notes",
+          "plan_cards",
+          "scenarios",
+          "roundtrip_cost_pct",
+          "required_move_occurrence_rate_pct",
+          "required_move_occurrence_note",
+          "required_move_occurrence_label",
+          "required_move_occurrence_required_pct",
+          "required_move_occurrence_meta",
+          "strategy_template",
+          "strategy_template_label",
+          "strategy_template_note",
+          "virtual_fill_rate_pct_used",
+          "virtual_fill_rate_note"
+        ]
       },
       "save-daily-goal-report": {
-        "body": ["strategy_template", "symbol", "target_profit_jpy", "capital_jpy", "min_opportunities", "max_opportunities", "stop_loss_pct", "roundtrip_cost_pct", "cancel_rates_text", "virtual_fill_rate_pct", "virtual_fill_rate_auto", "interval", "date", "start_hour", "end_hour"],
-        "response": ["ok", "rows_saved", "file", "message"]
+        "body": [
+          "strategy_template",
+          "symbol",
+          "target_profit_jpy",
+          "capital_jpy",
+          "min_opportunities",
+          "max_opportunities",
+          "stop_loss_pct",
+          "roundtrip_cost_pct",
+          "cancel_rates_text",
+          "virtual_fill_rate_pct",
+          "virtual_fill_rate_auto",
+          "occurrence_interval",
+          "occurrence_scope",
+          "occurrence_start_date",
+          "occurrence_end_date",
+          "occurrence_start_hour",
+          "occurrence_end_hour"
+        ],
+        "response": [
+          "ok",
+          "rows_saved",
+          "file",
+          "message"
+        ]
       },
       "clear-alert-history": {
         "body": {},
-        "response": ["ok", "message", "file"]
+        "response": [
+          "ok",
+          "message",
+          "file"
+        ]
       },
       "clear-daily-goal-reports": {
         "body": {},
-        "response": ["ok", "message", "file"]
+        "response": [
+          "ok",
+          "message",
+          "file"
+        ]
       }
     }
   }

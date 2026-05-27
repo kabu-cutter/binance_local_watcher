@@ -150,7 +150,7 @@
           <div class="card-head">
             <div>
               <h3>履歴データDL</h3>
-              <p class="card-desc">Binance公開klineを1時間チャンクに分けて取得し、long_dataへ保存します。取得済みチャンクはスキップできます。</p>
+              <p class="card-desc">Binance公開klineを1時間チャンクに分けて取得し、long_dataへ保存します。取得済みチャンクはスキップできます。グラフ用には、保存済みの最後の足から現在時刻まで差分DLできます。</p>
             </div>
           </div>
           <div class="form-grid history-form">
@@ -174,6 +174,7 @@
             </label>
           </div>
           <button class="primary" id="downloadHistory">履歴を分割DL</button>
+          <button class="secondary" id="updateHistoryToNow">現在時刻まで差分DL</button>
           <p class="memo-text" id="historyDownloadMemo">未取得です。丸1日なら開始0、終了24にします。</p>
         </div>
       </section>
@@ -271,7 +272,29 @@
               <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
             </label>
             <label class="check-field">必要値幅を履歴確認
-              <input id="dailyFillRateAuto" type="checkbox" checked />
+              <input id="dailyOccurrenceEnabled" type="checkbox" checked />
+            </label>
+            <label>必要値幅の参照足
+              <select id="dailyOccurrenceInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
+            </label>
+            <label>必要値幅の参照範囲
+              <select id="dailyOccurrenceScope">
+                <option value="latest">最新DLデータ</option>
+                <option value="all_downloaded">DL済み全体</option>
+                <option value="range">指定範囲</option>
+              </select>
+            </label>
+            <label>参照開始日
+              <input id="dailyOccurrenceStartDate" type="date" />
+            </label>
+            <label>参照終了日
+              <input id="dailyOccurrenceEndDate" type="date" />
+            </label>
+            <label>参照開始時
+              <input id="dailyOccurrenceStartHour" type="number" value="0" min="0" max="23" />
+            </label>
+            <label>参照終了時
+              <input id="dailyOccurrenceEndHour" type="number" value="24" min="1" max="24" />
             </label>
           </div>
           <button class="secondary" id="applyDailyTemplate">テンプレート条件を反映</button>
@@ -293,6 +316,12 @@
           <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
         </div>
         <div class="grid four" id="dailyReadinessCards"></div>
+        <div class="card">
+          <h3>必要値幅の履歴参照</h3>
+          <p class="memo-text">ここは「約定率」ではなく、過去データ上で必要な値幅が出た頻度だけを見ます。チャートタブの表示日とは分離します。</p>
+          <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
+          <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
+        </div>
         <div class="card">
           <h3>準備コメント</h3>
           <ul class="prep-list" id="dailyPrepNotes">

@@ -4,7 +4,7 @@ const https = require('https');
 const crypto = require('crypto');
 const calculations = require('./local_engine_calculations');
 
-const VERSION = 'electron-node-engine-v0.4';
+const VERSION = 'electron-node-engine-v0.5-chart-update-now';
 const SYMBOLS = ['BTCJPY', 'ETHJPY'];
 const HISTORY_COLUMNS = ['timestamp', 'symbol', 'price_jpy'];
 const LONG_DATA_COLUMNS = [
@@ -22,6 +22,12 @@ const LONG_DATA_COLUMNS = [
 ];
 const BINANCE_BASE_URL = 'https://api.binance.com';
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const INTERVAL_MS = {
+  '1m': 60 * 1000,
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '1h': 60 * 60 * 1000,
+};
 
 const MOCK_PRICES = {
   BTCJPY: { price: 15600000.0, prev: 15520000.0, short_base: 15480000.0 },
@@ -158,6 +164,364 @@ function latestDownloadedDateFor(symbol, interval) {
   }
   dates.sort();
   return dates.length ? expandCompactDateLabel(dates[dates.length - 1]) : '';
+}
+
+
+function jstDateTextFromMs(ms) {
+  const jst = new Date(Number(ms) + JST_OFFSET_MS);
+  const yyyy = jst.getUTCFullYear();
+  const mm = pad2(jst.getUTCMonth() + 1);
+  const dd = pad2(jst.getUTCDate());
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function fullDayMergedKlineFile(symbol, interval, dateText) {
+  const dateLabel = compactDateLabel(dateText);
+  return path.join(longDataDir(), `binance_${symbol}_${interval}_${dateLabel}_0000_2400_merged_JST.csv`);
+}
+
+function normalizeInterval(interval) {
+  return INTERVAL_MS[interval] ? interval : '1m';
+}
+
+function currentOpenTimeMs(interval, nowMs = Date.now()) {
+  const step = INTERVAL_MS[normalizeInterval(interval)] || INTERVAL_MS['1m'];
+  return Math.floor(nowMs / step) * step;
+}
+
+async function readDownloadedRowsForDate(symbol, interval, dateText) {
+  const dateLabel = compactDateLabel(dateText);
+  const metas = listDownloadedKlineFileMetas(symbol, interval)
+    .filter((meta) => meta.dateLabel === dateLabel);
+  const byTime = new Map();
+  for (const meta of metas) {
+    const rows = await readLongDataRows(meta.file);
+    rows.forEach((row) => {
+      if (row.symbol !== symbol || row.interval !== interval) return;
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      if (!Number.isFinite(timeMs)) return;
+      byTime.set(timeMs, row);
+    });
+  }
+  return Array.from(byTime.values()).sort((a, b) => safeFloat(a.open_time_ms) - safeFloat(b.open_time_ms));
+}
+
+async function latestDownloadedKlineState(symbol, interval) {
+  const metas = listDownloadedKlineFileMetas(symbol, interval);
+  let latest = null;
+  let rowCount = 0;
+  const filesWithRows = new Set();
+  for (const meta of metas) {
+    const rows = await readLongDataRows(meta.file);
+    rows.forEach((row) => {
+      if (row.symbol !== symbol || row.interval !== interval) return;
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      const price = safeFloat(row.close, NaN);
+      if (!Number.isFinite(timeMs) || !Number.isFinite(price)) return;
+      rowCount += 1;
+      filesWithRows.add(meta.file);
+      if (!latest || timeMs > latest.open_time_ms) {
+        latest = {
+          open_time_ms: timeMs,
+          open_time_jst: row.open_time_jst || formatJst(new Date(timeMs)),
+          close: price,
+          file: meta.file,
+        };
+      }
+    });
+  }
+  return {
+    latest,
+    row_count: rowCount,
+    file_count: filesWithRows.size,
+  };
+}
+
+async function fetchKlineRowsBetween(symbol, interval, startMs, endMs, waitMs = 250) {
+  const step = INTERVAL_MS[normalizeInterval(interval)] || INTERVAL_MS['1m'];
+  const rowsByTime = new Map();
+  const errors = [];
+  let cursor = startMs;
+  let requestCount = 0;
+  while (cursor < endMs) {
+    try {
+      const items = await fetchJsonWithRetry('/api/v3/klines', {
+        symbol,
+        interval,
+        startTime: cursor,
+        endTime: endMs - 1,
+        limit: 1000,
+      }, 15000, 2);
+      requestCount += 1;
+      if (!Array.isArray(items) || !items.length) break;
+      const rows = mapKlineRows(items, symbol, interval)
+        .filter((row) => row.open_time_ms >= startMs && row.open_time_ms < endMs);
+      rows.forEach((row) => rowsByTime.set(row.open_time_ms, row));
+      const lastOpen = rows.length ? rows[rows.length - 1].open_time_ms : Number(items[items.length - 1]?.[0]);
+      if (!Number.isFinite(lastOpen) || lastOpen < cursor) break;
+      cursor = lastOpen + step;
+      if (items.length < 1000) break;
+      if (waitMs > 0) await sleep(waitMs);
+    } catch (error) {
+      errors.push(error.message);
+      break;
+    }
+  }
+  return {
+    rows: Array.from(rowsByTime.values()).sort((a, b) => a.open_time_ms - b.open_time_ms),
+    errors,
+    request_count: requestCount,
+  };
+}
+
+async function mergeDownloadedRowsIntoDailyFiles(symbol, interval, newRows) {
+  const groups = new Map();
+  newRows.forEach((row) => {
+    const dateText = jstDateTextFromMs(row.open_time_ms);
+    if (!groups.has(dateText)) groups.set(dateText, []);
+    groups.get(dateText).push(row);
+  });
+
+  const files = [];
+  let insertedRows = 0;
+  for (const [dateText, rowsForDate] of groups.entries()) {
+    const existingRows = await readDownloadedRowsForDate(symbol, interval, dateText);
+    const before = new Set(existingRows.map((row) => safeFloat(row.open_time_ms, NaN)).filter((n) => Number.isFinite(n)));
+    const byTime = new Map();
+    existingRows.forEach((row) => {
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      if (Number.isFinite(timeMs)) byTime.set(timeMs, row);
+    });
+    rowsForDate.forEach((row) => {
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      if (Number.isFinite(timeMs)) byTime.set(timeMs, row);
+    });
+    const merged = Array.from(byTime.values()).sort((a, b) => safeFloat(a.open_time_ms) - safeFloat(b.open_time_ms));
+    const file = fullDayMergedKlineFile(symbol, interval, dateText);
+    await writeCsvRows(file, LONG_DATA_COLUMNS, merged);
+    const after = new Set(merged.map((row) => safeFloat(row.open_time_ms, NaN)).filter((n) => Number.isFinite(n)));
+    let addedForFile = 0;
+    after.forEach((timeMs) => {
+      if (!before.has(timeMs)) addedForFile += 1;
+    });
+    insertedRows += addedForFile;
+    files.push({
+      date: dateText,
+      file,
+      rows: merged.length,
+      inserted_rows: addedForFile,
+    });
+  }
+  return { files, inserted_rows: insertedRows };
+}
+
+function parseLongDataFileMeta(filePath) {
+  const name = path.basename(filePath);
+  const match = name.match(/^binance_(BTCJPY|ETHJPY)_(1m|5m|15m|1h)_(\d{8})_(\d{4})_(\d{4})(?:_merged)?_JST\.csv$/);
+  if (!match) return null;
+  const [, symbol, interval, dateLabel, startLabel, endLabel] = match;
+  const date = expandCompactDateLabel(dateLabel);
+  const startHour = Math.max(0, Math.min(24, safeInt(startLabel.slice(0, 2), 0)));
+  const endHour = Math.max(0, Math.min(24, safeInt(endLabel.slice(0, 2), 24)));
+  let startMs = null;
+  let endMs = null;
+  try {
+    startMs = parseJstDateTime(date, startHour, 0).getTime();
+    endMs = endHour >= 24
+      ? parseJstDateTime(date, 0, 0).getTime() + 24 * 60 * 60 * 1000
+      : parseJstDateTime(date, endHour, 0).getTime();
+  } catch {
+    startMs = null;
+    endMs = null;
+  }
+  return {
+    file: filePath,
+    name,
+    symbol,
+    interval,
+    date,
+    dateLabel,
+    startLabel,
+    endLabel,
+    startMs,
+    endMs,
+    isMerged: name.includes('_merged_'),
+  };
+}
+
+function listDownloadedKlineFileMetas(symbol, interval) {
+  const dir = longDataDir();
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .map((name) => parseLongDataFileMeta(path.join(dir, name)))
+    .filter((meta) => meta && meta.symbol === symbol && meta.interval === interval)
+    .sort((a, b) => {
+      if (a.dateLabel !== b.dateLabel) return a.dateLabel.localeCompare(b.dateLabel);
+      if (a.startLabel !== b.startLabel) return a.startLabel.localeCompare(b.startLabel);
+      if (a.endLabel !== b.endLabel) return a.endLabel.localeCompare(b.endLabel);
+      return Number(b.isMerged) - Number(a.isMerged);
+    });
+}
+
+function clampHour(value, fallback) {
+  return Math.max(0, Math.min(24, safeInt(value, fallback)));
+}
+
+function reduceLongDataFileMetas(metas) {
+  if (!Array.isArray(metas) || !metas.length) return [];
+  const sortable = metas
+    .filter((meta) => Number.isFinite(meta.startMs) && Number.isFinite(meta.endMs))
+    .sort((a, b) => {
+      const spanDiff = (b.endMs - b.startMs) - (a.endMs - a.startMs);
+      if (spanDiff !== 0) return spanDiff;
+      if (a.isMerged !== b.isMerged) return Number(b.isMerged) - Number(a.isMerged);
+      return a.name.localeCompare(b.name);
+    });
+  const selected = [];
+  sortable.forEach((meta) => {
+    const covered = selected.some((chosen) => (
+      chosen.symbol === meta.symbol
+      && chosen.interval === meta.interval
+      && chosen.startMs <= meta.startMs
+      && chosen.endMs >= meta.endMs
+    ));
+    if (!covered) selected.push(meta);
+  });
+  return selected.sort((a, b) => {
+    if (a.dateLabel !== b.dateLabel) return a.dateLabel.localeCompare(b.dateLabel);
+    if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+    if (a.endMs !== b.endMs) return a.endMs - b.endMs;
+    return Number(b.isMerged) - Number(a.isMerged);
+  });
+}
+
+function occurrenceScopeLabel(scope) {
+  if (scope === 'all_downloaded') return 'DL済み全体（複数ファイル）';
+  if (scope === 'range') return '指定範囲';
+  return '最新DLデータ';
+}
+
+function normalizeOccurrenceRequest(body = {}) {
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
+  const interval = ['1m', '5m', '15m', '1h'].includes(body.occurrence_interval)
+    ? body.occurrence_interval
+    : ['1m', '5m', '15m', '1h'].includes(body.interval)
+      ? body.interval
+      : '1m';
+  const rawScope = String(body.occurrence_scope || body.reference_scope || 'latest').trim();
+  const scope = ['latest', 'all_downloaded', 'range'].includes(rawScope) ? rawScope : 'latest';
+  return { symbol, interval, scope };
+}
+
+function selectOccurrenceReferenceFiles(body = {}) {
+  const request = normalizeOccurrenceRequest(body);
+  const metas = listDownloadedKlineFileMetas(request.symbol, request.interval);
+  if (!metas.length) {
+    return {
+      ...request,
+      scope_label: occurrenceScopeLabel(request.scope),
+      files: [],
+      file_metas: [],
+      selected_file_count: 0,
+      start_ms: null,
+      end_ms: null,
+      start_jst: '',
+      end_jst: '',
+      note: 'DL済み履歴ファイルが見つかりません。',
+    };
+  }
+
+  let selected = [];
+  let startMs = null;
+  let endMs = null;
+  let startJst = '';
+  let endJst = '';
+
+  if (request.scope === 'all_downloaded') {
+    selected = metas;
+  } else if (request.scope === 'range') {
+    const latestDate = expandCompactDateLabel(metas[metas.length - 1].dateLabel);
+    const startDate = String(body.occurrence_start_date || body.start_date || body.date || latestDate || '').trim();
+    const endDate = String(body.occurrence_end_date || body.end_date || startDate || '').trim();
+    const startHour = clampHour(body.occurrence_start_hour ?? body.start_hour, 0);
+    const rawEndHour = clampHour(body.occurrence_end_hour ?? body.end_hour, 24);
+    const endHour = Math.max(startHour === 24 ? 24 : startHour + 1, rawEndHour);
+    if (!startDate || !endDate) throw new Error('指定範囲には開始日と終了日が必要です。');
+    startMs = parseJstDateTime(startDate, Math.min(startHour, 23), 0).getTime();
+    if (endHour >= 24) {
+      endMs = parseJstDateTime(endDate, 0, 0).getTime() + 24 * 60 * 60 * 1000;
+    } else {
+      endMs = parseJstDateTime(endDate, endHour, 0).getTime();
+    }
+    if (endMs <= startMs) throw new Error('指定範囲の終了は開始より後にしてください。');
+    startJst = formatJst(new Date(startMs));
+    endJst = formatJst(new Date(endMs));
+    selected = metas.filter((meta) => {
+      if (!Number.isFinite(meta.startMs) || !Number.isFinite(meta.endMs)) return false;
+      return meta.endMs > startMs && meta.startMs < endMs;
+    });
+  } else {
+    const latestDateLabel = metas[metas.length - 1].dateLabel;
+    selected = metas.filter((meta) => meta.dateLabel === latestDateLabel);
+  }
+
+  const reducedSelected = reduceLongDataFileMetas(selected);
+  return {
+    ...request,
+    scope_label: occurrenceScopeLabel(request.scope),
+    files: reducedSelected.map((meta) => meta.file),
+    file_metas: reducedSelected,
+    selected_file_count: reducedSelected.length,
+    raw_selected_file_count: selected.length,
+    start_ms: startMs,
+    end_ms: endMs,
+    start_jst: startJst,
+    end_jst: endJst,
+  };
+}
+
+function summarizeReferencePeriod(rows) {
+  if (!Array.isArray(rows) || !rows.length) return { text: '', start_jst: '', end_jst: '' };
+  const times = rows
+    .map((row) => safeFloat(row.open_time_ms, NaN))
+    .filter((value) => Number.isFinite(value));
+  if (!times.length) return { text: '', start_jst: '', end_jst: '' };
+  const startJst = formatJst(new Date(Math.min(...times)));
+  const endJst = formatJst(new Date(Math.max(...times)));
+  return {
+    text: `参照期間: ${startJst}〜${endJst}`,
+    start_jst: startJst,
+    end_jst: endJst,
+  };
+}
+
+async function occurrenceKlineRows(body = {}) {
+  const selection = selectOccurrenceReferenceFiles(body);
+  const rowsByTime = new Map();
+  const usedFiles = [];
+  const usedFileSet = new Set();
+  for (const file of selection.files) {
+    const rows = await readLongDataRows(file);
+    let kept = 0;
+    rows.forEach((row) => {
+      if (row.symbol !== selection.symbol || row.interval !== selection.interval) return;
+      const timeMs = safeFloat(row.open_time_ms, NaN);
+      if (!Number.isFinite(timeMs)) return;
+      if (selection.start_ms !== null && timeMs < selection.start_ms) return;
+      if (selection.end_ms !== null && timeMs >= selection.end_ms) return;
+      rowsByTime.set(timeMs, row);
+      kept += 1;
+    });
+    if (kept > 0 && !usedFileSet.has(file)) {
+      usedFileSet.add(file);
+      usedFiles.push(file);
+    }
+  }
+  return {
+    rows: Array.from(rowsByTime.values()).sort((a, b) => safeFloat(a.open_time_ms) - safeFloat(b.open_time_ms)),
+    files: usedFiles,
+    selection,
+  };
 }
 
 
@@ -578,31 +942,38 @@ async function downloadedKlineRows(params = {}) {
 }
 
 async function estimateRequiredMoveOccurrenceRate(body = {}) {
-  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
-  const interval = ['1m', '5m', '15m', '1h'].includes(body.interval) ? body.interval : '1m';
-  const requestedDate = String(body.date || '').trim();
-  const autoDate = requestedDate || latestDownloadedDateFor(symbol, interval);
-  if (!autoDate) {
-    return {
-      rate: null,
-      note: '必要値幅の出現率: 日付未指定で、利用できるDL済み履歴も見つからないため、履歴ベース確認は行いません。'
-    };
-  }
+  const request = normalizeOccurrenceRequest(body);
   try {
     const target = Math.max(0, safeFloat(body.target_profit_jpy));
     const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
     const maxOpp = Math.max(1, safeInt(body.max_opportunities, 1));
     const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, 0.28));
     const requiredMovePct = (target / capital / maxOpp) * 100 + costPct;
-    const { rows, files } = await downloadedKlineRows({
-      symbol,
-      interval,
-      date: autoDate,
-      start_hour: body.start_hour,
-      end_hour: body.end_hour,
-    });
+    const { rows, files, selection } = await occurrenceKlineRows(body);
+    const referencedFiles = Array.isArray(files) ? files.map((file) => path.basename(file)) : [];
+    const period = summarizeReferencePeriod(rows);
+    const baseMeta = {
+      symbol: request.symbol,
+      interval: request.interval,
+      reference_scope: request.scope,
+      reference_scope_label: occurrenceScopeLabel(request.scope),
+      selected_file_count: selection.selected_file_count || 0,
+      referenced_files: referencedFiles,
+      referenced_file_count: referencedFiles.length,
+      referenced_row_count: rows.length,
+      matched_row_count: 0,
+      required_move_pct: requiredMovePct,
+      reference_period_start_jst: period.start_jst,
+      reference_period_end_jst: period.end_jst,
+      reference_period_text: period.text,
+    };
     if (rows.length < 10) {
-      return { rate: null, note: '必要値幅の出現率: DL済み履歴が不足しているため、履歴ベース確認は行いません。' };
+      return {
+        rate: null,
+        required_move_pct: requiredMovePct,
+        meta: baseMeta,
+        note: `必要値幅の出現率: ${selection.scope_label}で参照できるDL済み履歴が不足しています（参照足数 ${rows.length}本）。チャート選択日ではなく、日次目標専用の参照設定を使っています。`,
+      };
     }
     let matched = 0;
     rows.forEach((row) => {
@@ -615,22 +986,35 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
     });
     const rate = rows.length ? Math.max(0, Math.min(100, (matched / rows.length) * 100)) : 0;
     const fileSummary = summarizeReferenceFiles(files);
-    const rangeSummary = summarizeReferenceRange(rows);
-    const autoDateNote = requestedDate ? '' : ' 日付未指定だったため、最新のDL済み履歴日付を使いました。';
+    const meta = {
+      ...baseMeta,
+      matched_row_count: matched,
+    };
     return {
       rate,
       required_move_pct: requiredMovePct,
-      referenced_files: Array.isArray(files) ? files.map((file) => path.basename(file)) : [],
-      referenced_file_count: Array.isArray(files) ? files.length : 0,
-      referenced_row_count: rows.length,
-      matched_row_count: matched,
-      reference_range: rangeSummary,
-      note: `必要値幅の出現率: ${autoDate} ${interval} 足 ${rows.length}本（${files.length}ファイル）のうち、必要変動率 ${requiredMovePct.toFixed(3)}% を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。${autoDateNote}
-${fileSummary}${rangeSummary ? `
-${rangeSummary}` : ''}`,
+      meta,
+      note: `必要値幅の出現率: ${selection.scope_label} / ${request.symbol} ${request.interval} 足 ${rows.length}本（使用${referencedFiles.length}ファイル、候補${selection.selected_file_count || 0}ファイル）のうち、必要変動率 ${requiredMovePct.toFixed(3)}% を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。チャート表示の指定日とは分離しています。
+${fileSummary}${period.text ? `
+${period.text}` : ''}`,
     };
   } catch (error) {
-    return { rate: null, note: `必要値幅の出現率: ${error.message} のため、履歴ベース確認は行いません。` };
+    return {
+      rate: null,
+      required_move_pct: null,
+      meta: {
+        symbol: request.symbol,
+        interval: request.interval,
+        reference_scope: request.scope,
+        reference_scope_label: occurrenceScopeLabel(request.scope),
+        selected_file_count: 0,
+        referenced_files: [],
+        referenced_file_count: 0,
+        referenced_row_count: 0,
+        matched_row_count: 0,
+      },
+      note: `必要値幅の出現率: ${error.message} のため、履歴ベース確認は行いません。`,
+    };
   }
 }
 
@@ -714,6 +1098,74 @@ async function downloadHistoricalKlines(body = {}) {
   };
 }
 
+
+async function updateDownloadedHistoryToNow(body = {}) {
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
+  const interval = normalizeInterval(body.interval || '1m');
+  const waitMs = Math.max(0, Math.min(5000, safeInt(body.wait_ms, 250)));
+  const nowMs = Date.now();
+  const endMs = body.include_unconfirmed === false
+    ? currentOpenTimeMs(interval, nowMs)
+    : nowMs;
+  const step = INTERVAL_MS[interval] || INTERVAL_MS['1m'];
+  const stateBefore = await latestDownloadedKlineState(symbol, interval);
+  const fallbackHours = Math.max(1, Math.min(24, safeInt(body.fallback_hours, 6)));
+  const fallbackStartMs = parseJstDateTime(jstDateTextFromMs(nowMs), 0, 0).getTime();
+  const startMs = stateBefore.latest
+    ? stateBefore.latest.open_time_ms + step
+    : Math.max(fallbackStartMs, endMs - fallbackHours * 60 * 60 * 1000);
+
+  if (startMs >= endMs) {
+    return {
+      ok: true,
+      symbol,
+      interval,
+      fetched_rows: 0,
+      inserted_rows: 0,
+      request_count: 0,
+      files: [],
+      file_names: [],
+      errors: [],
+      latest_before_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
+      latest_after_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
+      started_from_jst: formatJst(new Date(startMs)),
+      updated_to_jst: formatJst(new Date(endMs)),
+      unconfirmed_latest: false,
+      fallback_used: !stateBefore.latest,
+      message: `${symbol} ${interval}: 追加が必要な足はありません。DL済み履歴は現在時刻付近まであります。`,
+    };
+  }
+
+  const fetched = await fetchKlineRowsBetween(symbol, interval, startMs, endMs, waitMs);
+  const mergeResult = fetched.rows.length
+    ? await mergeDownloadedRowsIntoDailyFiles(symbol, interval, fetched.rows)
+    : { files: [], inserted_rows: 0 };
+  const stateAfter = await latestDownloadedKlineState(symbol, interval);
+  const latestOpen = stateAfter.latest?.open_time_ms ?? stateBefore.latest?.open_time_ms ?? null;
+  const unconfirmedLatest = Number.isFinite(latestOpen) ? latestOpen + step > nowMs : false;
+  const fileNames = mergeResult.files.map((item) => path.basename(item.file));
+  return {
+    ok: fetched.errors.length === 0,
+    symbol,
+    interval,
+    fetched_rows: fetched.rows.length,
+    inserted_rows: mergeResult.inserted_rows,
+    request_count: fetched.request_count,
+    files: mergeResult.files,
+    file_names: fileNames,
+    errors: fetched.errors,
+    latest_before_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
+    latest_after_jst: stateAfter.latest ? stateAfter.latest.open_time_jst : '',
+    started_from_jst: formatJst(new Date(startMs)),
+    updated_to_jst: formatJst(new Date(endMs)),
+    unconfirmed_latest: unconfirmedLatest,
+    fallback_used: !stateBefore.latest,
+    message: fetched.rows.length
+      ? `${symbol} ${interval}: ${formatJst(new Date(startMs))} から現在時刻まで差分DLしました。取得 ${fetched.rows.length}本 / 追加 ${mergeResult.inserted_rows}本 / 更新ファイル ${mergeResult.files.length}件。${unconfirmedLatest ? '最新足は未確定の可能性があります。' : ''}`
+      : `${symbol} ${interval}: 取得できる新しい足はありませんでした。${fetched.errors.length ? ` エラー: ${fetched.errors.join(' / ')}` : ''}`,
+  };
+}
+
 async function fetchAllPrices() {
   const timestamp = nowJstIso();
   const rows = [];
@@ -773,7 +1225,7 @@ async function capabilities() {
     symbols: SYMBOLS,
     routes: {
       GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'contract', 'api-readiness'],
-      POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
+      POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
     },
     api_boundary: API_BOUNDARY,
     calculation_engine: {
@@ -793,7 +1245,7 @@ async function contract() {
       forbidden: API_BOUNDARY.forbidden,
       routes: {
         GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'api-readiness'],
-        POST: ['fetch-prices', 'download-history', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
+        POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
     };
@@ -1265,6 +1717,7 @@ async function dailyGoal(body = {}) {
       ? (occurrence?.note || '必要値幅の出現率: 履歴ベース確認を試しましたが、参考値は作れませんでした。')
       : '必要値幅の出現率: 履歴確認はOFFです。',
     required_move_occurrence_required_pct: Number.isFinite(occurrence?.required_move_pct) ? occurrence.required_move_pct : null,
+    required_move_occurrence_meta: occurrence?.meta || null,
     recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
     recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
   });
@@ -1286,6 +1739,7 @@ async function invoke(route, payload = {}) {
     case 'api-readiness': return apiReadiness();
     case 'fetch-prices': return fetchPrices();
     case 'download-history': return downloadHistoricalKlines(body);
+    case 'update-history-to-now': return updateDownloadedHistoryToNow(body);
     case 'trade-preview': return tradePreview(body);
     case 'daily-goal': return dailyGoal(body);
     case 'save-daily-goal-report': return saveDailyGoalReport(body);
@@ -1304,6 +1758,7 @@ module.exports = {
   contract,
   chart,
   downloadHistoricalKlines,
+  updateDownloadedHistoryToNow,
   buildKlineDownloadPlan,
   fetchPrices,
   tradePreview,
