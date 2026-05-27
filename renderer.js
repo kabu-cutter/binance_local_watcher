@@ -327,8 +327,9 @@ async function loadSummaryMiniCharts() {
     if (meta) meta.textContent = '読み込み中...';
     try {
       // サマリーのミニチャートは「直近の形」を軽く見る目的なので、
-      // チャートタブの日付指定には依存させず、ローカル履歴優先・不足時は公開klineへフォールバックします。
-      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=local&interval=1m&limit=80`);
+      // チャートタブの日付指定には依存させず、DL済み＋現在まで更新済みデータを優先します。
+      const today = todayJstDateText();
+      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=combined&interval=1m&date=${encodeURIComponent(today)}&start_hour=0&end_hour=24&limit=80`);
       renderMiniChart(symbol, data);
     } catch (e) {
       const svg = document.getElementById(`summaryMiniChart${symbol}`);
@@ -338,24 +339,179 @@ async function loadSummaryMiniCharts() {
   }));
 }
 
-async function fetchPrices() {
+const CURRENT_UPDATE_SYMBOLS = ['BTCJPY', 'ETHJPY'];
+const AUTO_CURRENT_UPDATE_MS = 60 * 1000;
+let currentUpdateRunning = false;
+let autoCurrentUpdateTimer = null;
+let autoCurrentUpdateLastRunAt = null;
+let autoCurrentUpdateNextRunAt = null;
+
+function formatClock(date) {
+  if (!date) return '—';
+  return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function setAutoUpdateStatus(message) {
+  const el = document.getElementById('autoUpdateStatus');
+  if (el) el.textContent = message;
+}
+
+function isAutoCurrentUpdateEnabled() {
+  const el = document.getElementById('autoUpdateEnabled');
+  return el ? el.checked : false;
+}
+
+function clearAutoCurrentUpdateTimer() {
+  if (autoCurrentUpdateTimer) {
+    clearTimeout(autoCurrentUpdateTimer);
+    autoCurrentUpdateTimer = null;
+  }
+}
+
+function scheduleAutoCurrentUpdate(delayMs = AUTO_CURRENT_UPDATE_MS) {
+  clearAutoCurrentUpdateTimer();
+  if (!isAutoCurrentUpdateEnabled()) {
+    autoCurrentUpdateNextRunAt = null;
+    setAutoUpdateStatus(autoCurrentUpdateLastRunAt
+      ? `自動更新OFF / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}`
+      : '自動更新OFF');
+    return;
+  }
+  autoCurrentUpdateNextRunAt = new Date(Date.now() + delayMs);
+  setAutoUpdateStatus(`自動更新ON / 次回 ${formatClock(autoCurrentUpdateNextRunAt)}`);
+  autoCurrentUpdateTimer = setTimeout(async () => {
+    if (!isAutoCurrentUpdateEnabled()) {
+      scheduleAutoCurrentUpdate();
+      return;
+    }
+    try {
+      await fetchPrices({ source: 'auto' });
+    } catch (e) {
+      setAutoUpdateStatus(`自動更新エラー / 次回再試行予定: ${e.message}`);
+    } finally {
+      if (isAutoCurrentUpdateEnabled()) scheduleAutoCurrentUpdate(AUTO_CURRENT_UPDATE_MS);
+    }
+  }, delayMs);
+}
+
+function setupAutoCurrentUpdate() {
+  const checkbox = document.getElementById('autoUpdateEnabled');
+  if (!checkbox) return;
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked) {
+      scheduleAutoCurrentUpdate(1000);
+    } else {
+      scheduleAutoCurrentUpdate();
+    }
+  });
+  scheduleAutoCurrentUpdate(AUTO_CURRENT_UPDATE_MS);
+}
+
+function summarizeHistoryToNowResults(results) {
+  const okItems = results.filter((item) => item.ok && item.data);
+  const errorItems = results.filter((item) => !item.ok);
+  const totalFetched = okItems.reduce((sum, item) => sum + Number(item.data.fetched_rows || 0), 0);
+  const totalInserted = okItems.reduce((sum, item) => sum + Number(item.data.inserted_rows || 0), 0);
+  const totalRequests = okItems.reduce((sum, item) => sum + Number(item.data.request_count || 0), 0);
+  const fileNames = Array.from(new Set(okItems.flatMap((item) => item.data.file_names || [])));
+  const latestLines = okItems.map((item) => {
+    const data = item.data;
+    return `${data.symbol}: ${data.latest_before_jst || 'なし'} → ${data.latest_after_jst || 'なし'}`;
+  });
+  const engineErrors = okItems.flatMap((item) => (item.data.errors || []).map((error) => `${item.data.symbol}: ${error}`));
+  const thrownErrors = errorItems.map((item) => `${item.symbol}: ${item.error}`);
+  const unconfirmed = okItems.some((item) => item.data.unconfirmed_latest);
+  const fallback = okItems.some((item) => item.data.fallback_used);
+
+  return [
+    `現在時刻まで差分DL: 取得 ${totalFetched}本 / 追加 ${totalInserted}本 / API回数 ${totalRequests}`,
+    latestLines.length ? `最新足: ${latestLines.join(' / ')}` : '',
+    fileNames.length ? `更新ファイル: ${fileNames.join(' / ')}` : '',
+    fallback ? 'DL済み履歴がない通貨は、今日の直近分から取得しました。' : '',
+    unconfirmed ? '注意: 最新足は未確定の可能性があります。条件診断では確定足だけを優先して見る予定です。' : '',
+    engineErrors.length || thrownErrors.length ? `エラー: ${[...engineErrors, ...thrownErrors].join(' / ')}` : '',
+  ].filter(Boolean);
+}
+
+async function updateHistoryToNowBatch({ symbols = CURRENT_UPDATE_SYMBOLS, interval = '1m', memo = null, progressLabel = '履歴を現在時刻まで更新中' } = {}) {
+  const results = [];
+  for (let i = 0; i < symbols.length; i += 1) {
+    const symbol = symbols[i];
+    if (memo) memo.textContent = `${progressLabel}\n${symbol} ${interval} を更新中... (${i + 1}/${symbols.length})`;
+    try {
+      const data = await postJson('/api/update-history-to-now', {
+        symbol,
+        interval,
+        wait_ms: 250,
+        fallback_hours: 6,
+        include_unconfirmed: true,
+      });
+      results.push({ ok: true, symbol, data });
+    } catch (error) {
+      results.push({ ok: false, symbol, error: error.message || String(error) });
+    }
+  }
+  return results;
+}
+
+async function fetchPrices({ source = 'manual' } = {}) {
+  if (currentUpdateRunning) {
+    setAutoUpdateStatus('更新中のため、次の自動更新は待機します。');
+    return;
+  }
+  currentUpdateRunning = true;
   const btn = document.getElementById('fetchPrices');
-  const old = btn.textContent;
-  btn.textContent = '取得中...';
-  btn.disabled = true;
+  const old = btn ? btn.textContent : '';
+  const summaryMemo = document.getElementById('summaryMemo');
+  const historyMemo = document.getElementById('historyDownloadMemo');
+  const interval = elValue('historyInterval', elValue('chartInterval', '1m'));
+
+  if (btn) {
+    btn.textContent = source === 'auto' ? '自動更新中...' : '現在まで更新中...';
+    btn.disabled = true;
+  }
+  setAutoUpdateStatus(source === 'auto' ? '自動更新中...' : '手動更新中...');
+  if (summaryMemo) summaryMemo.textContent = `現在価格を保存し、BTCJPY / ETHJPY のDL済み履歴を現在時刻まで更新しています。`;
   try {
-    const data = await postJson('/api/fetch-prices', {});
-    document.getElementById('summaryMemo').textContent = `${data.message}\n保存先: ${data.history_file}${data.errors?.length ? `\nエラー: ${data.errors.join(' / ')}` : ''}`;
+    const priceData = await postJson('/api/fetch-prices', {});
+    const historyResults = await updateHistoryToNowBatch({
+      symbols: CURRENT_UPDATE_SYMBOLS,
+      interval,
+      memo: summaryMemo,
+      progressLabel: '現在価格保存後、チャート用DL履歴を現在時刻まで更新中',
+    });
+    const historyLines = summarizeHistoryToNowResults(historyResults);
+    const priceLines = [
+      priceData.message,
+      `保存先: ${priceData.history_file}`,
+      priceData.errors?.length ? `価格取得エラー: ${priceData.errors.join(' / ')}` : '',
+    ].filter(Boolean);
+
+    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
+    if (historyMemo) historyMemo.textContent = historyLines.join('\n');
+
+    setValueIfExists('historyInterval', interval);
+    setValueIfExists('chartInterval', interval);
+    setValueIfExists('chartSource', 'combined');
     await loadStatus();
     await loadSummary();
+    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
     await loadSummaryMiniCharts();
     await loadImpact();
+    await loadAlertPreview();
     await loadChart();
+    autoCurrentUpdateLastRunAt = new Date();
+    const nextText = isAutoCurrentUpdateEnabled() ? ` / 次回 ${formatClock(new Date(Date.now() + AUTO_CURRENT_UPDATE_MS))}` : '';
+    setAutoUpdateStatus(`${source === 'auto' ? '自動更新完了' : '手動更新完了'} / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}${nextText}`);
   } catch (e) {
-    document.getElementById('summaryMemo').textContent = `価格取得に失敗しました。\n${e.message}`;
+    if (summaryMemo) summaryMemo.textContent = `現在価格＋履歴更新に失敗しました。\n${e.message}`;
+    setAutoUpdateStatus(`${source === 'auto' ? '自動更新失敗' : '手動更新失敗'}: ${e.message}`);
   } finally {
-    btn.textContent = old;
-    btn.disabled = false;
+    if (btn) {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+    currentUpdateRunning = false;
   }
 }
 
@@ -472,6 +628,18 @@ function makeSvgPath(points, width, height, pad) {
   }).join(' ');
 }
 
+
+function chartSourceLabel(source) {
+  const labels = {
+    'local-history+downloaded-kline': 'DL済み＋現在まで更新済み',
+    'downloaded-kline': 'DL済みファイルのみ',
+    'binance-klines': '公開kline一時表示',
+    'local-history': 'ローカル履歴フォールバック',
+    mock: 'サンプル',
+  };
+  return labels[source] || source || '不明';
+}
+
 function renderChart(data) {
   const svg = document.getElementById('priceChart');
   const width = 900;
@@ -510,17 +678,25 @@ function renderChart(data) {
   }
 
   const errorText = data.errors?.length ? ` / エラー: ${data.errors.join(' / ')}` : '';
-  document.getElementById('chartMeta').textContent = `${data.symbol} / ${data.rows}点 / ${data.source} / ${data.message} 価格範囲: ${yen(data.min_price)} - ${yen(data.max_price)}${errorText}`;
+  const rangeText = data.range_label ? ` / ${data.range_label}${data.range_start_jst && data.range_end_jst ? ` (${data.range_start_jst}〜${data.range_end_jst})` : ''}` : '';
+  const intervalText = data.interval ? ` / ${data.interval}足${data.interval_requested === 'auto' ? '（自動）' : ''}` : '';
+  const rowsText = data.raw_rows && data.raw_rows !== data.rows ? `${data.rows}点表示 / 元${data.raw_rows}本` : `${data.rows}点`;
+  document.getElementById('chartMeta').textContent = `${data.symbol} / ${rowsText} / ${chartSourceLabel(data.source)}${rangeText}${intervalText} / ${data.message} 価格範囲: ${yen(data.min_price)} - ${yen(data.max_price)}${errorText}`;
 }
 
 async function loadChart() {
   const symbol = document.getElementById('chartSymbol').value;
-  const source = document.getElementById('chartSource').value;
+  let source = document.getElementById('chartSource').value;
+  if (source === 'local') {
+    source = 'combined';
+    setValueIfExists('chartSource', 'combined');
+  }
   const interval = document.getElementById('chartInterval').value;
+  const range = elValue('chartRange', '24h');
   const date = document.getElementById('historyDate').value;
   const startHour = document.getElementById('historyStartHour').value;
   const endHour = document.getElementById('historyEndHour').value;
-  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=160`);
+  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=520`);
   renderChart(data);
 }
 
@@ -574,28 +750,25 @@ async function updateHistoryToNow() {
   const memo = document.getElementById('historyDownloadMemo');
   const symbol = elValue('historySymbol', elValue('chartSymbol', 'BTCJPY'));
   const interval = elValue('historyInterval', elValue('chartInterval', '1m'));
-  const payload = {
-    symbol,
-    interval,
-    wait_ms: 250,
-    fallback_hours: 6,
-    include_unconfirmed: true,
-  };
+
   btn.textContent = '現在まで更新中...';
   btn.disabled = true;
-  memo.textContent = `${symbol} ${interval} のDL済み履歴を、保存済みの最後の足から現在時刻まで追加しています。`;
+  if (memo) memo.textContent = `${symbol} ${interval} の現在価格を保存し、DL済み履歴を現在時刻まで追加しています。`;
   try {
-    const data = await postJson('/api/update-history-to-now', payload);
-    const files = (data.file_names || []).join(' / ');
-    memo.textContent = [
-      data.message,
-      `前回最新: ${data.latest_before_jst || 'なし'} / 更新後最新: ${data.latest_after_jst || 'なし'}`,
-      `取得: ${data.fetched_rows || 0}本 / 追加: ${data.inserted_rows || 0}本 / API回数: ${data.request_count || 0}`,
-      files ? `更新ファイル: ${files}` : '',
-      data.fallback_used ? 'DL済み履歴がなかったため、今日の直近分から取得しました。' : '',
-      data.unconfirmed_latest ? '注意: 最新足は未確定の可能性があります。条件診断では確定足だけを優先して見る予定です。' : '',
-      data.errors?.length ? `エラー: ${data.errors.join(' / ')}` : '',
-    ].filter(Boolean).join('\n');
+    const priceData = await postJson('/api/fetch-prices', {});
+    const historyResults = await updateHistoryToNowBatch({
+      symbols: [symbol],
+      interval,
+      memo,
+      progressLabel: `${symbol} のチャート用DL履歴を現在時刻まで更新中`,
+    });
+    const historyLines = summarizeHistoryToNowResults(historyResults);
+    const priceLines = [
+      `現在価格保存: ${priceData.message}`,
+      priceData.errors?.length ? `価格取得エラー: ${priceData.errors.join(' / ')}` : '',
+    ].filter(Boolean);
+
+    if (memo) memo.textContent = [...priceLines, ...historyLines].join('\n');
     setValueIfExists('historySymbol', symbol);
     setValueIfExists('historyInterval', interval);
     setValueIfExists('historyDate', todayJstDateText());
@@ -604,10 +777,14 @@ async function updateHistoryToNow() {
     setValueIfExists('chartSymbol', symbol);
     setValueIfExists('chartInterval', interval);
     setValueIfExists('chartSource', 'combined');
-    await loadChart();
+    await loadStatus();
+    await loadSummary();
     await loadSummaryMiniCharts();
+    await loadImpact();
+    await loadAlertPreview();
+    await loadChart();
   } catch (e) {
-    memo.textContent = `現在時刻までの差分DLに失敗しました。\n${e.message}`;
+    if (memo) memo.textContent = `現在価格＋現在時刻までの差分DLに失敗しました。\n${e.message}`;
   } finally {
     btn.textContent = old;
     btn.disabled = false;
@@ -834,7 +1011,7 @@ async function refreshAll() {
 document.addEventListener('DOMContentLoaded', () => {
   setupNav();
   document.getElementById('refreshAll').addEventListener('click', refreshAll);
-  document.getElementById('fetchPrices').addEventListener('click', fetchPrices);
+  document.getElementById('fetchPrices').addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
@@ -846,6 +1023,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
   document.getElementById('chartSource').addEventListener('change', loadChart);
   document.getElementById('chartInterval').addEventListener('change', loadChart);
+  document.getElementById('chartRange').addEventListener('change', loadChart);
   document.getElementById('historyDate').addEventListener('change', loadChart);
   document.getElementById('historyStartHour').addEventListener('change', loadChart);
   document.getElementById('historyEndHour').addEventListener('change', loadChart);
@@ -867,6 +1045,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setValueIfExists('dailyOccurrenceStartDate', todayJstDateText());
   setValueIfExists('dailyOccurrenceEndDate', todayJstDateText());
   setCheckedIfExists('dailyOccurrenceEnabled', true);
+  setupAutoCurrentUpdate();
   setDailyTemplateTab(document.getElementById('dailyTemplate').value || 'market_priority');
   applyDailyTemplate();
   syncRoundtripCostFromTrade();

@@ -412,6 +412,30 @@ h1 {
   border: 1px solid var(--line);
 }
 
+.auto-update-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.58);
+}
+.auto-update-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 900;
+}
+.auto-update-status {
+  color: #7d6277;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .inline-form {
   display: flex;
   align-items: center;

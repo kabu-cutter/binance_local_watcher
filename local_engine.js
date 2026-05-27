@@ -26,6 +26,7 @@ const INTERVAL_MS = {
   '1m': 60 * 1000,
   '5m': 5 * 60 * 1000,
   '15m': 15 * 60 * 1000,
+  '30m': 30 * 60 * 1000,
   '1h': 60 * 60 * 1000,
 };
 
@@ -772,23 +773,128 @@ async function localChartPoints(symbol, limit = 160) {
   return { points, source };
 }
 
-async function fetchKlinesForChart(symbol, interval = '1m', limit = 120) {
-  const data = await fetchJson('/api/v3/klines', { symbol, interval, limit }, 15000);
-  return data.map((item) => {
+const CHART_INTERVALS = ['auto', '1m', '5m', '15m', '30m', '1h'];
+const KLINE_INTERVALS = Object.keys(INTERVAL_MS);
+const CHART_RANGE_MS = {
+  '1h': 60 * 60 * 1000,
+  '3h': 3 * 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
+  '1w': 7 * 24 * 60 * 60 * 1000,
+};
+const CHART_RANGE_LABELS = {
+  '1h': '直近1時間',
+  '3h': '直近3時間',
+  '6h': '直近6時間',
+  '24h': '直近24時間',
+  '3d': '直近3日',
+  '1w': '直近1週間',
+};
+
+function normalizeChartInterval(interval = 'auto', rangeKey = '24h') {
+  const requested = CHART_INTERVALS.includes(interval) ? interval : 'auto';
+  if (requested !== 'auto') return requested;
+  if (rangeKey === '1h' || rangeKey === '3h' || rangeKey === '6h') return '1m';
+  if (rangeKey === '24h') return '5m';
+  if (rangeKey === '3d' || rangeKey === '1w') return '15m';
+  return '5m';
+}
+
+function normalizeChartRange(range = '24h') {
+  const key = Object.prototype.hasOwnProperty.call(CHART_RANGE_MS, range) ? range : '24h';
+  const endMs = Date.now();
+  const startMs = endMs - CHART_RANGE_MS[key];
+  return {
+    key,
+    label: CHART_RANGE_LABELS[key] || key,
+    start_ms: startMs,
+    end_ms: endMs,
+    start_jst: formatJst(new Date(startMs)),
+    end_jst: formatJst(new Date(endMs)),
+  };
+}
+
+function mapKlineChartItems(items) {
+  return items.map((item) => {
     const date = new Date(Number(item[0]));
     return {
       timestamp: formatJst(date, 'time'),
       timestamp_full: formatJst(date),
       price: safeFloat(item[4]),
       time_ms: Number(item[0]),
+      high: safeFloat(item[2]),
+      low: safeFloat(item[3]),
+      open: safeFloat(item[1]),
       source: 'binance-klines',
     };
   });
 }
 
+function downsampleChartPoints(points, maxPoints) {
+  const max = Math.max(2, safeInt(maxPoints, 500));
+  if (!Array.isArray(points) || points.length <= max) return points || [];
+  const lastIndex = points.length - 1;
+  const sampled = [];
+  for (let i = 0; i < max; i += 1) {
+    const idx = Math.round((i / Math.max(max - 1, 1)) * lastIndex);
+    sampled.push(points[idx]);
+  }
+  return sampled;
+}
+
+async function fetchKlinesForChart(symbol, interval = '1m', limit = 120) {
+  const data = await fetchJson('/api/v3/klines', { symbol, interval, limit }, 15000);
+  return mapKlineChartItems(data);
+}
+
+async function fetchKlinesForChartRange({ symbol, interval = 'auto', range = '24h', limit = 500 } = {}) {
+  const normalizedRange = normalizeChartRange(range);
+  const actualInterval = normalizeChartInterval(interval, normalizedRange.key);
+  const stepMs = INTERVAL_MS[actualInterval] || INTERVAL_MS['1m'];
+  const maxDisplayPoints = Math.max(40, Math.min(safeInt(limit, 500), 1200));
+  const rawLimit = 1000;
+  const maxRawPoints = Math.max(maxDisplayPoints, 3000);
+  const rowsByTime = new Map();
+  let cursor = normalizedRange.start_ms;
+  let guard = 0;
+  while (cursor < normalizedRange.end_ms && rowsByTime.size < maxRawPoints && guard < 12) {
+    const data = await fetchJson('/api/v3/klines', {
+      symbol,
+      interval: actualInterval,
+      startTime: cursor,
+      endTime: normalizedRange.end_ms,
+      limit: rawLimit,
+    }, 15000);
+    if (!Array.isArray(data) || !data.length) break;
+    data.forEach((item) => {
+      const openMs = Number(item[0]);
+      if (Number.isFinite(openMs) && openMs >= normalizedRange.start_ms && openMs <= normalizedRange.end_ms) {
+        rowsByTime.set(openMs, item);
+      }
+    });
+    const lastOpenMs = Number(data[data.length - 1]?.[0]);
+    if (!Number.isFinite(lastOpenMs) || lastOpenMs < cursor) break;
+    cursor = lastOpenMs + stepMs;
+    if (data.length < rawLimit) break;
+    guard += 1;
+  }
+  const rawPoints = mapKlineChartItems(Array.from(rowsByTime.values()).sort((a, b) => Number(a[0]) - Number(b[0])));
+  const points = downsampleChartPoints(rawPoints, maxDisplayPoints);
+  return {
+    points,
+    raw_rows: rawPoints.length,
+    display_rows: points.length,
+    interval: actualInterval,
+    interval_requested: interval,
+    range: normalizedRange,
+    sampled: rawPoints.length > points.length,
+  };
+}
+
 function normalizeDownloadRequest(body = {}) {
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
-  const interval = ['1m', '5m', '15m', '1h'].includes(body.interval) ? body.interval : '1m';
+  const interval = KLINE_INTERVALS.includes(body.interval) ? body.interval : '1m';
   const date = String(body.date || '').trim();
   const startHour = Math.max(0, Math.min(23, safeInt(body.start_hour, 0)));
   const rawEndHour = body.end_hour === undefined || body.end_hour === null || body.end_hour === ''
@@ -1594,43 +1700,58 @@ async function clearDailyGoalReports() {
 
 async function chart(params = {}) {
   const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
-  const sourceMode = params.source || 'local';
-  const interval = params.interval || '1m';
-  const limit = Math.min(Math.max(safeInt(params.limit, 160), 2), 1000);
+  const sourceMode = params.source || 'combined';
+  const intervalRequested = params.interval || 'auto';
+  const rangeKey = params.range || '24h';
+  const limit = Math.min(Math.max(safeInt(params.limit, 500), 2), 1200);
   let { points } = await localChartPoints(symbol, limit);
   let usedSource = 'local-history';
   let message = 'ローカル price_history.csv からチャートを作成しました。';
+  let chartRange = null;
+  let actualInterval = intervalRequested === 'auto' ? '1m' : intervalRequested;
+  let rawRows = points.length;
+  let sampled = false;
   const errors = [];
 
   if (sourceMode === 'downloaded' || sourceMode === 'combined') {
+    actualInterval = KLINE_INTERVALS.includes(intervalRequested) ? intervalRequested : '1m';
     try {
       const date = String(params.date || '').trim();
       if (!date) throw new Error('DL済み過去データの表示には日付が必要です。');
       const downloaded = await downloadedChartPoints({
         symbol,
-        interval,
+        interval: actualInterval,
         date,
         start_hour: params.start_hour,
         end_hour: params.end_hour,
       });
       const downloadedPoints = downloaded.points.slice(-limit);
+      rawRows = downloaded.points.length;
+      chartRange = downloadedPoints.length ? {
+        key: 'downloaded-selection',
+        label: 'DL指定範囲',
+        start_jst: downloadedPoints[0]?.timestamp_full || '',
+        end_jst: downloadedPoints[downloadedPoints.length - 1]?.timestamp_full || '',
+      } : null;
       if (sourceMode === 'downloaded') {
         points = downloadedPoints;
         usedSource = 'downloaded-kline';
         message = downloadedPoints.length
-          ? `long_data のDL済み ${interval} 足からチャートを作成しました。`
+          ? `long_data のDL済み ${actualInterval} 足からチャートを作成しました。`
           : `DL済み過去データが見つかりません。先に履歴データDLを実行してください。予定CSV: ${downloaded.planned_file}`;
       } else {
         const local = await localChartPoints(symbol, limit);
         points = combineChartPoints(downloadedPoints, local.points, limit);
+        rawRows = Math.max(rawRows, points.length);
         usedSource = 'local-history+downloaded-kline';
         message = downloadedPoints.length
-          ? `price_history.csv と long_data のDL済み ${interval} 足を時刻順に統合しました。同時刻はローカル履歴を優先します。`
+          ? `price_history.csv と long_data のDL済み ${actualInterval} 足を時刻順に統合しました。同時刻はローカル履歴を優先します。`
           : `DL済み過去データが見つからないため、ローカル履歴だけで表示しています。予定CSV: ${downloaded.planned_file}`;
       }
     } catch (error) {
       errors.push(error.message);
       points = sourceMode === 'combined' ? points : [];
+      rawRows = points.length;
       usedSource = sourceMode === 'combined' ? 'local-history' : 'downloaded-kline';
       message = sourceMode === 'combined'
         ? 'DL済み過去データを読めなかったため、ローカル履歴だけで表示しています。'
@@ -1640,9 +1761,19 @@ async function chart(params = {}) {
 
   if (sourceMode === 'klines' || (sourceMode === 'local' && points.length < 2)) {
     try {
-      points = await fetchKlinesForChart(symbol, interval, Math.min(Math.max(limit, 20), 1000));
+      const result = await fetchKlinesForChartRange({
+        symbol,
+        interval: intervalRequested,
+        range: rangeKey,
+        limit,
+      });
+      points = result.points;
+      actualInterval = result.interval;
+      chartRange = result.range;
+      rawRows = result.raw_rows;
+      sampled = result.sampled;
       usedSource = 'binance-klines';
-      message = `Binance公開APIの ${interval} 足からチャートを作成しました。履歴CSVには保存していません。`;
+      message = `Binance公開APIの ${result.range.label} / ${actualInterval} 足からチャートを作成しました。履歴CSVには保存していません。${sampled ? ` 表示用に${rawRows}本から${points.length}点へ間引きました。` : ''}`;
     } catch (error) {
       errors.push(error.message);
       if (points.length < 2) {
@@ -1662,6 +1793,16 @@ async function chart(params = {}) {
     symbol,
     points,
     source: usedSource,
+    source_mode: sourceMode,
+    interval: actualInterval,
+    interval_requested: intervalRequested,
+    range: chartRange?.key || rangeKey,
+    range_label: chartRange?.label || CHART_RANGE_LABELS[rangeKey] || rangeKey,
+    range_start_jst: chartRange?.start_jst || '',
+    range_end_jst: chartRange?.end_jst || '',
+    raw_rows: rawRows,
+    display_rows: points.length,
+    sampled,
     message,
     errors,
     ...chartSummary,
