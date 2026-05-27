@@ -93,6 +93,69 @@ function setCheckedIfExists(id, value) {
   if (el) el.checked = value;
 }
 
+
+const CHART_RANGE_MS_RENDERER = {
+  '1h': 60 * 60 * 1000,
+  '3h': 3 * 60 * 60 * 1000,
+  '6h': 6 * 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
+  '1w': 7 * 24 * 60 * 60 * 1000,
+};
+const CHART_RANGE_LABELS_RENDERER = {
+  '1h': '直近1時間',
+  '3h': '直近3時間',
+  '6h': '直近6時間',
+  '24h': '直近24時間',
+  '3d': '直近3日',
+  '1w': '直近1週間',
+};
+
+function chartAutoInterval(rangeKey = '24h') {
+  if (rangeKey === '1h' || rangeKey === '3h' || rangeKey === '6h') return '1m';
+  if (rangeKey === '24h') return '5m';
+  if (rangeKey === '3d' || rangeKey === '1w') return '15m';
+  return '5m';
+}
+
+function selectedChartIntervalForDownload() {
+  const range = elValue('chartRange', '24h');
+  const requested = elValue('chartInterval', 'auto');
+  return requested === 'auto' ? chartAutoInterval(range) : requested;
+}
+
+function jstPartsFromMs(ms) {
+  const d = new Date(ms + 9 * 60 * 60 * 1000);
+  return {
+    date: d.toISOString().slice(0, 10),
+    hour: d.getUTCHours(),
+  };
+}
+
+function jstStartMs(dateText, hour = 0) {
+  const [year, month, day] = String(dateText).split('-').map(Number);
+  return Date.UTC(year, month - 1, day, hour, 0, 0) - 9 * 60 * 60 * 1000;
+}
+
+function buildChartRangeDownloadRequests(rangeKey = '24h') {
+  const duration = CHART_RANGE_MS_RENDERER[rangeKey] || CHART_RANGE_MS_RENDERER['24h'];
+  const nowMs = Date.now();
+  const startMs = nowMs - duration;
+  const start = jstPartsFromMs(startMs);
+  const end = jstPartsFromMs(nowMs);
+  const requests = [];
+  let dayMs = jstStartMs(start.date, 0);
+  const endDayMs = jstStartMs(end.date, 0);
+  while (dayMs <= endDayMs) {
+    const date = jstPartsFromMs(dayMs).date;
+    const startHour = date === start.date ? start.hour : 0;
+    const endHour = date === end.date ? Math.min(24, end.hour + 1) : 24;
+    if (endHour > startHour) requests.push({ date, start_hour: startHour, end_hour: endHour });
+    dayMs += 24 * 60 * 60 * 1000;
+  }
+  return requests;
+}
+
 async function getJson(path) {
   if (window.blw?.api) {
     const url = new URL(path, 'http://local-engine');
@@ -101,12 +164,14 @@ async function getJson(path) {
     if (url.pathname === '/api/capabilities') return window.blw.api.getCapabilities();
     if (url.pathname === '/api/contract') return window.blw.api.getContract();
     if (url.pathname === '/api/api-readiness') return window.blw.api.getApiReadiness();
+    if (url.pathname === '/api/db-status') return window.blw.api.getDbStatus();
     if (url.pathname === '/api/summary') return window.blw.api.getSummary();
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
     if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
     if (url.pathname === '/api/alert-history') return window.blw.api.getAlertHistory(query);
     if (url.pathname === '/api/daily-goal-reports') return window.blw.api.getDailyGoalReports(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
+    if (url.pathname === '/api/chart-coverage') return window.blw.api.getChartCoverage(query);
     throw new Error(`未対応のローカルエンジンGET: ${url.pathname}`);
   }
   throw new Error('Electron preload の window.blw.api が見つかりません。npm start から起動してください。');
@@ -173,6 +238,89 @@ function formatBoundary(boundary) {
   ].join('\n');
 }
 
+
+function formatDbTime(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return new Date(n).toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function renderDbStatusTables(data) {
+  const candleRows = (data.latest_candles || []).map((row) => ({
+    symbol: row.symbol || '—',
+    interval: row.interval || '—',
+    rows: row.rows ?? 0,
+    period: `${formatDbTime(row.start_time_ms)} → ${formatDbTime(row.end_time_ms)}`,
+  }));
+  renderTable(document.getElementById('dbCandlesTable'), [
+    ['symbol', '通貨'],
+    ['interval', '足'],
+    ['rows', '本数'],
+    ['period', '期間(JST)'],
+  ], candleRows);
+
+  const fetchRows = (data.latest_fetch_runs || []).map((row) => ({
+    id: row.id,
+    target: `${row.symbol || '—'} / ${row.interval || '—'}`,
+    type: row.fetch_type || '—',
+    rows: `${row.rows_fetched ?? 0}本 / 追加${row.rows_inserted ?? 0} / 更新${row.rows_updated ?? 0}`,
+    status: row.status || '—',
+    at: formatDbTime(row.finished_at_ms || row.started_at_ms),
+  }));
+  renderTable(document.getElementById('dbFetchRunsTable'), [
+    ['id', 'ID'],
+    ['target', '対象'],
+    ['type', '取得種別'],
+    ['rows', '本数'],
+    ['status', '状態'],
+    ['at', '時刻(JST)'],
+  ], fetchRows);
+
+  const refRows = (data.latest_references || []).map((row) => ({
+    id: row.id,
+    purpose: row.purpose || '—',
+    target: `${row.symbol || '—'} / ${row.interval || '—'}`,
+    rows: `${row.row_count ?? 0}本`,
+    quality: row.quality_label || '—',
+    missing: row.missing_count === null || row.missing_count === undefined ? '—' : `${row.missing_count}本`,
+    at: formatDbTime(row.created_at_ms),
+  }));
+  renderTable(document.getElementById('dbReferencesTable'), [
+    ['id', 'ID'],
+    ['purpose', '用途'],
+    ['target', '対象'],
+    ['rows', '参照本数'],
+    ['quality', '品質'],
+    ['missing', '欠損'],
+    ['at', '作成時刻(JST)'],
+  ], refRows);
+}
+
+async function loadDbStatus() {
+  const memo = document.getElementById('dbStatusMemo');
+  if (!memo) return;
+  try {
+    const data = await getJson('/api/db-status');
+    const counts = data.counts || {};
+    memo.textContent = data.enabled
+      ? `DB Phase 1 有効: ${data.db_file}\nローソク足 ${counts.candles || 0}本 / 取得記録 ${counts.fetch_runs || 0}件 / 参照記録 ${counts.data_references || 0}件\n${data.message || ''}`
+      : `DB Phase 1 未有効: ${data.message || '状態を取得できませんでした。'}\nDB予定パス: ${data.db_file || '—'}\n有効化するには npm install 後に再起動してください。`;
+    renderDbStatusTables(data);
+  } catch (e) {
+    memo.textContent = `DB状態の取得に失敗: ${e.message}`;
+    renderDbStatusTables({ latest_candles: [], latest_fetch_runs: [], latest_references: [] });
+  }
+}
+
 async function loadStatus() {
   const pill = document.getElementById('backendStatus');
   try {
@@ -185,6 +333,7 @@ async function loadStatus() {
       `データ元: ${status.data_source}`,
       `履歴行数: ${status.history_rows}`,
       `履歴CSV: ${status.history_file}`,
+      `DB Phase 1: ${status.db_phase1?.enabled ? '有効' : '未有効'} / candles=${status.db_phase1?.counts?.candles ?? 0}`,
       '',
       formatBoundary(status.api_boundary),
     ].join('\n');
@@ -632,6 +781,7 @@ function makeSvgPath(points, width, height, pad) {
 function chartSourceLabel(source) {
   const labels = {
     'local-history+downloaded-kline': 'DL済み＋現在まで更新済み',
+    'downloaded-kline-current': 'DL済み＋現在まで更新済みkline',
     'downloaded-kline': 'DL済みファイルのみ',
     'binance-klines': '公開kline一時表示',
     'local-history': 'ローカル履歴フォールバック',
@@ -691,13 +841,158 @@ async function loadChart() {
     source = 'combined';
     setValueIfExists('chartSource', 'combined');
   }
-  const interval = document.getElementById('chartInterval').value;
+  let interval = document.getElementById('chartInterval').value;
+
+  // 表示範囲・足切替は公開kline一時表示用。
+  // DL済み表示は保存ファイル確認用なので、autoのままDL表示へ入ると1mフォールバックになりやすい。
+  if (source !== 'klines' && interval === 'auto') {
+    interval = '1m';
+    setValueIfExists('chartInterval', '1m');
+  }
+
   const range = elValue('chartRange', '24h');
   const date = document.getElementById('historyDate').value;
   const startHour = document.getElementById('historyStartHour').value;
   const endHour = document.getElementById('historyEndHour').value;
   const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=520`);
   renderChart(data);
+}
+
+function loadChartRangeFromKlines() {
+  // 「表示範囲」と「足」はkline直取得で効かせる。
+  // DL済み＋現在データは基本1m保存なので、ここを切り替えないと5m/15m/30m/1hが同じ見た目になりやすい。
+  setValueIfExists('chartSource', 'klines');
+  return loadChart();
+}
+
+
+async function downloadSelectedChartRangeForDisplay(options = {}) {
+  const symbol = elValue('chartSymbol', 'BTCJPY');
+  const range = elValue('chartRange', '24h');
+  const interval = selectedChartIntervalForDownload();
+  const label = CHART_RANGE_LABELS_RENDERER[range] || range;
+  const requests = Array.isArray(options.requests) && options.requests.length
+    ? options.requests
+    : buildChartRangeDownloadRequests(range);
+  const skipExisting = options.skipExisting !== undefined ? Boolean(options.skipExisting) : true;
+  const memo = document.getElementById('historyDownloadMemo');
+  const btn = document.getElementById('reloadChart');
+  const oldText = btn ? btn.textContent : '';
+  let downloaded = 0;
+  let skipped = 0;
+  let errors = [];
+  const files = new Set();
+
+  if (!requests.length) throw new Error('DL対象の表示範囲を作れませんでした。');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'DLして更新中...';
+  }
+  try {
+    for (let i = 0; i < requests.length; i += 1) {
+      const req = requests[i];
+      if (memo) memo.textContent = `チャート表示範囲をDL中: ${symbol} ${interval} / ${label}
+${req.date} ${req.start_hour}:00〜${req.end_hour}:00 (${i + 1}/${requests.length})`;
+      const data = await postJson('/api/download-history', {
+        symbol,
+        interval,
+        date: req.date,
+        start_hour: req.start_hour,
+        end_hour: req.end_hour,
+        skip_existing: skipExisting,
+        wait_ms: 250,
+      });
+      (data.chunks || []).forEach((chunk) => {
+        if (chunk.status === 'downloaded') downloaded += 1;
+        if (chunk.status === 'skipped') skipped += 1;
+        if (chunk.file) files.add(chunk.file.split(/[\\/]/).pop());
+      });
+      if (data.merged_file) files.add(String(data.merged_file).split(/[\\/]/).pop());
+      if (Array.isArray(data.errors) && data.errors.length) {
+        errors = errors.concat(data.errors.map((err) => `${err.label || req.date}: ${err.error || err}`));
+      }
+    }
+
+    setValueIfExists('historySymbol', symbol);
+    setValueIfExists('historyInterval', interval);
+    setValueIfExists('chartInterval', interval);
+    setValueIfExists('chartSource', 'combined');
+    if (memo) {
+      memo.textContent = [
+        `チャート表示範囲DL完了: ${symbol} ${interval} / ${label}`,
+        `取得チャンク: ${downloaded} / スキップ: ${skipped} / 対象範囲: ${requests.length}件`,
+        files.size ? `更新ファイル: ${Array.from(files).slice(0, 8).join(' / ')}${files.size > 8 ? ` ほか${files.size - 8}件` : ''}` : '',
+        errors.length ? `エラー: ${errors.join(' / ')}` : '',
+      ].filter(Boolean).join('\n');
+    }
+    await loadStatus();
+    await loadDbStatus();
+    await loadSummaryMiniCharts();
+    return { downloaded, skipped, errors, requests };
+  } finally {
+    if (btn) {
+      btn.textContent = oldText;
+      btn.disabled = false;
+    }
+  }
+}
+
+async function getSelectedChartCoverage() {
+  const symbol = elValue('chartSymbol', 'BTCJPY');
+  const range = elValue('chartRange', '24h');
+  const interval = selectedChartIntervalForDownload();
+  return getJson(`/api/chart-coverage?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}`);
+}
+
+function chartCoverageSummaryText(coverage) {
+  if (!coverage) return '';
+  const pct = Number.isFinite(Number(coverage.coverage_pct)) ? `${Number(coverage.coverage_pct).toFixed(1)}%` : '不明';
+  const rows = `${coverage.row_count ?? 0}/${coverage.expected_row_count ?? '?'}本`;
+  const files = coverage.referenced_file_count ? `参照ファイル${coverage.referenced_file_count}件` : '参照ファイルなし';
+  return `${coverage.symbol} / ${coverage.range_label || coverage.range} / ${coverage.interval}足 / ${rows} / カバー率${pct} / ${files}`;
+}
+
+async function reloadChartWithDownloadConfirm() {
+  const symbol = elValue('chartSymbol', 'BTCJPY');
+  const range = elValue('chartRange', '24h');
+  const interval = selectedChartIntervalForDownload();
+  const label = CHART_RANGE_LABELS_RENDERER[range] || range;
+  const memo = document.getElementById('historyDownloadMemo');
+  let coverage = null;
+
+  try {
+    coverage = await getSelectedChartCoverage();
+  } catch (error) {
+    if (memo) memo.textContent = `DL済みデータ確認に失敗しました。従来どおり確認して更新します: ${error.message}`;
+  }
+
+  if (coverage?.enough) {
+    setValueIfExists('chartInterval', interval);
+    setValueIfExists('chartSource', 'combined');
+    if (memo) {
+      memo.textContent = `DL確認スキップ: 必要なデータは既にあります。\n${chartCoverageSummaryText(coverage)}`;
+    }
+    await loadChart();
+    return;
+  }
+
+  const coverageText = coverage ? `\n\n現在のDL済み状況:\n${chartCoverageSummaryText(coverage)}` : '';
+  const missingText = coverage?.missing_request_count
+    ? `\n不足範囲: ${coverage.missing_request_count}件。はいを選ぶと不足範囲だけDLします。`
+    : '';
+  const title = coverage && coverage.row_count > 0
+    ? 'チャート表示範囲のデータが一部不足しています。DLしてから更新しますか？'
+    : 'チャート表示範囲のDL済みデータがありません。DLしてから更新しますか？';
+  const shouldDownload = window.confirm(
+    `${title}\n\n対象: ${symbol} / ${label} / ${interval}足${coverageText}${missingText}\n\nはい: long_data とDBへ保存してから「DL済み＋現在まで更新済み」で表示\nいいえ: 保存せず、現在の表示設定で更新`
+  );
+  if (shouldDownload) {
+    await downloadSelectedChartRangeForDisplay({
+      requests: coverage?.missing_requests || [],
+      skipExisting: false,
+    });
+  }
+  await loadChart();
 }
 
 function todayJstDateText() {
@@ -1006,6 +1301,7 @@ async function refreshAll() {
   await loadImpact();
   await loadAlertPreview();
   await loadApiReadiness();
+  await loadDbStatus();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1017,13 +1313,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
-  document.getElementById('reloadChart').addEventListener('click', loadChart);
+  document.getElementById('reloadDbStatus').addEventListener('click', loadDbStatus);
+  document.getElementById('reloadChart').addEventListener('click', reloadChartWithDownloadConfirm);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('updateHistoryToNow').addEventListener('click', updateHistoryToNow);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
   document.getElementById('chartSource').addEventListener('change', loadChart);
-  document.getElementById('chartInterval').addEventListener('change', loadChart);
-  document.getElementById('chartRange').addEventListener('change', loadChart);
+  document.getElementById('chartInterval').addEventListener('change', loadChartRangeFromKlines);
+  document.getElementById('chartRange').addEventListener('change', loadChartRangeFromKlines);
   document.getElementById('historyDate').addEventListener('change', loadChart);
   document.getElementById('historyStartHour').addEventListener('change', loadChart);
   document.getElementById('historyEndHour').addEventListener('change', loadChart);

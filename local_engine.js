@@ -3,8 +3,9 @@ const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const calculations = require('./local_engine_calculations');
+const dbStore = require('./local_engine_db');
 
-const VERSION = 'electron-node-engine-v0.5-chart-update-now';
+const VERSION = 'electron-node-engine-v0.5-phase1-db';
 const SYMBOLS = ['BTCJPY', 'ETHJPY'];
 const HISTORY_COLUMNS = ['timestamp', 'symbol', 'price_jpy'];
 const LONG_DATA_COLUMNS = [
@@ -1024,6 +1025,191 @@ async function downloadedChartPoints(params = {}) {
   };
 }
 
+async function downloadedChartPointsForRange(params = {}) {
+  const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
+  const interval = KLINE_INTERVALS.includes(params.interval) ? params.interval : '1m';
+  const range = normalizeChartRange(params.range || '24h');
+  const dir = longDataDir();
+  const byOpenTime = new Map();
+  const usedFiles = new Set();
+  const plannedPattern = `binance_${symbol}_${interval}_*_JST.csv`;
+
+  if (fs.existsSync(dir)) {
+    const prefix = `binance_${symbol}_${interval}_`;
+    const files = (await fs.promises.readdir(dir))
+      .filter((name) => name.startsWith(prefix) && name.endsWith('_JST.csv'))
+      .map((name) => path.join(dir, name));
+
+
+    for (const file of files) {
+      const rows = await readLongDataRows(file);
+      let used = false;
+      rows.forEach((row) => {
+        if (row.symbol !== symbol || row.interval !== interval) return;
+        const timeMs = safeFloat(row.open_time_ms, NaN);
+        const price = safeFloat(row.close, NaN);
+        if (!Number.isFinite(timeMs) || !Number.isFinite(price)) return;
+        if (timeMs < range.start_ms || timeMs > range.end_ms) return;
+        byOpenTime.set(timeMs, {
+          timestamp: formatJst(new Date(timeMs), 'time'),
+          timestamp_full: row.open_time_jst || formatJst(new Date(timeMs)),
+          price,
+          time_ms: timeMs,
+          source: 'downloaded-kline',
+        });
+        used = true;
+      });
+      if (used) usedFiles.add(file);
+    }
+  }
+
+  return {
+    points: Array.from(byOpenTime.values()).sort((a, b) => a.time_ms - b.time_ms),
+    source: usedFiles.size ? Array.from(usedFiles).join('; ') : plannedPattern,
+    planned_file: plannedPattern,
+    files: Array.from(usedFiles),
+    range,
+  };
+}
+
+function intervalMsForChart(interval) {
+  return INTERVAL_MS[normalizeInterval(interval)] || INTERVAL_MS['1m'];
+}
+
+function jstPartsForRangeMs(ms) {
+  const jst = new Date(Number(ms) + JST_OFFSET_MS);
+  return {
+    date: `${jst.getUTCFullYear()}-${pad2(jst.getUTCMonth() + 1)}-${pad2(jst.getUTCDate())}`,
+    hour: jst.getUTCHours(),
+  };
+}
+
+function buildHourlyRequestsForChartRange(range) {
+  const requests = [];
+  const startDay = jstPartsForRangeMs(range.start_ms);
+  let cursor = parseJstDateTime(startDay.date, startDay.hour, 0).getTime();
+  const endMs = range.end_ms;
+  let guard = 0;
+  while (cursor < endMs && guard < 24 * 40) {
+    const part = jstPartsForRangeMs(cursor);
+    const next = cursor + 60 * 60 * 1000;
+    const overlapStart = Math.max(cursor, range.start_ms);
+    const overlapEnd = Math.min(next, range.end_ms);
+    if (overlapEnd > overlapStart) {
+      requests.push({
+        date: part.date,
+        start_hour: part.hour,
+        end_hour: Math.min(24, part.hour + 1),
+        start_ms: cursor,
+        end_ms: next,
+        overlap_start_ms: overlapStart,
+        overlap_end_ms: overlapEnd,
+      });
+    }
+    cursor = next;
+    guard += 1;
+  }
+  return requests;
+}
+
+function expectedRowsForWindow(interval, startMs, endMs) {
+  const step = intervalMsForChart(interval);
+  if (!step || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.max(1, Math.round((endMs - startMs) / step));
+}
+
+function groupHourlyDownloadRequests(requests) {
+  const groups = [];
+  for (const req of requests) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === req.date && last.end_hour === req.start_hour) {
+      last.end_hour = req.end_hour;
+      last.hour_count += 1;
+      last.end_ms = req.end_ms;
+    } else {
+      groups.push({
+        date: req.date,
+        start_hour: req.start_hour,
+        end_hour: req.end_hour,
+        hour_count: 1,
+        start_ms: req.start_ms,
+        end_ms: req.end_ms,
+      });
+    }
+  }
+  return groups;
+}
+
+async function chartDataCoverage(params = {}) {
+  const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
+  const range = normalizeChartRange(params.range || '24h');
+  const requestedInterval = params.interval || 'auto';
+  const interval = normalizeChartInterval(requestedInterval, range.key);
+  const downloaded = await downloadedChartPointsForRange({ symbol, interval, range: range.key });
+  const pointTimes = new Set((downloaded.points || []).map((point) => Number(point.time_ms)).filter(Number.isFinite));
+  const expectedCount = expectedRowsForWindow(interval, range.start_ms, range.end_ms);
+  const rowCount = pointTimes.size;
+  const coverageRate = expectedCount > 0 ? rowCount / expectedCount : (rowCount > 0 ? 1 : 0);
+  const hourly = buildHourlyRequestsForChartRange(range).map((req) => {
+    const expected = expectedRowsForWindow(interval, req.overlap_start_ms, req.overlap_end_ms);
+    let actual = 0;
+    pointTimes.forEach((timeMs) => {
+      if (timeMs >= req.overlap_start_ms && timeMs < req.overlap_end_ms) actual += 1;
+    });
+    const rate = expected > 0 ? actual / expected : (actual > 0 ? 1 : 0);
+    return {
+      ...req,
+      expected_rows: expected,
+      row_count: actual,
+      coverage_rate: rate,
+      enough: expected <= 0 || rate >= 0.95,
+    };
+  });
+  const missingHourly = hourly.filter((item) => !item.enough);
+  const missingRequests = groupHourlyDownloadRequests(missingHourly);
+  const missingCount = Math.max(0, expectedCount - rowCount);
+  const quality = rowCount <= 0
+    ? 'empty'
+    : coverageRate >= 0.95
+      ? 'good'
+      : coverageRate >= 0.5
+        ? 'partial'
+        : 'thin';
+  return {
+    ok: true,
+    symbol,
+    interval,
+    interval_requested: requestedInterval,
+    range: range.key,
+    range_label: range.label,
+    range_start_jst: range.start_jst,
+    range_end_jst: range.end_jst,
+    row_count: rowCount,
+    expected_row_count: expectedCount,
+    missing_count: missingCount,
+    coverage_rate: coverageRate,
+    coverage_pct: coverageRate * 100,
+    quality,
+    enough: coverageRate >= 0.95,
+    source: 'long_data_csv',
+    referenced_file_count: downloaded.files?.length || 0,
+    referenced_files: (downloaded.files || []).map((file) => path.basename(file)),
+    planned_file: downloaded.planned_file,
+    missing_requests: missingRequests.map((item) => ({
+      date: item.date,
+      start_hour: item.start_hour,
+      end_hour: item.end_hour,
+      hour_count: item.hour_count,
+    })),
+    missing_request_count: missingRequests.length,
+    message: rowCount <= 0
+      ? `${symbol} ${interval} / ${range.label}: DL済みデータはまだありません。`
+      : coverageRate >= 0.95
+        ? `${symbol} ${interval} / ${range.label}: DL済みデータは十分あります。`
+        : `${symbol} ${interval} / ${range.label}: DL済みデータが一部不足しています。`,
+  };
+}
+
 async function downloadedKlineRows(params = {}) {
   const plan = buildKlineDownloadPlan(params);
   const files = fs.existsSync(plan.merged_file)
@@ -1188,6 +1374,21 @@ async function downloadHistoricalKlines(body = {}) {
     }
   }
   const mergedRows = await mergeLongDataChunks(plan);
+  const dbRows = await readLongDataRows(plan.merged_file);
+  const dbResult = await dbStore.saveKlineRows(projectDir(), {
+    symbol: plan.symbol,
+    interval: plan.interval,
+    rows: dbRows,
+    requested_start_ms: plan.chunks[0]?.start_ms ?? null,
+    requested_end_ms: plan.chunks[plan.chunks.length - 1]?.end_ms ?? null,
+    source: 'binance_public_kline_csv_download',
+    reference_source: 'long_data_csv_and_db',
+    fetch_type: 'manual_history_download',
+    purpose: 'fill_rate_calc',
+    file_names: [path.basename(plan.merged_file)],
+    status: errors.length === 0 ? 'ok' : 'partial',
+    message: `履歴DLからDB Phase 1へ保存: ${dbRows.length}本`,
+  });
   return {
     ok: errors.length === 0,
     dry_run: false,
@@ -1200,7 +1401,8 @@ async function downloadHistoricalKlines(body = {}) {
     errors,
     merged_file: plan.merged_file,
     merged_rows: mergedRows,
-    message: `履歴DL完了: ${results.length}チャンク / merged ${mergedRows}行${errors.length ? ` / エラー ${errors.length}件` : ''}`,
+    db_phase1: dbResult,
+    message: `履歴DL完了: ${results.length}チャンク / merged ${mergedRows}行${errors.length ? ` / エラー ${errors.length}件` : ''}${dbResult.enabled ? ` / DB保存 ${dbResult.rows_inserted}追加 ${dbResult.rows_updated}更新` : ` / DB未有効: ${dbResult.error || dbResult.message || 'npm install が必要です'}`}`,
   };
 }
 
@@ -1222,6 +1424,7 @@ async function updateDownloadedHistoryToNow(body = {}) {
     : Math.max(fallbackStartMs, endMs - fallbackHours * 60 * 60 * 1000);
 
   if (startMs >= endMs) {
+    const db = await dbStore.getDbStatus(projectDir());
     return {
       ok: true,
       symbol,
@@ -1232,6 +1435,12 @@ async function updateDownloadedHistoryToNow(body = {}) {
       files: [],
       file_names: [],
       errors: [],
+      db_phase1: {
+        enabled: db.enabled,
+        db_file: db.db_file,
+        counts: db.counts,
+        message: db.message,
+      },
       latest_before_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
       latest_after_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
       started_from_jst: formatJst(new Date(startMs)),
@@ -1246,6 +1455,21 @@ async function updateDownloadedHistoryToNow(body = {}) {
   const mergeResult = fetched.rows.length
     ? await mergeDownloadedRowsIntoDailyFiles(symbol, interval, fetched.rows)
     : { files: [], inserted_rows: 0 };
+  const dbResult = await dbStore.saveKlineRows(projectDir(), {
+    symbol,
+    interval,
+    rows: fetched.rows,
+    requested_start_ms: startMs,
+    requested_end_ms: endMs,
+    source: 'binance_public_kline_incremental',
+    reference_source: 'long_data_csv_and_db',
+    fetch_type: stateBefore.latest ? 'incremental_update' : 'initial_backfill',
+    purpose: interval === '1m' ? 'fill_rate_calc' : 'chart_display',
+    file_names: mergeResult.files ? mergeResult.files.map((item) => path.basename(item.file)) : [],
+    include_unclosed_candle: body.include_unconfirmed !== false,
+    status: fetched.errors.length === 0 ? 'ok' : 'partial',
+    message: `現在時刻まで差分更新からDB Phase 1へ保存: ${fetched.rows.length}本`,
+  });
   const stateAfter = await latestDownloadedKlineState(symbol, interval);
   const latestOpen = stateAfter.latest?.open_time_ms ?? stateBefore.latest?.open_time_ms ?? null;
   const unconfirmedLatest = Number.isFinite(latestOpen) ? latestOpen + step > nowMs : false;
@@ -1260,6 +1484,7 @@ async function updateDownloadedHistoryToNow(body = {}) {
     files: mergeResult.files,
     file_names: fileNames,
     errors: fetched.errors,
+    db_phase1: dbResult,
     latest_before_jst: stateBefore.latest ? stateBefore.latest.open_time_jst : '',
     latest_after_jst: stateAfter.latest ? stateAfter.latest.open_time_jst : '',
     started_from_jst: formatJst(new Date(startMs)),
@@ -1267,7 +1492,7 @@ async function updateDownloadedHistoryToNow(body = {}) {
     unconfirmed_latest: unconfirmedLatest,
     fallback_used: !stateBefore.latest,
     message: fetched.rows.length
-      ? `${symbol} ${interval}: ${formatJst(new Date(startMs))} から現在時刻まで差分DLしました。取得 ${fetched.rows.length}本 / 追加 ${mergeResult.inserted_rows}本 / 更新ファイル ${mergeResult.files.length}件。${unconfirmedLatest ? '最新足は未確定の可能性があります。' : ''}`
+      ? `${symbol} ${interval}: ${formatJst(new Date(startMs))} から現在時刻まで差分DLしました。取得 ${fetched.rows.length}本 / 追加 ${mergeResult.inserted_rows}本 / 更新ファイル ${mergeResult.files.length}件。${dbResult.enabled ? `DB保存 ${dbResult.rows_inserted}追加 ${dbResult.rows_updated}更新。` : `DB未有効: ${dbResult.error || 'npm install が必要です'}。`}${unconfirmedLatest ? '最新足は未確定の可能性があります。' : ''}`
       : `${symbol} ${interval}: 取得できる新しい足はありませんでした。${fetched.errors.length ? ` エラー: ${fetched.errors.join(' / ')}` : ''}`,
   };
 }
@@ -1311,6 +1536,7 @@ async function fetchSymbolTradeRules(symbol) {
 async function status() {
   const { source } = await currentPriceData();
   const { rows } = await readHistoryRows();
+  const db = await dbStore.getDbStatus(projectDir());
   return {
     ok: true,
     version: VERSION,
@@ -1321,6 +1547,12 @@ async function status() {
     data_source: source,
     api_boundary: API_BOUNDARY,
     calculation_engine: 'local_engine_calculations.js',
+    db_phase1: {
+      enabled: db.enabled,
+      db_file: db.db_file,
+      counts: db.counts,
+      message: db.message,
+    },
   };
 }
 
@@ -1330,7 +1562,7 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'contract', 'api-readiness'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'contract', 'api-readiness', 'db-status'],
       POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
     },
     api_boundary: API_BOUNDARY,
@@ -1350,7 +1582,7 @@ async function contract() {
       mode: 'electron-ui + electron-main-node-engine',
       forbidden: API_BOUNDARY.forbidden,
       routes: {
-        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'api-readiness'],
+        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'api-readiness', 'db-status'],
         POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
@@ -1358,6 +1590,10 @@ async function contract() {
   }
   const text = await fs.promises.readFile(filePath, 'utf8');
   return JSON.parse(text);
+}
+
+async function dbStatus() {
+  return dbStore.getDbStatus(projectDir());
 }
 
 async function summary() {
@@ -1716,37 +1952,32 @@ async function chart(params = {}) {
   if (sourceMode === 'downloaded' || sourceMode === 'combined') {
     actualInterval = KLINE_INTERVALS.includes(intervalRequested) ? intervalRequested : '1m';
     try {
-      const date = String(params.date || '').trim();
-      if (!date) throw new Error('DL済み過去データの表示には日付が必要です。');
-      const downloaded = await downloadedChartPoints({
+      const rangeSelection = normalizeChartRange(rangeKey);
+      const downloaded = await downloadedChartPointsForRange({
         symbol,
         interval: actualInterval,
-        date,
-        start_hour: params.start_hour,
-        end_hour: params.end_hour,
+        range: rangeKey,
       });
-      const downloadedPoints = downloaded.points.slice(-limit);
+      const downloadedPoints = downsampleChartPoints(downloaded.points, limit);
       rawRows = downloaded.points.length;
-      chartRange = downloadedPoints.length ? {
-        key: 'downloaded-selection',
-        label: 'DL指定範囲',
-        start_jst: downloadedPoints[0]?.timestamp_full || '',
-        end_jst: downloadedPoints[downloadedPoints.length - 1]?.timestamp_full || '',
-      } : null;
+      chartRange = downloaded.range || rangeSelection;
       if (sourceMode === 'downloaded') {
         points = downloadedPoints;
         usedSource = 'downloaded-kline';
         message = downloadedPoints.length
-          ? `long_data のDL済み ${actualInterval} 足からチャートを作成しました。`
-          : `DL済み過去データが見つかりません。先に履歴データDLを実行してください。予定CSV: ${downloaded.planned_file}`;
+          ? `long_data のDL済み ${actualInterval} 足から ${chartRange.label} のチャートを作成しました（参照ファイル${downloaded.files?.length || 0}件）。`
+          : `選択範囲のDL済みデータが見つかりません。グラフ更新時のDL確認で「はい」を選ぶか、履歴データDLを実行してください。対象: ${downloaded.planned_file}`;
       } else {
-        const local = await localChartPoints(symbol, limit);
-        points = combineChartPoints(downloadedPoints, local.points, limit);
-        rawRows = Math.max(rawRows, points.length);
-        usedSource = 'local-history+downloaded-kline';
+        // DL+ は price_history.csv の現在価格スナップショットを混ぜず、
+        // long_data/DBへ保存されたklineだけで表示します。
+        // 現在時刻までの補完は「現在価格＋履歴を現在まで更新」または
+        // グラフ更新時の不足分DLでklineとして保存してから反映します。
+        points = downloadedPoints;
+        rawRows = downloaded.points.length;
+        usedSource = 'downloaded-kline-current';
         message = downloadedPoints.length
-          ? `price_history.csv と long_data のDL済み ${actualInterval} 足を時刻順に統合しました。同時刻はローカル履歴を優先します。`
-          : `DL済み過去データが見つからないため、ローカル履歴だけで表示しています。予定CSV: ${downloaded.planned_file}`;
+          ? `long_data のDL済み ${actualInterval} 足だけで ${chartRange.label} のチャートを作成しました（参照ファイル${downloaded.files?.length || 0}件）。price_history.csv は混ぜていません。`
+          : `選択範囲のDL済みklineデータが見つかりません。グラフ更新時のDL確認で「はい」を選んでください。対象: ${downloaded.planned_file}`;
       }
     } catch (error) {
       errors.push(error.message);
@@ -1876,8 +2107,10 @@ async function invoke(route, payload = {}) {
     case 'alert-history': return alertHistory(query);
     case 'daily-goal-reports': return dailyGoalReports(query);
     case 'chart': return chart(query);
+    case 'chart-coverage': return chartDataCoverage(query);
     case 'contract': return contract();
     case 'api-readiness': return apiReadiness();
+    case 'db-status': return dbStatus();
     case 'fetch-prices': return fetchPrices();
     case 'download-history': return downloadHistoricalKlines(body);
     case 'update-history-to-now': return updateDownloadedHistoryToNow(body);
@@ -1897,7 +2130,9 @@ module.exports = {
   summary,
   impact,
   contract,
+  dbStatus,
   chart,
+  chartDataCoverage,
   downloadHistoricalKlines,
   updateDownloadedHistoryToNow,
   buildKlineDownloadPlan,

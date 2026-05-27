@@ -141,13 +141,14 @@
               <label>通貨</label>
               <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
               <label>データ</label>
-              <select id="chartSource"><option value="klines" selected>公開kline一時表示</option><option value="combined">DL済み＋現在まで更新済み</option><option value="downloaded">DL済みファイルのみ</option></select>
+              <select id="chartSource"><option value="klines" selected>公開kline一時表示（範囲・足切替用）</option><option value="combined">DL済み＋現在まで更新済み</option><option value="downloaded">DL済みファイルのみ</option></select>
               <label>表示範囲</label>
               <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
               <label>足</label>
               <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
               <button class="primary" id="reloadChart">グラフ更新</button>
             </div>
+            <p class="card-desc">グラフ更新を押すと、選択した表示範囲をDL保存してから更新するか確認します。「はい」でlong_data/DBへ保存し、DL済み＋現在まで更新済みで表示します。</p>
           </div>
           <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
           <div class="chart-box">
@@ -365,10 +366,26 @@
             <div class="table-wrap"><table id="apiFeeSampleTable"></table></div>
           </div>
           <div class="card">
+            <div class="card-head">
+              <div>
+                <h3>DB Phase 1</h3>
+                <p class="card-desc">candles / fetch_runs / data_references の土台です。診断用1分足キャッシュと参照根拠をここへ寄せます。</p>
+              </div>
+              <button class="secondary" id="reloadDbStatus">DB確認</button>
+            </div>
+            <p class="memo-text" id="dbStatusMemo">DB状態を確認中です。</p>
+            <h4>ローソク足キャッシュ</h4>
+            <div class="table-wrap"><table id="dbCandlesTable"></table></div>
+            <h4>取得記録</h4>
+            <div class="table-wrap"><table id="dbFetchRunsTable"></table></div>
+            <h4>参照根拠</h4>
+            <div class="table-wrap"><table id="dbReferencesTable"></table></div>
+          </div>
+          <div class="card">
             <h3>API境界</h3>
             <ul class="check-list">
               <li>Electron UI: 表示と入力</li>
-              <li>Electron Main: 公開価格取得、履歴保存、チャート用データ作成、概算計算</li>
+              <li>Electron Main: 公開価格取得、履歴保存、SQLite Phase 1、チャート用データ作成、概算計算</li>
               <li>実注文: 未実装</li>
               <li>自動売買: 未実装</li>
               <li>出金機能: 未実装</li>

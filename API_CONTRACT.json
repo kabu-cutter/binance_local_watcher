@@ -1,5 +1,5 @@
 {
-  "version": "electron-node-engine-v0.5-chart-update-now",
+  "version": "electron-node-engine-v0.5-phase1-db",
   "mode": "electron-ui + electron-main-node-engine",
   "forbidden": [
     "real_order",
@@ -21,7 +21,8 @@
           "history_rows",
           "data_source",
           "api_boundary",
-          "calculation_engine"
+          "calculation_engine",
+          "db_phase1"
         ]
       },
       "capabilities": {
@@ -108,7 +109,8 @@
           "date",
           "start_hour",
           "end_hour",
-          "limit"
+          "limit",
+          "range"
         ],
         "response": [
           "symbol",
@@ -118,7 +120,12 @@
           "errors",
           "min_price",
           "max_price",
-          "rows"
+          "rows",
+          "interval",
+          "range",
+          "range_label",
+          "raw_rows",
+          "display_rows"
         ]
       },
       "contract": {
@@ -148,6 +155,43 @@
           "fee_sample",
           "fee_fetch_ready",
           "note"
+        ]
+      },
+      "db-status": {
+        "query": {},
+        "response": [
+          "ok",
+          "enabled",
+          "db_file",
+          "schema_version",
+          "counts",
+          "latest_candles",
+          "latest_fetch_runs",
+          "latest_references",
+          "message"
+        ]
+      },
+      "chart-coverage": {
+        "query": [
+          "symbol",
+          "interval",
+          "range"
+        ],
+        "response": [
+          "ok",
+          "symbol",
+          "interval",
+          "range",
+          "range_label",
+          "row_count",
+          "expected_row_count",
+          "missing_count",
+          "coverage_pct",
+          "quality",
+          "enough",
+          "referenced_file_count",
+          "missing_requests",
+          "message"
         ]
       }
     },
@@ -188,7 +232,8 @@
           "errors",
           "merged_file",
           "merged_rows",
-          "message"
+          "message",
+          "db_phase1"
         ]
       },
       "update-history-to-now": {
@@ -215,7 +260,8 @@
           "updated_to_jst",
           "unconfirmed_latest",
           "fallback_used",
-          "message"
+          "message",
+          "db_phase1"
         ]
       },
       "trade-preview": {
