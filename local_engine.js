@@ -1347,8 +1347,76 @@ async function downloadedKlineRows(params = {}) {
   };
 }
 
+function normalizeOccurrenceReferenceDays(body = {}) {
+  return normalizeAnalysisCacheDays(body.occurrence_reference_days || body.reference_days || body.virtual_fill_reference_days, 30);
+}
+
+function normalizeOccurrenceWindowMinutes(value) {
+  const n = safeInt(value, 15);
+  return [1, 5, 15, 30].includes(n) ? n : 15;
+}
+
+function normalizeOccurrenceDirection(value) {
+  const text = String(value || 'up').trim();
+  return ['up', 'down', 'either'].includes(text) ? text : 'up';
+}
+
+function occurrenceDirectionLabel(direction) {
+  if (direction === 'down') return '下方向（指定窓内の下落幅）';
+  if (direction === 'either') return '上下どちらか（指定窓内の値幅）';
+  return '上方向（買って利確）';
+}
+
+function countRequiredMoveWindows(rows, requiredMovePct, windowMinutes, direction) {
+  const cleanRows = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      time_ms: safeFloat(row.open_time_ms, NaN),
+      open: safeFloat(row.open, NaN),
+      high: safeFloat(row.high, NaN),
+      low: safeFloat(row.low, NaN),
+    }))
+    .filter((row) => Number.isFinite(row.time_ms)
+      && Number.isFinite(row.open) && row.open > 0
+      && Number.isFinite(row.high)
+      && Number.isFinite(row.low))
+    .sort((a, b) => a.time_ms - b.time_ms);
+  const span = normalizeOccurrenceWindowMinutes(windowMinutes);
+  if (cleanRows.length < span) {
+    return { window_count: 0, matched_window_count: 0 };
+  }
+  const directionMode = normalizeOccurrenceDirection(direction);
+  const stepMs = INTERVAL_MS['1m'];
+  let windowCount = 0;
+  let matched = 0;
+  for (let i = 0; i <= cleanRows.length - span; i += 1) {
+    const start = cleanRows[i];
+    const end = cleanRows[i + span - 1];
+    // 欠損がある窓は判定から外します。1分足の連続性がある窓だけを見るためです。
+    if (!Number.isFinite(start.time_ms) || !Number.isFinite(end.time_ms)) continue;
+    if ((end.time_ms - start.time_ms) > (span - 1) * stepMs + 1000) continue;
+    const subset = cleanRows.slice(i, i + span);
+    const maxHigh = Math.max(...subset.map((row) => row.high));
+    const minLow = Math.min(...subset.map((row) => row.low));
+    const upTarget = start.open * (1 + requiredMovePct / 100);
+    const downTarget = start.open * (1 - requiredMovePct / 100);
+    windowCount += 1;
+    if (directionMode === 'up') {
+      if (maxHigh >= upTarget) matched += 1;
+    } else if (directionMode === 'down') {
+      if (minLow <= downTarget) matched += 1;
+    } else if (maxHigh >= upTarget || minLow <= downTarget) {
+      matched += 1;
+    }
+  }
+  return { window_count: windowCount, matched_window_count: matched };
+}
+
 async function estimateRequiredMoveOccurrenceRate(body = {}) {
-  const request = normalizeOccurrenceRequest(body);
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : 'BTCJPY';
+  const referenceDays = normalizeOccurrenceReferenceDays(body);
+  const windowMinutes = normalizeOccurrenceWindowMinutes(body.occurrence_window_minutes);
+  const direction = normalizeOccurrenceDirection(body.occurrence_direction);
+  const window = analysisCacheWindow(referenceDays);
   try {
     const target = Math.max(0, safeFloat(body.target_profit_jpy));
     const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
@@ -1357,74 +1425,106 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
     const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, 0.28));
     const perTradeTarget = target / expectedSuccessCount;
     const requiredMovePct = (perTradeTarget / capital) * 100 + costPct;
-    const { rows, files, selection } = await occurrenceKlineRows(body);
-    const referencedFiles = Array.isArray(files) ? files.map((file) => path.basename(file)) : [];
+    const cache = await analysisRowsForWindow({ symbol, start_ms: window.start_ms, end_ms: window.end_ms });
+    const rows = (cache.rows || []).filter((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t >= window.start_ms && t < window.end_ms
+        && Number.isFinite(open) && Number.isFinite(high) && Number.isFinite(low) && open > 0;
+    });
+    const expectedRows = expectedRowsForAnalysisWindow(window.start_ms, window.end_ms);
+    const coverage = expectedRows > 0 ? rows.length / expectedRows : 0;
+    const qualityLabel = rows.length <= 0
+      ? '不足'
+      : coverage >= 0.95
+        ? '良好'
+        : coverage >= 0.5
+          ? '一部不足'
+          : '不足';
     const period = summarizeReferencePeriod(rows);
+    const referencedFiles = Array.isArray(cache.files) ? cache.files.map((file) => path.basename(file)) : [];
     const baseMeta = {
-      symbol: request.symbol,
-      interval: request.interval,
-      reference_scope: request.scope,
-      reference_scope_label: occurrenceScopeLabel(request.scope),
-      selected_file_count: selection.selected_file_count || 0,
+      symbol,
+      interval: '1m',
+      reference_scope: 'analysis_cache',
+      reference_scope_label: `分析用1分足キャッシュ（直近${referenceDays}日）`,
+      reference_days: referenceDays,
+      window_minutes: windowMinutes,
+      direction,
+      direction_label: occurrenceDirectionLabel(direction),
       referenced_files: referencedFiles,
       referenced_file_count: referencedFiles.length,
+      selected_file_count: referencedFiles.length,
       referenced_row_count: rows.length,
+      expected_row_count: expectedRows,
+      missing_count: Math.max(0, expectedRows - rows.length),
+      coverage_pct: coverage * 100,
+      quality_label: qualityLabel,
+      source: cache.source || 'analysis_cache',
+      csv_row_count: cache.csv_row_count,
+      db_row_count: cache.db_row_count,
+      db_enabled: cache.db_enabled,
+      include_unclosed_candle: false,
       matched_row_count: 0,
+      matched_window_count: 0,
+      window_count: 0,
       required_move_pct: requiredMovePct,
       target_profit_jpy: target,
       expected_success_count: expectedSuccessCount,
       per_trade_target_jpy: perTradeTarget,
       reference_period_start_jst: period.start_jst,
       reference_period_end_jst: period.end_jst,
-      reference_period_text: period.text,
+      reference_period_text: period.text || `${window.start_jst} → ${window.end_jst}`,
     };
-    if (rows.length < 10) {
+    if (rows.length < Math.max(10, windowMinutes)) {
       return {
         rate: null,
         required_move_pct: requiredMovePct,
         meta: baseMeta,
-        note: `必要値幅の出現率: ${selection.scope_label}で参照できるDL済み履歴が不足しています（参照足数 ${rows.length}本）。チャート選択日ではなく、日次目標専用の参照設定を使っています。`,
+        note: `必要値幅の出現率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（参照足数 ${rows.length}/${expectedRows}本）。必要値幅出現率はチャート表示日や最新DLファイルではなく、分析用1分足キャッシュで判定します。`,
       };
     }
-    let matched = 0;
-    rows.forEach((row) => {
-      const open = safeFloat(row.open, NaN);
-      const high = safeFloat(row.high, NaN);
-      const low = safeFloat(row.low, NaN);
-      if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || open <= 0) return;
-      const rangePct = ((high - low) / open) * 100;
-      if (rangePct >= requiredMovePct) matched += 1;
-    });
-    const rate = rows.length ? Math.max(0, Math.min(100, (matched / rows.length) * 100)) : 0;
-    const fileSummary = summarizeReferenceFiles(files);
+    const counted = countRequiredMoveWindows(rows, requiredMovePct, windowMinutes, direction);
+    const rate = counted.window_count ? Math.max(0, Math.min(100, (counted.matched_window_count / counted.window_count) * 100)) : null;
     const meta = {
       ...baseMeta,
-      matched_row_count: matched,
+      matched_row_count: counted.matched_window_count,
+      matched_window_count: counted.matched_window_count,
+      window_count: counted.window_count,
     };
     return {
       rate,
       required_move_pct: requiredMovePct,
       meta,
-      note: `必要値幅の出現率: ${selection.scope_label} / ${request.symbol} ${request.interval} 足 ${rows.length}本（使用${referencedFiles.length}ファイル、候補${selection.selected_file_count || 0}ファイル）のうち、1回あたり必要値幅 ${requiredMovePct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、コスト込み）を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。チャート表示の指定日とは分離しています。
-${fileSummary}${period.text ? `
-${period.text}` : ''}`,
+      note: `必要値幅の出現率: ${symbol} 1分足 / 直近${referenceDays}日 / ${windowMinutes}分判定窓 / ${occurrenceDirectionLabel(direction)}。${counted.window_count}窓のうち、1回あたり必要値幅 ${requiredMovePct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、コスト込み）を満たした窓は ${counted.matched_window_count}窓、${Number.isFinite(rate) ? rate.toFixed(1) : '—'}% でした。これは約定率ではなく、指定時間内に必要な値幅が出た頻度です。チャート表示日・最新DLファイルとは分離し、未確定足は除外しています。${period.text ? `\n${period.text}` : ''}`,
     };
   } catch (error) {
     return {
       rate: null,
       required_move_pct: null,
       meta: {
-        symbol: request.symbol,
-        interval: request.interval,
-        reference_scope: request.scope,
-        reference_scope_label: occurrenceScopeLabel(request.scope),
-        selected_file_count: 0,
+        symbol,
+        interval: '1m',
+        reference_scope: 'analysis_cache',
+        reference_scope_label: `分析用1分足キャッシュ（直近${referenceDays}日）`,
+        reference_days: referenceDays,
+        window_minutes: windowMinutes,
+        direction,
+        direction_label: occurrenceDirectionLabel(direction),
         referenced_files: [],
         referenced_file_count: 0,
+        selected_file_count: 0,
         referenced_row_count: 0,
         matched_row_count: 0,
+        matched_window_count: 0,
+        window_count: 0,
+        quality_label: 'エラー',
+        source: 'analysis_cache',
+        error: error.message,
       },
-      note: `必要値幅の出現率: ${error.message} のため、履歴ベース確認は行いません。`,
+      note: `必要値幅の出現率: ${error.message} のため、分析用1分足キャッシュで確認できませんでした。`,
     };
   }
 }

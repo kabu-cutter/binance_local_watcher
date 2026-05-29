@@ -327,10 +327,9 @@
           "virtual_fill_rate_auto",
           "occurrence_interval",
           "occurrence_scope",
-          "occurrence_start_date",
-          "occurrence_end_date",
-          "occurrence_start_hour",
-          "occurrence_end_hour"
+          "occurrence_reference_days",
+          "occurrence_window_minutes",
+          "occurrence_direction"
         ],
         "response": [
           "suggestion",
@@ -382,10 +381,9 @@
           "virtual_fill_rate_auto",
           "occurrence_interval",
           "occurrence_scope",
-          "occurrence_start_date",
-          "occurrence_end_date",
-          "occurrence_start_hour",
-          "occurrence_end_hour"
+          "occurrence_reference_days",
+          "occurrence_window_minutes",
+          "occurrence_direction"
         ],
         "response": [
           "ok",

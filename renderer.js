@@ -1215,7 +1215,7 @@ function syncRoundtripCostFromTrade() {
 function buildDailyPayload() {
   syncRoundtripCostFromTrade();
   const linkedCost = Number(document.getElementById('tradeCostPct').value);
-  const occurrenceInterval = elValue('dailyOccurrenceInterval', '1m');
+  const occurrenceReferenceDays = elNumber('dailyOccurrenceReferenceDays', elNumber('dailyVirtualFillReferenceDays', 30));
   return {
     strategy_template: elValue('dailyTemplate', 'market_priority'),
     symbol: elValue('dailySymbol', 'BTCJPY'),
@@ -1235,14 +1235,13 @@ function buildDailyPayload() {
     limit_distance_pct: elNumber('dailyLimitDistancePct', 0.2),
     // trueなら「必要値幅の出現率」を別計算します。仮想約定率の履歴試算とは分離します。
     virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
-    occurrence_interval: occurrenceInterval,
-    occurrence_scope: elValue('dailyOccurrenceScope', 'latest'),
-    occurrence_start_date: elValue('dailyOccurrenceStartDate', ''),
-    occurrence_end_date: elValue('dailyOccurrenceEndDate', ''),
-    occurrence_start_hour: elNumber('dailyOccurrenceStartHour', 0),
-    occurrence_end_hour: elNumber('dailyOccurrenceEndHour', 24),
-    // 旧API互換用。日次目標側の参照設定であり、チャート/履歴DL欄とは切り離しています。
-    interval: occurrenceInterval,
+    occurrence_reference_days: occurrenceReferenceDays,
+    occurrence_window_minutes: elNumber('dailyOccurrenceWindowMinutes', 15),
+    occurrence_direction: elValue('dailyOccurrenceDirection', 'up'),
+    // 旧API互換用。日次目標側の必要値幅出現率は、常に分析用1分足キャッシュを使います。
+    occurrence_interval: '1m',
+    occurrence_scope: 'analysis_cache',
+    interval: '1m',
   };
 }
 
@@ -1293,7 +1292,7 @@ async function calcDaily() {
     kind: p.kind,
   })).join('');
   renderTable(document.getElementById('dailyScenarioTable'), [
-    ['fill_rate', '仮想約定率'], ['opportunities', '機会'], ['effective', '約定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
+    ['fill_rate', '仮想約定率'], ['opportunities', '想定機会'], ['effective', '到達想定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
   ], data.scenarios.map((r) => ({
     fill_rate: `${Number(r.fill_rate).toFixed(0)}%`,
     opportunities: `${r.opportunities}回`,
@@ -1342,19 +1341,23 @@ function renderDailyOccurrence(data) {
   const files = Array.isArray(meta.referenced_files) ? meta.referenced_files : [];
   memoEl.textContent = data.required_move_occurrence_note || '必要値幅の出現率はまだ計算していません。';
   const rows = [
-    { item: '参照モード', value: meta.reference_scope_label || '—' },
-    { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || elValue('dailyOccurrenceInterval', '1m')}` },
-    { item: '候補ファイル数', value: meta.selected_file_count === undefined ? '—' : `${meta.selected_file_count}件` },
-    { item: '使用ファイル数', value: meta.referenced_file_count === undefined ? '—' : `${meta.referenced_file_count}件` },
+    { item: '参照モード', value: meta.reference_scope_label || '分析用1分足キャッシュ' },
+    { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || '1m'}` },
+    { item: '参照日数', value: meta.reference_days ? `直近${meta.reference_days}日` : '—' },
+    { item: '判定窓', value: meta.window_minutes ? `${meta.window_minutes}分以内` : '—' },
+    { item: '判定方向', value: meta.direction_label || '—' },
     { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
+    { item: '判定対象窓数', value: meta.window_count === undefined ? '—' : `${meta.window_count}窓` },
     { item: '参照期間', value: meta.reference_period_text || '—' },
     { item: '日次目標利益', value: data.target_profit_jpy === undefined ? '—' : yen(data.target_profit_jpy, 0) },
     { item: '想定成功回数', value: data.expected_success_count ? `${data.expected_success_count}回` : '—' },
     { item: '1回あたり目標利益', value: data.per_trade_target_jpy === undefined ? '—' : yen(data.per_trade_target_jpy, 2) },
     { item: '1回あたり必要値幅', value: pct(meta.required_move_pct ?? data.required_move_occurrence_required_pct, 3) },
-    { item: '必要値幅を満たした足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
+    { item: '必要値幅を満たした窓数', value: meta.matched_window_count === undefined ? (meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本`) : `${meta.matched_window_count}窓` },
     { item: '必要値幅出現率', value: pct(data.required_move_occurrence_rate_pct, 1) },
-    { item: '使用ファイル名', value: files.length ? files.slice(0, 8).join('\n') + (files.length > 8 ? `\nほか${files.length - 8}件` : '') : '—' },
+    { item: 'データ品質', value: meta.quality_label || '—' },
+    { item: '参照元', value: meta.source || '—' },
+    { item: '使用ファイル名', value: files.length ? files.slice(0, 8).join('\n') + (files.length > 8 ? `\nほか${files.length - 8}件` : '') : 'DBまたは分析キャッシュ' },
   ];
   renderTable(tableEl, [['item', '項目'], ['value', '値']], rows);
 }

@@ -317,27 +317,27 @@
                 <label class="check-field">履歴確認する
                   <input id="dailyOccurrenceEnabled" type="checkbox" checked />
                 </label>
-                <label>参照足
-                  <select id="dailyOccurrenceInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
-                </label>
-                <label>参照範囲
-                  <select id="dailyOccurrenceScope">
-                    <option value="latest">最新DLデータ</option>
-                    <option value="all_downloaded">DL済み全体</option>
-                    <option value="range">指定範囲</option>
+                <label>参照期間
+                  <select id="dailyOccurrenceReferenceDays">
+                    <option value="7">直近7日</option>
+                    <option value="14">直近14日</option>
+                    <option value="30" selected>直近30日</option>
                   </select>
                 </label>
-                <label>参照開始日
-                  <input id="dailyOccurrenceStartDate" type="date" />
+                <label>判定窓
+                  <select id="dailyOccurrenceWindowMinutes">
+                    <option value="1">1分以内</option>
+                    <option value="5">5分以内</option>
+                    <option value="15" selected>15分以内</option>
+                    <option value="30">30分以内</option>
+                  </select>
                 </label>
-                <label>参照終了日
-                  <input id="dailyOccurrenceEndDate" type="date" />
-                </label>
-                <label>参照開始時
-                  <input id="dailyOccurrenceStartHour" type="number" value="0" min="0" max="23" />
-                </label>
-                <label>参照終了時
-                  <input id="dailyOccurrenceEndHour" type="number" value="24" min="1" max="24" />
+                <label>判定方向
+                  <select id="dailyOccurrenceDirection">
+                    <option value="up" selected>上方向（買って利確）</option>
+                    <option value="down">下方向（下落幅確認）</option>
+                    <option value="either">上下どちらか</option>
+                  </select>
                 </label>
               </div>
             </div>
@@ -373,7 +373,7 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>6</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、想定成功回数で割った1回あたり必要値幅が過去データ上で出た頻度だけを見ます。チャートタブの表示日とは分離します。</p></div></div>
+          <div class="daily-result-head"><span>6</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
           <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
         </div>
@@ -388,7 +388,7 @@
 
         <div class="card daily-step-card">
           <h3>仮想約定率・必要勝率・値動きシナリオ比較</h3>
-          <p class="memo-text">必要勝率は「勝てる確率」ではなく、目標達成に必要な勝ち方の厳しさです。100%近辺は全勝前提として見ます。</p>
+          <p class="memo-text">仮想約定率は「指値に価格が到達した想定」で、勝ち回数ではありません。必要勝率は「勝てる確率」ではなく、目標達成に必要な勝ち方の厳しさです。100%近辺は全勝前提として見ます。</p>
           <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
         </div>
         <div class="card">

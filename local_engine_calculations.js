@@ -322,12 +322,12 @@ function calculateDailyGoal(body = {}) {
   const suggestion = [
     template ? `今日の見方: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
     '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
-    '有効約定回数 = 機会回数 - 未約定回数 として、何回勝つ必要があるかを診断します。',
+    '想定到達回数 = 機会回数 - 未約定回数 として、指値が刺さった可能性を見ます。これは勝った回数ではありません。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `想定成功回数は${expectedSuccessCount}回、1回あたり目標利益は約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     `1回で捉える想定値幅は${takeProfitPct.toFixed(3)}%です。この幅なら、コスト込み1回あたり見込みNetは約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、目標達成に必要な成功回数は${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
-    `仮想約定率${virtualFillRate.toFixed(0)}%なら、有効約定は約${virtualEffective}回、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
+    `仮想約定率${virtualFillRate.toFixed(0)}%なら、指値に到達した想定は約${virtualEffective}回です。これは勝ち回数ではなく、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、1回あたり必要値幅${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
@@ -337,9 +337,9 @@ function calculateDailyGoal(body = {}) {
   ].join('\n');
   const readinessCards = [
     {
-      title: '約定現実度',
+      title: '指値到達想定',
       main: `${virtualFillRate.toFixed(0)}%`,
-      sub: `${maxOpp}機会中、約${virtualEffective}回の約定として見る / 現実度 ${fillLabel}`,
+      sub: `${maxOpp}機会中、約${virtualEffective}回は指値に到達した想定 / 勝ち回数ではありません / 現実度 ${fillLabel}`,
       tag: fillLabel,
       kind: realityKind(fillLabel),
     },
@@ -420,6 +420,7 @@ function calculateDailyGoal(body = {}) {
     };
   });
   const scenarios = [];
+  const seenScenarioKeys = new Set();
   for (const rate of cancelRates) {
     for (const opp of [minOpp, maxOpp]) {
       const nofill = Math.round((opp * rate) / 100);
@@ -444,6 +445,12 @@ function calculateDailyGoal(body = {}) {
         labelLevel(scenarioWinLabel),
         labelLevel(scenarioFillLabel),
       ));
+      const scenarioKey = `${opp}:${effective}:${neededNet.toFixed(6)}:${neededPct.toFixed(6)}:${Math.round(fillRate)}`;
+      if (seenScenarioKeys.has(scenarioKey)) continue;
+      seenScenarioKeys.add(scenarioKey);
+      const lossExplain = lossAbs > 0
+        ? `1回利益約${neededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円に対して、損切り1回は約${lossAbs.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。1敗で目標達成が大きく崩れます。`
+        : `1回利益約${neededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、損切りは未設定です。`;
       scenarios.push({
         cancel_rate: rate,
         fill_rate: fillRate,
@@ -456,12 +463,14 @@ function calculateDailyGoal(body = {}) {
         movement_ratio: recentMoveAbsPct > 0 ? neededPct / recentMoveAbsPct : null,
         reality: scenarioReality,
         risk: scenarioReality,
-        memo: scenarioWinRate >= 100 ? `全勝前提 / ${recentMoveLabel}比で見る` : `必要勝ち${Math.ceil((scenarioWinRate / 100) * effective)}回目安 / ${recentMoveLabel}比で見る`,
+        memo: scenarioWinRate >= 100
+          ? `全勝前提。${lossExplain} ${recentMoveLabel}比で見る`
+          : `必要勝ち${Math.ceil((scenarioWinRate / 100) * effective)}回目安。${lossExplain} ${recentMoveLabel}比で見る`,
       });
     }
   }
   const diagnosticSummary = [
-    `約定現実度: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 有効約定 約${virtualEffective}回）`,
+    `指値到達想定: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 到達想定 約${virtualEffective}回。勝ち回数ではありません）`,
     `必要勝率: ${neededWinPremiseLabel(virtualNeededWinRate)}（必要勝率 ${formatNeededWinRate(virtualNeededWinRate)}）`,
     `1回あたり必要値幅: ${perTradeRequiredPct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円）`,
     `1回で捉える想定値幅: ${takeProfitPct.toFixed(3)}%（この利確幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回成功が必要`} / ${requiredSuccessLabelText}）`,
@@ -469,7 +478,7 @@ function calculateDailyGoal(body = {}) {
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
       : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
-    `総合: ${overallLabel}。未約定・必要勝率・1回あたり必要値幅・1回で捉える想定値幅・値幅出現率のどれが重いかを分けて確認してください。`,
+    `総合: ${overallLabel}。指値到達想定・必要勝率・1回あたり必要値幅・1回で捉える想定値幅・値幅出現率のどれが重いかを分けて確認してください。`,
   ].join('\n');
   return {
     suggestion,
