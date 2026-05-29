@@ -135,7 +135,7 @@
             <div>
               <p class="eyebrow">Price Chart</p>
               <h3>価格グラフ</h3>
-              <p class="card-desc">表示だけなら公開klineを一時取得できます。1週間など広い範囲もCSV保存なしで確認し、あとで仮想約定率の参照範囲にも使える形にします。</p>
+              <p class="card-desc">表示だけなら公開klineを一時取得できます。1週間など広い範囲もCSV保存なしで確認し、あとで到達想定率の参照範囲にも使える形にします。</p>
             </div>
             <div class="inline-form wrap">
               <label>通貨</label>
@@ -239,7 +239,7 @@
             <div>
               <p class="eyebrow">Daily Goal</p>
               <h3>日次目標の条件診断</h3>
-              <p class="card-desc">今日の目標を、仮想約定率・必要値幅出現率・必要勝率に分けて確認します。これは売買指示ではなく、無理な取引を避けるための準備画面です。</p>
+              <p class="card-desc">今日の目標を、到達想定率・必要値幅出現率・必要勝率に分けて確認します。これは売買指示ではなく、無理な取引を避けるための準備画面です。</p>
             </div>
           </div>
 
@@ -250,7 +250,7 @@
                 <label class="daily-template-field">今日の見方
                   <input id="dailyTemplate" type="hidden" value="market_priority" />
                   <div class="segmented" id="dailyTemplateTabs">
-                    <button type="button" class="seg-btn active" data-template="market_priority">約定優先</button>
+                    <button type="button" class="seg-btn active" data-template="market_priority">到達優先</button>
                     <button type="button" class="seg-btn" data-template="pullback_limit">押し目待ち</button>
                     <button type="button" class="seg-btn" data-template="breakout_follow">ブレイクアウト</button>
                     <button type="button" class="seg-btn" data-template="range_reversion">レンジ逆張り</button>
@@ -284,16 +284,16 @@
                 <label>往復コスト %
                   <input id="dailyCostPct" type="number" value="0.28" step="0.01" readonly />
                 </label>
-                <label>未約定シナリオ %
+                <label>未到達シナリオ %
                   <input id="dailyCancelRates" value="10,30,50,70" />
                 </label>
               </div>
             </div>
 
             <div class="daily-input-block">
-              <div class="daily-block-title"><span>2</span><div><h4>仮想約定率</h4><p>1分足キャッシュで、指値価格へ到達した割合を試算します。</p></div></div>
+              <div class="daily-block-title"><span>2</span><div><h4>到達想定率</h4><p>1分足キャッシュで、指定した指値距離へ価格が到達した割合を試算します。実際の注文成立率ではありません。</p></div></div>
               <div class="form-grid daily-form daily-form-compact two-col">
-                <label>仮想約定率（手入力/代替） %
+                <label>到達想定率（手入力/代替） %
                   <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
                 </label>
                 <label class="check-field">1分足で試算
@@ -355,31 +355,40 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>4</span><div><h3>条件診断サマリー</h3><p class="memo-text">仮想約定率・必要勝率・値動き・必要値幅を分けて表示します。</p></div></div>
+          <div class="daily-result-head"><span>4</span><div><h3>条件診断サマリー</h3><p class="memo-text">到達想定率・必要勝率・値動き・必要値幅を分けて表示します。</p></div></div>
           <p class="memo-text">これは売買指示ではありません。今日の目標に対する条件の重さを診断するための表示です。</p>
           <p class="memo-text" id="dailyApiReadinessLine">API準備度: 確認中です。</p>
           <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
           <p class="memo-text" id="dailyErrorMemo"></p>
           <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
           <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
-          <p class="memo-text" id="dailyFillRateMemo">仮想約定率は、分析用1分足キャッシュから試算します。計算できない場合だけ手入力値を使います。</p>
+          <p class="memo-text" id="dailyFillRateMemo">到達想定率は、分析用1分足キャッシュから試算します。計算できない場合だけ手入力値を使います。実際の注文成立を保証しません。</p>
           <div class="grid four daily-result-cards" id="dailyReadinessCards"></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>5</span><div><h3>仮想約定率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
+          <div class="daily-result-head"><span>5</span><div><h3>条件の重さ内訳</h3><p class="memo-text">どこが重い条件になっているかを、値幅・コスト・損切り・到達想定・必要勝率に分けて読みます。</p></div></div>
+          <div class="grid three daily-plan-grid" id="dailyWeightBreakdown"></div>
+          <h4 class="subsection-title">全勝前提に近くなる理由</h4>
+          <ul class="prep-list" id="dailyWinPremiseNotes">
+            <li>まだ計算していません。</li>
+          </ul>
+        </div>
+
+        <div class="card daily-step-card">
+          <div class="daily-result-head"><span>6</span><div><h3>到達想定率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実際の注文成立率ではなく、価格到達ベースの参考値です。</p></div></div>
           <p class="memo-text" id="dailyVirtualFillMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyVirtualFillTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>6</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
+          <div class="daily-result-head"><span>7</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「到達想定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
           <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>7</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
+          <div class="daily-result-head"><span>8</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
           <ul class="prep-list" id="dailyPrepNotes">
             <li>まだ計算していません。</li>
           </ul>
@@ -387,8 +396,8 @@
         </div>
 
         <div class="card daily-step-card">
-          <h3>仮想約定率・必要勝率・値動きシナリオ比較</h3>
-          <p class="memo-text">仮想約定率は「指値に価格が到達した想定」で、勝ち回数ではありません。必要勝率は「勝てる確率」ではなく、目標達成に必要な勝ち方の厳しさです。100%近辺は全勝前提として見ます。</p>
+          <h3>到達想定率・必要勝率・値動きシナリオ比較</h3>
+          <p class="memo-text">到達想定率は「指値距離に価格が届いた想定」で、勝ち回数でも実際の注文成立率でもありません。必要勝率は「勝てる確率」ではなく、目標達成に必要な成功比率の厳しさです。100%近辺は全勝前提として見ます。</p>
           <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
         </div>
         <div class="card">
@@ -425,7 +434,7 @@
             <p class="memo-text" id="dbStatusMemo">DB状態を確認中です。</p>
             <div class="cache-control-panel">
               <h4>分析用1分足キャッシュ</h4>
-              <p class="card-desc">仮想約定率・必要値幅出現率・日次目標診断に使う1分足データです。チャート表示用ではなく、分析用データとしてlong_data/DBへ保存します。</p>
+              <p class="card-desc">到達想定率・必要値幅出現率・日次目標診断に使う1分足データです。チャート表示用ではなく、分析用データとしてlong_data/DBへ保存します。</p>
               <div class="form-row compact-row">
                 <label>対象
                   <select id="analysisCacheSymbol"><option value="all" selected>BTCJPY / ETHJPY</option><option>BTCJPY</option><option>ETHJPY</option></select>

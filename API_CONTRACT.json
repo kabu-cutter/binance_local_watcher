@@ -1,5 +1,5 @@
 {
-  "version": "electron-node-engine-v0.5.2-db-phase2-daily-goal",
+  "version": "electron-node-engine-v0.5.2-daily-goal-diagnosis",
   "mode": "electron-ui + electron-main-node-engine",
   "forbidden": [
     "real_order",
@@ -216,7 +216,7 @@
           "rows",
           "message"
         ],
-        "notes": "仮想約定率・必要値幅出現率・日次目標診断用の1分足分析キャッシュ状態を返す。チャート表示設定とは分離。"
+        "notes": "到達想定率・必要値幅出現率・日次目標診断用の1分足分析キャッシュ状態を返す。チャート表示設定とは分離。"
       }
     },
     "POST": {
@@ -338,6 +338,8 @@
           "suggestion",
           "diagnostic_summary",
           "readiness_cards",
+          "condition_weight_breakdown",
+          "win_premise_notes",
           "prep_notes",
           "plan_cards",
           "scenarios",

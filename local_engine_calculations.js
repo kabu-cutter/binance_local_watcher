@@ -3,16 +3,16 @@ const DEFAULT_CANCEL_RATES = [10, 30, 50, 70];
 const DEFAULT_ROUNDTRIP_COST_PCT = 0.28;
 const STRATEGY_TEMPLATES = {
   market_priority: {
-    label: '約定優先・成行寄り',
-    note: '約定率は高め、未約定は少なめ、往復コストは重め。小さい値動き狙いは手数料負けを重点確認。',
+    label: '到達優先・成行寄り',
+    note: '到達想定率は高め、未到達は少なめ、往復コストは重め。小さい値動き狙いは手数料負けを重点確認。',
   },
   pullback_limit: {
     label: '押し目指値待ち',
-    note: '未約定が増えやすい前提。約定できればコストを抑えやすい。未約定30〜50%を重点確認。',
+    note: '未到達が増えやすい前提。価格が届いた場合はコストを抑えやすい。未到達30〜50%を重点確認。',
   },
   breakout_follow: {
     label: 'ブレイクアウト追随',
-    note: '約定率は高め。必要変動率は中〜大。損切り幅が広くなりやすく、ダマシ耐性を確認。',
+    note: '到達想定率は高め。必要変動率は中〜大。損切り幅が広くなりやすく、ダマシ耐性を確認。',
   },
   range_reversion: {
     label: 'レンジ逆張り',
@@ -134,6 +134,132 @@ function neededWinPremiseLabel(winRate) {
   if (winRate >= 75) return 'かなり重い';
   if (winRate >= 60) return '重い';
   return '確認範囲';
+}
+
+function compactYen(value, digits = 2) {
+  if (!Number.isFinite(Number(value))) return '—';
+  return `${Number(value).toLocaleString('ja-JP', { maximumFractionDigits: digits })}円`;
+}
+
+function compactPct(value, digits = 3) {
+  if (!Number.isFinite(Number(value))) return '—';
+  return `${Number(value).toFixed(digits)}%`;
+}
+
+function costShareLabel(costSharePct) {
+  if (!Number.isFinite(costSharePct)) return '確認不可';
+  if (costSharePct <= 15) return '軽い';
+  if (costSharePct <= 30) return '普通';
+  if (costSharePct <= 50) return '重い';
+  return 'かなり重い';
+}
+
+function stopPressureLabel(stopToWinRatio) {
+  if (!Number.isFinite(stopToWinRatio)) return '確認不可';
+  if (stopToWinRatio <= 0.7) return '軽い';
+  if (stopToWinRatio <= 1.2) return '普通';
+  if (stopToWinRatio <= 2.0) return '重い';
+  return 'かなり重い';
+}
+
+function buildConditionWeightBreakdown({
+  target, capital, expectedSuccessCount, perTradeTarget, perTradeRequiredPct, costPct,
+  takeProfitPct, takeProfitNetPerTrade, requiredSuccessCountByTakeProfit, requiredSuccessLabelText,
+  lossAbs, stopPct, virtualFillRate, virtualEffective, maxOpp, fillLabel,
+  virtualNeededWinRate, winLabel, requiredMoveOccurrenceRate, occurrenceLabel, movementRatio, moveLabel,
+}) {
+  const costAmount = capital * costPct / 100;
+  const costSharePct = perTradeTarget > 0 ? (costAmount / perTradeTarget) * 100 : NaN;
+  const costLabel = costShareLabel(costSharePct);
+  const stopToWinRatio = takeProfitNetPerTrade > 0 ? lossAbs / takeProfitNetPerTrade : NaN;
+  const stopLabel = stopPressureLabel(stopToWinRatio);
+  const neededMoreText = requiredSuccessCountByTakeProfit === null
+    ? '想定利確幅が往復コスト以下のため、成功回数を逆算できません。'
+    : `想定利確幅${compactPct(takeProfitPct)}では、日次目標${compactYen(target, 0)}に約${requiredSuccessCountByTakeProfit}回の成功が必要です。計画${expectedSuccessCount}回に対して「${requiredSuccessLabelText}」です。`;
+  return [
+    {
+      title: '値幅',
+      main: compactPct(perTradeRequiredPct),
+      sub: `想定成功${expectedSuccessCount}回なら、1回あたり${compactYen(perTradeTarget)}を残す必要があります。往復コスト込みの必要値幅です。`,
+      tag: riskLabel(perTradeRequiredPct),
+      kind: riskKind(riskLabel(perTradeRequiredPct)),
+    },
+    {
+      title: 'コスト',
+      main: Number.isFinite(costSharePct) ? `${costSharePct.toFixed(1)}%` : '—',
+      sub: `往復コストは1回あたり約${compactYen(costAmount)}です。1回目標利益に対するコスト比率として見ます。`,
+      tag: costLabel,
+      kind: realityKind(costLabel === '確認不可' ? '普通' : costLabel),
+    },
+    {
+      title: '損切り',
+      main: Number.isFinite(stopToWinRatio) ? `成功${stopToWinRatio.toFixed(1)}回分` : '確認不可',
+      sub: `損切り1回は約-${compactYen(lossAbs)}です。損切り逆行率${compactPct(stopPct, 2)}と往復コストを含めた、失敗1回の重さです。`,
+      tag: stopLabel,
+      kind: realityKind(stopLabel === '確認不可' ? '普通' : stopLabel),
+    },
+    {
+      title: '到達想定',
+      main: `${virtualFillRate.toFixed(1)}%`,
+      sub: `最大${maxOpp}機会中、価格が指定距離へ届いた想定は約${virtualEffective}回です。勝ち回数でも実際の注文成立率でもありません。`,
+      tag: fillLabel,
+      kind: realityKind(fillLabel),
+    },
+    {
+      title: '必要勝率',
+      main: formatNeededWinRate(virtualNeededWinRate),
+      sub: `目標利益・損切り1回・到達想定回数から逆算した必要成功比率です。${neededWinPremiseLabel(virtualNeededWinRate)}として扱います。`,
+      tag: winLabel,
+      kind: realityKind(winLabel),
+    },
+    {
+      title: '値幅出現率',
+      main: requiredMoveOccurrenceRate === null ? '未確認' : `${requiredMoveOccurrenceRate.toFixed(1)}%`,
+      sub: requiredMoveOccurrenceRate === null
+        ? '履歴確認OFFまたは分析用1分足キャッシュ不足です。到達想定率とは別の指標です。'
+        : `指定した判定窓の中で必要値幅が出た頻度です。値動きの出やすさを見る参考値で、到達想定率ではありません。値動き比は${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
+      tag: occurrenceLabel,
+      kind: occurrenceLabel === '未確認' ? 'warn' : realityKind(occurrenceLabel),
+    },
+    {
+      title: '計画回数',
+      main: requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`,
+      sub: neededMoreText,
+      tag: requiredSuccessLabelText,
+      kind: realityKind(successLabelToReality(requiredSuccessLabelText)),
+    },
+  ];
+}
+
+function buildWinPremiseNotes({
+  target, expectedSuccessCount, takeProfitPct, costPct, takeProfitNetPerTrade,
+  lossAbs, virtualEffective, virtualNeededWinRate, requiredSuccessCountByTakeProfit,
+}) {
+  const recoveryWins = takeProfitNetPerTrade > 0 ? lossAbs / takeProfitNetPerTrade : null;
+  const afterOneLossNeededWins = takeProfitNetPerTrade > 0 ? Math.ceil((target + lossAbs) / takeProfitNetPerTrade) : null;
+  const premise = neededWinPremiseLabel(virtualNeededWinRate);
+  const lines = [
+    `必要勝率は予測値ではありません。日次目標、到達想定回数、1回利益、損切り1回から逆算した「必要な成功比率」です。`,
+    `1回の成功で残る想定Netは約+${compactYen(takeProfitNetPerTrade)}です（想定利確幅${compactPct(takeProfitPct)} − 往復コスト${compactPct(costPct, 2)}）。`,
+    `損切り1回の想定損失は約-${compactYen(lossAbs)}です。`,
+  ];
+  if (Number.isFinite(recoveryWins)) {
+    lines.push(`損切り1回を取り戻すには、成功約${recoveryWins.toFixed(1)}回分が必要です。`);
+  } else {
+    lines.push('想定利確幅が往復コスト以下のため、損切り1回を取り戻す成功回数を計算できません。');
+  }
+  if (afterOneLossNeededWins !== null) {
+    lines.push(`1敗した場合、日次目標を残すには成功が約${afterOneLossNeededWins}回必要になります。入力上の想定成功回数は${expectedSuccessCount}回です。`);
+  }
+  lines.push(`到達想定は約${virtualEffective}回です。この範囲で目標を残すための必要勝率は${formatNeededWinRate(virtualNeededWinRate)}で、判定は「${premise}」です。`);
+  if (virtualNeededWinRate >= 100) {
+    lines.push('全勝前提になる主な理由は、到達想定回数に対して日次目標・損切り1回・コストの負担が大きく、1敗すると目標達成に必要な成功数が足りなくなりやすいためです。');
+  } else if (virtualNeededWinRate >= 90) {
+    lines.push('ほぼ全勝前提に近い理由は、失敗できる余白が小さく、損切り1回の回復に複数回の成功が必要になりやすいためです。');
+  } else {
+    lines.push('全勝前提ではありませんが、必要勝率は市場予測ではないため、到達想定率・値幅出現率・損切り幅とセットで確認します。');
+  }
+  return lines;
 }
 
 
@@ -267,8 +393,12 @@ function calculateDailyGoal(body = {}) {
   const recentMovePct = safeFloat(body.recent_move_pct, 0);
   const recentMoveAbsPct = Math.abs(recentMovePct);
   const recentMoveLabel = body.recent_move_label || '直近値動き';
-  const requiredMoveOccurrenceRate = Number.isFinite(Number(body.required_move_occurrence_rate_pct))
-    ? Math.max(0, Math.min(100, safeFloat(body.required_move_occurrence_rate_pct)))
+  const occurrenceRateInput = body.required_move_occurrence_rate_pct;
+  const requiredMoveOccurrenceRate = occurrenceRateInput !== null
+    && occurrenceRateInput !== undefined
+    && occurrenceRateInput !== ''
+    && Number.isFinite(Number(occurrenceRateInput))
+    ? Math.max(0, Math.min(100, safeFloat(occurrenceRateInput)))
     : null;
   const requiredMoveOccurrenceNote = body.required_move_occurrence_note || '';
   const targetPct = (target / capital) * 100;
@@ -319,21 +449,56 @@ function calculateDailyGoal(body = {}) {
     requiredMoveOccurrenceRate === null ? 0 : labelLevel(occurrenceLabel),
   ));
   const movementRatio = recentMoveAbsPct > 0 ? virtualNeededPct / recentMoveAbsPct : null;
+  const conditionWeightBreakdown = buildConditionWeightBreakdown({
+    target,
+    capital,
+    expectedSuccessCount,
+    perTradeTarget,
+    perTradeRequiredPct,
+    costPct,
+    takeProfitPct,
+    takeProfitNetPerTrade,
+    requiredSuccessCountByTakeProfit,
+    requiredSuccessLabelText,
+    lossAbs,
+    stopPct,
+    virtualFillRate,
+    virtualEffective,
+    maxOpp,
+    fillLabel,
+    virtualNeededWinRate,
+    winLabel,
+    requiredMoveOccurrenceRate,
+    occurrenceLabel,
+    movementRatio,
+    moveLabel,
+  });
+  const winPremiseNotes = buildWinPremiseNotes({
+    target,
+    expectedSuccessCount,
+    takeProfitPct,
+    costPct,
+    takeProfitNetPerTrade,
+    lossAbs,
+    virtualEffective,
+    virtualNeededWinRate,
+    requiredSuccessCountByTakeProfit,
+  });
   const suggestion = [
     template ? `今日の見方: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
     '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
-    '想定到達回数 = 機会回数 - 未約定回数 として、指値が刺さった可能性を見ます。これは勝った回数ではありません。',
+    '到達想定回数 = 入力した機会回数 × 到達想定率として、指定した指値距離へ価格が届いた可能性を見ます。これは勝った回数でも実注文成立でもありません。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `想定成功回数は${expectedSuccessCount}回、1回あたり目標利益は約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     `1回で捉える想定値幅は${takeProfitPct.toFixed(3)}%です。この幅なら、コスト込み1回あたり見込みNetは約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、目標達成に必要な成功回数は${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
-    `仮想約定率${virtualFillRate.toFixed(0)}%なら、指値に到達した想定は約${virtualEffective}回です。これは勝ち回数ではなく、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
+    `到達想定率${virtualFillRate.toFixed(0)}%なら、指定した指値距離へ価格が届いた想定は約${virtualEffective}回です。これは勝ち回数でも実際の注文成立率でもなく、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、1回あたり必要値幅${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
     requiredMoveOccurrenceRate === null
-      ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
-      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去データ上どれくらい出たかの参考値です。`,
-    `この前提の現実度は「${overallLabel}」です。仮想約定率・必要勝率・1回あたり必要値幅・想定利確幅から逆算した必要成功回数を分けて見ます。`,
-    'これは売買指示ではなく、今日の条件が今の相場で現実的かを見る準備サジェストです。',
+      ? '必要値幅の出現率は未確認です。これは到達想定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
+      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは到達想定率ではなく、必要な値幅が過去データ上どれくらい出たかの参考値です。`,
+    `この前提の条件の重さは「${overallLabel}」です。到達想定率・必要勝率・1回あたり必要値幅・想定利確幅から逆算した必要成功回数を分けて見ます。`,
+    'これは売買指示ではなく、今日の条件が手動取引前の準備としてどれくらい重いかを見る診断です。',
   ].join('\n');
   const readinessCards = [
     {
@@ -375,8 +540,8 @@ function calculateDailyGoal(body = {}) {
       title: '必要値幅の出現率',
       main: requiredMoveOccurrenceRate === null ? '未確認' : `${requiredMoveOccurrenceRate.toFixed(1)}%`,
       sub: requiredMoveOccurrenceRate === null
-        ? '履歴確認OFFまたは履歴不足。これは約定率とは別の参考値です。'
-        : `過去データで必要値幅が出た頻度 / これは約定率ではありません / 現実度 ${occurrenceLabel}`,
+        ? '履歴確認OFFまたは履歴不足。これは到達想定率とは別の参考値です。'
+        : `過去データで必要値幅が出た頻度 / これは到達想定率ではありません / 現実度 ${occurrenceLabel}`,
       tag: occurrenceLabel,
       kind: occurrenceLabel === '未確認' ? 'warn' : realityKind(occurrenceLabel),
     },
@@ -390,20 +555,20 @@ function calculateDailyGoal(body = {}) {
     overallLabel === 'かなり重い'
       ? '今日の目標はかなり重い条件です。回数、投入額、損切り幅、コスト前提を先に見直す候補です。'
       : overallLabel === '重い'
-        ? '今日の目標は重い条件です。未約定が増えた時の1回あたり負担を先に確認すると安全です。'
+        ? '今日の目標は重い条件です。未到達が増えた時の1回あたり負担を先に確認すると安全です。'
         : '今日の目標は条件上は軽いから普通の範囲です。実際の値動きとコスト負けだけ確認します。',
     moveLabel === 'かなり重い'
       ? '直近値動きに対して1回あたり必要値幅が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
-      : '1回あたり必要値幅は直近値動きと比較できる範囲です。仮想約定率と必要勝率の前提を合わせて見ます。',
+      : '1回あたり必要値幅は直近値動きと比較できる範囲です。到達想定率と必要勝率の前提を合わせて見ます。',
     requiredMoveOccurrenceRate === null
-      ? '必要値幅の出現率は未確認です。履歴DL後に確認すると、値幅が出ていた頻度を参考にできます。'
-      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去に出た割合です。`,
+      ? '必要値幅の出現率は未確認です。分析用1分足キャッシュ整備後に確認すると、値幅が出ていた頻度を参考にできます。'
+      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは到達想定率ではなく、必要な値幅が過去に出た割合です。`,
     stopPressurePct >= 50
       ? '損切り1回の影響が大きいです。何回狙うかより、逆行時にどこで止めるかが先に効きます。'
       : '損切り1回の影響は目標内で確認できる範囲です。連続ミス時の崩れ方だけ見ておきます。',
     nofillMultiplier >= 1.8
-      ? '未約定が増えると残った約定1回あたりの負担が跳ねます。指値待ちの前提は厳しめに見ます。'
-      : '未約定シナリオによる悪化は比較的読みやすい範囲です。チャンス回数の見積もりを更新しながら使います。',
+      ? '到達しないケースが増えると、残った到達想定1回あたりの負担が跳ねます。指値待ちの前提は厳しめに見ます。'
+      : '未到達シナリオによる悪化は比較的読みやすい範囲です。チャンス回数の見積もりを更新しながら使います。',
     'これは売買指示ではありません。今日の条件を希望ではなく準備項目へ分解するためのメモです。',
   ];
   const planOptions = [['1回で達成', 1], [`想定${expectedSuccessCount}回で分ける`, expectedSuccessCount], [`最大${maxOpp}回で分ける`, maxOpp]];
@@ -470,20 +635,22 @@ function calculateDailyGoal(body = {}) {
     }
   }
   const diagnosticSummary = [
-    `指値到達想定: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 到達想定 約${virtualEffective}回。勝ち回数ではありません）`,
+    `指値到達想定: ${fillLabel}（到達想定率 ${virtualFillRate.toFixed(0)}% / 到達想定 約${virtualEffective}回。勝ち回数でも実際の注文成立率でもありません）`,
     `必要勝率: ${neededWinPremiseLabel(virtualNeededWinRate)}（必要勝率 ${formatNeededWinRate(virtualNeededWinRate)}）`,
     `1回あたり必要値幅: ${perTradeRequiredPct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円）`,
     `1回で捉える想定値幅: ${takeProfitPct.toFixed(3)}%（この利確幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回成功が必要`} / ${requiredSuccessLabelText}）`,
-    `値動き現実度: ${moveLabel}（仮想約定率込みの1回必要値幅 ${virtualNeededPct.toFixed(3)}%）`,
+    `値動き現実度: ${moveLabel}（到達想定率込みの1回必要値幅 ${virtualNeededPct.toFixed(3)}%）`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
-      : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
-    `総合: ${overallLabel}。指値到達想定・必要勝率・1回あたり必要値幅・1回で捉える想定値幅・値幅出現率のどれが重いかを分けて確認してください。`,
+      : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 到達想定率ではありません）`,
+    `総合: ${overallLabel}。到達想定率・必要勝率・1回あたり必要値幅・1回で捉える想定値幅・値幅出現率のどれが重いかを分けて確認してください。`,
   ].join('\n');
   return {
     suggestion,
     diagnostic_summary: diagnosticSummary,
     readiness_cards: readinessCards,
+    condition_weight_breakdown: conditionWeightBreakdown,
+    win_premise_notes: winPremiseNotes,
     prep_notes: prepNotes,
     plan_cards: planCards,
     scenarios,
@@ -500,7 +667,10 @@ function calculateDailyGoal(body = {}) {
     required_move_occurrence_rate_pct: requiredMoveOccurrenceRate,
     required_move_occurrence_note: requiredMoveOccurrenceNote,
     required_move_occurrence_label: occurrenceLabel,
-    required_move_occurrence_required_pct: Number.isFinite(Number(body.required_move_occurrence_required_pct))
+    required_move_occurrence_required_pct: body.required_move_occurrence_required_pct !== null
+      && body.required_move_occurrence_required_pct !== undefined
+      && body.required_move_occurrence_required_pct !== ''
+      && Number.isFinite(Number(body.required_move_occurrence_required_pct))
       ? safeFloat(body.required_move_occurrence_required_pct)
       : null,
     required_move_occurrence_meta: body.required_move_occurrence_meta || null,

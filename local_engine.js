@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const calculations = require('./local_engine_calculations');
 const dbStore = require('./local_engine_db');
 
-const VERSION = 'electron-node-engine-v0.5.2-db-phase2-daily-goal';
+const VERSION = 'electron-node-engine-v0.5.2-daily-goal-diagnosis';
 const SYMBOLS = ['BTCJPY', 'ETHJPY'];
 const HISTORY_COLUMNS = ['timestamp', 'symbol', 'price_jpy'];
 const LONG_DATA_COLUMNS = [
@@ -1498,7 +1498,7 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
       rate,
       required_move_pct: requiredMovePct,
       meta,
-      note: `必要値幅の出現率: ${symbol} 1分足 / 直近${referenceDays}日 / ${windowMinutes}分判定窓 / ${occurrenceDirectionLabel(direction)}。${counted.window_count}窓のうち、1回あたり必要値幅 ${requiredMovePct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、コスト込み）を満たした窓は ${counted.matched_window_count}窓、${Number.isFinite(rate) ? rate.toFixed(1) : '—'}% でした。これは約定率ではなく、指定時間内に必要な値幅が出た頻度です。チャート表示日・最新DLファイルとは分離し、未確定足は除外しています。${period.text ? `\n${period.text}` : ''}`,
+      note: `必要値幅の出現率: ${symbol} 1分足 / 直近${referenceDays}日 / ${windowMinutes}分判定窓 / ${occurrenceDirectionLabel(direction)}。${counted.window_count}窓のうち、1回あたり必要値幅 ${requiredMovePct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、コスト込み）を満たした窓は ${counted.matched_window_count}窓、${Number.isFinite(rate) ? rate.toFixed(1) : '—'}% でした。これは到達想定率ではなく、指定時間内に必要な値幅が出た頻度です。チャート表示日・最新DLファイルとは分離し、未確定足は除外しています。${period.text ? `\n${period.text}` : ''}`,
     };
   } catch (error) {
     return {
@@ -2519,7 +2519,7 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
     return {
       rate: null,
       meta: { ...baseMeta, enabled: false, quality_label: 'OFF' },
-      note: '仮想約定率の履歴試算はOFFです。手入力値を使います。',
+      note: '到達想定率の履歴試算はOFFです。手入力値を使います。',
     };
   }
   try {
@@ -2577,19 +2577,19 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
       return {
         rate: null,
         meta: { ...meta, used_for_daily_goal: false },
-        note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（参照足数 ${rows.length}/${expected}本）。手入力値を代替使用します。`,
+        note: `到達想定率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（参照足数 ${rows.length}/${expected}本）。手入力値を代替使用します。`,
       };
     }
     return {
       rate,
       meta,
-      note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日 / ${virtualFillSideLabel(side)} / 指値距離 ${limitDistancePct.toFixed(3)}%。参照${rows.length}本のうち価格到達は${matched}本、${rate.toFixed(1)}%でした。これは実約定率ではなく、価格到達ベースの仮想値です。未確定足は除外しています。`,
+      note: `到達想定率: ${symbol} 1分足 / 直近${referenceDays}日 / ${virtualFillSideLabel(side)} / 指値距離 ${limitDistancePct.toFixed(3)}%。参照${rows.length}本のうち価格到達は${matched}本、${rate.toFixed(1)}%でした。これは実際の注文成立率ではなく、価格到達ベースの仮想値です。未確定足は除外しています。`,
     };
   } catch (error) {
     return {
       rate: null,
       meta: { ...baseMeta, quality_label: 'エラー', error: error.message, used_for_daily_goal: false },
-      note: `仮想約定率: ${error.message} のため履歴試算できませんでした。手入力値を代替使用します。`,
+      note: `到達想定率: ${error.message} のため履歴試算できませんでした。手入力値を代替使用します。`,
     };
   }
 }
@@ -2605,8 +2605,8 @@ async function dailyGoal(body = {}) {
   const historyFillRate = Number.isFinite(virtualFill?.rate) ? Math.max(0, Math.min(100, safeFloat(virtualFill.rate))) : null;
   const fillRateUsed = historyFillRate === null ? manualFillRate : historyFillRate;
   const fillRateNote = historyFillRate === null
-    ? `${virtualFill?.note || '仮想約定率の履歴試算は使えませんでした。'} 手入力値 ${manualFillRate.toFixed(1)}% を代替使用します。`
-    : `${virtualFill.note} 日次目標の仮想約定率として ${fillRateUsed.toFixed(1)}% を使います。`;
+    ? `${virtualFill?.note || '到達想定率の履歴試算は使えませんでした。'} 手入力値 ${manualFillRate.toFixed(1)}% を代替使用します。`
+    : `${virtualFill.note} 日次目標の到達想定率として ${fillRateUsed.toFixed(1)}% を使います。`;
   const result = calculations.calculateDailyGoal({
     ...body,
     virtual_fill_rate_pct: fillRateUsed,

@@ -3,19 +3,19 @@ const titles = {
   chart: ['チャート', 'Electron main process で履歴または公開klineを読み、rendererでSVGチャートを描きます。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
-  daily: ['日次目標', '仮想約定率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
+  daily: ['日次目標', '到達想定率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
 const DAILY_TEMPLATES = {
   market_priority: {
-    label: '約定優先・成行寄り',
+    label: '到達優先・成行寄り',
     fillRate: 85,
     stopPct: 0.5,
     costPct: 0.34,
     cancelRates: '10,20,30',
     autoFill: false,
-    memo: '約定率は高めですが、往復コストは重めです。小さい値動き狙いは手数料負けを重点確認します。',
+    memo: '到達想定率は高めですが、往復コストは重めです。小さい値動き狙いは手数料負けを重点確認します。',
   },
   pullback_limit: {
     label: '押し目指値待ち',
@@ -24,7 +24,7 @@ const DAILY_TEMPLATES = {
     costPct: 0.24,
     cancelRates: '30,40,50',
     autoFill: false,
-    memo: '未約定が増えやすい前提です。未約定30〜50%シナリオを重点に見ます。',
+    memo: '未到達が増えやすい前提です。未到達30〜50%シナリオを重点に見ます。',
   },
   breakout_follow: {
     label: 'ブレイクアウト追随',
@@ -33,7 +33,7 @@ const DAILY_TEMPLATES = {
     costPct: 0.30,
     cancelRates: '15,25,35',
     autoFill: false,
-    memo: '約定率は高めですが、必要変動率と損切り幅が中〜大になりやすく、ダマシ耐性を確認します。',
+    memo: '到達想定率は高めですが、必要変動率と損切り幅が中〜大になりやすく、ダマシ耐性を確認します。',
   },
   range_reversion: {
     label: 'レンジ逆張り',
@@ -379,7 +379,7 @@ async function ensureAnalysisCache() {
   const days = elValue('analysisCacheDays', '7');
   const symbols = analysisCacheSymbolSelection();
   const label = symbols.length === CURRENT_UPDATE_SYMBOLS.length ? 'BTCJPY / ETHJPY' : symbols.join(', ');
-  const ok = window.confirm(`分析用1分足キャッシュを整備します。\n\n対象: ${label}\n参照期間: 直近${days}日\n\n不足している場合は、Binance public klineから1分足を取得してlong_dataとDBへ保存します。\nこれは表示用ではなく、仮想約定率・必要値幅出現率・日次目標診断のためのデータ準備です。`);
+  const ok = window.confirm(`分析用1分足キャッシュを整備します。\n\n対象: ${label}\n参照期間: 直近${days}日\n\n不足している場合は、Binance public klineから1分足を取得してlong_dataとDBへ保存します。\nこれは表示用ではなく、到達想定率・必要値幅出現率・日次目標診断のためのデータ準備です。`);
   if (!ok) return;
   if (btn) {
     btn.disabled = true;
@@ -1233,7 +1233,7 @@ function buildDailyPayload() {
     virtual_fill_reference_days: elNumber('dailyVirtualFillReferenceDays', 30),
     virtual_fill_side: elValue('dailyVirtualFillSide', 'buy_limit'),
     limit_distance_pct: elNumber('dailyLimitDistancePct', 0.2),
-    // trueなら「必要値幅の出現率」を別計算します。仮想約定率の履歴試算とは分離します。
+    // trueなら「必要値幅の出現率」を別計算します。到達想定率の履歴試算とは分離します。
     virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
     occurrence_reference_days: occurrenceReferenceDays,
     occurrence_window_minutes: elNumber('dailyOccurrenceWindowMinutes', 15),
@@ -1258,7 +1258,7 @@ async function calcDaily() {
   if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大機会回数は最小機会回数以上にしてください。');
   if (!Number.isFinite(payload.stop_loss_pct) || payload.stop_loss_pct < 0) errors.push('損切り逆行率は0以上で入力してください。');
   if (!Number.isFinite(payload.roundtrip_cost_pct) || payload.roundtrip_cost_pct < 0) errors.push('往復コストは0以上で入力してください。');
-  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('仮想約定率（手入力/代替）は0〜100%で入力してください。');
+  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('到達想定率（手入力/代替）は0〜100%で入力してください。');
   if (!Number.isFinite(payload.limit_distance_pct) || payload.limit_distance_pct < 0) errors.push('指値距離は0%以上で入力してください。');
   if (errors.length) {
     errorMemo.textContent = `入力エラー: ${errors.join(' / ')}`;
@@ -1266,14 +1266,14 @@ async function calcDaily() {
   }
   errorMemo.textContent = '';
   const data = await postJson('/api/daily-goal', payload);
-  // 仮想約定率は、分析用1分足キャッシュで試算できればそれを使い、できない場合は手入力値を代替にします。
+  // 到達想定率は、分析用1分足キャッシュで試算できればそれを使い、できない場合は手入力値を代替にします。
   document.getElementById('dailyCostPct').value = Number(data.roundtrip_cost_pct || payload.roundtrip_cost_pct).toFixed(2);
   document.getElementById('dailyTemplateMemo').textContent = data.strategy_template_note
     || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
   document.getElementById('dailySuggestion').textContent = data.suggestion;
   document.getElementById('dailyDiagnosticSummary').textContent = data.diagnostic_summary || '総合診断はまだありません。';
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
-    || '仮想約定率は手入力値またはテンプレート値です。必要値幅の履歴確認とは別扱いです。';
+    || '到達想定率は手入力値または履歴試算値です。必要値幅の履歴確認とは別扱いです。';
   renderDailyVirtualFill(data);
   renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
@@ -1283,6 +1283,21 @@ async function calcDaily() {
     tag: p.tag,
     kind: p.kind,
   })).join('');
+  const weightEl = document.getElementById('dailyWeightBreakdown');
+  if (weightEl) {
+    weightEl.innerHTML = (data.condition_weight_breakdown || []).map((p) => card({
+      title: p.title,
+      value: p.main,
+      sub: p.sub,
+      tag: p.tag,
+      kind: p.kind,
+    })).join('') || '<p class="memo-text">条件の重さ内訳はまだありません。</p>';
+  }
+  const winNotesEl = document.getElementById('dailyWinPremiseNotes');
+  if (winNotesEl) {
+    const notes = data.win_premise_notes || [];
+    winNotesEl.innerHTML = notes.length ? notes.map((note) => `<li>${note}</li>`).join('') : '<li>まだ計算していません。</li>';
+  }
   document.getElementById('dailyPrepNotes').innerHTML = (data.prep_notes || []).map((note) => `<li>${note}</li>`).join('');
   document.getElementById('dailyPlanCards').innerHTML = data.plan_cards.map((p) => card({
     title: p.title,
@@ -1292,7 +1307,7 @@ async function calcDaily() {
     kind: p.kind,
   })).join('');
   renderTable(document.getElementById('dailyScenarioTable'), [
-    ['fill_rate', '仮想約定率'], ['opportunities', '想定機会'], ['effective', '到達想定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
+    ['fill_rate', '到達想定率'], ['opportunities', '想定機会'], ['effective', '到達想定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
   ], data.scenarios.map((r) => ({
     fill_rate: `${Number(r.fill_rate).toFixed(0)}%`,
     opportunities: `${r.opportunities}回`,
@@ -1313,9 +1328,9 @@ function renderDailyVirtualFill(data) {
   const tableEl = document.getElementById('dailyVirtualFillTable');
   if (!memoEl || !tableEl) return;
   const meta = data.virtual_fill_history_meta || {};
-  memoEl.textContent = data.virtual_fill_history_note || data.virtual_fill_rate_note || '仮想約定率の履歴試算はまだ計算していません。';
+  memoEl.textContent = data.virtual_fill_history_note || data.virtual_fill_rate_note || '到達想定率の履歴試算はまだ計算していません。';
   const rows = [
-    { item: '使用した仮想約定率', value: pct(data.virtual_fill_rate_pct_used, 1) },
+    { item: '使用した到達想定率', value: pct(data.virtual_fill_rate_pct_used, 1) },
     { item: '履歴試算の状態', value: meta.enabled === false ? 'OFF' : (meta.used_for_daily_goal ? '日次目標に使用' : '手入力値を代替使用') },
     { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || '1m'}` },
     { item: '参照期間', value: meta.reference_period_text || '—' },
@@ -1325,7 +1340,7 @@ function renderDailyVirtualFill(data) {
     { item: '現在価格ベースの仮想指値', value: meta.current_limit_price === undefined ? '—' : yen(meta.current_limit_price, 2) },
     { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
     { item: '価格到達足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
-    { item: '仮想約定率', value: data.virtual_fill_history_rate_pct === null || data.virtual_fill_history_rate_pct === undefined ? '—' : pct(data.virtual_fill_history_rate_pct, 1) },
+    { item: '到達想定率', value: data.virtual_fill_history_rate_pct === null || data.virtual_fill_history_rate_pct === undefined ? '—' : pct(data.virtual_fill_history_rate_pct, 1) },
     { item: 'データ品質', value: meta.quality_label || '—' },
     { item: '未確定足', value: meta.include_unclosed_candle ? '含む' : '除外' },
     { item: '参照元', value: meta.source || '—' },
@@ -1385,7 +1400,7 @@ async function loadDailyReports() {
     ['target', '目標'],
     ['capital', '資金'],
     ['cost', '往復コスト'],
-    ['fill', '仮想約定率'],
+    ['fill', '到達想定率'],
     ['width', '値幅出現率'],
     ['need', '1回あたり必要値幅'],
     ['win', '必要勝率'],
@@ -1412,7 +1427,7 @@ function applyDailyTemplate() {
   setValueIfExists('dailyStopPct', String(template.stopPct));
   setValueIfExists('dailyCostPct', String(template.costPct));
   setValueIfExists('dailyCancelRates', template.cancelRates);
-  // テンプレートで仮想約定率は変えますが、必要値幅の履歴確認ON/OFFはユーザー設定を維持します。
+  // テンプレートで到達想定率は変えますが、必要値幅の履歴確認ON/OFFはユーザー設定を維持します。
   document.getElementById('dailyTemplateMemo').textContent = `${template.label}: ${template.memo}（売買推奨ではなく条件テンプレートです）`;
 }
 

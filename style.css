@@ -755,6 +755,25 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.subsection-title {
+  margin: 16px 0 8px;
+  font-size: 0.98rem;
+  color: var(--ink);
+}
+#dailyWeightBreakdown.grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1320px) {
+  #dailyWeightBreakdown.grid.three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  #dailyWeightBreakdown.grid.three {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1320px) {
   .daily-layout-grid {
     grid-template-columns: 1fr;
