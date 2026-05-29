@@ -1353,8 +1353,10 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
     const target = Math.max(0, safeFloat(body.target_profit_jpy));
     const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
     const maxOpp = Math.max(1, safeInt(body.max_opportunities, 1));
+    const expectedSuccessCount = Math.max(1, safeInt(body.expected_success_count, maxOpp));
     const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, 0.28));
-    const requiredMovePct = (target / capital / maxOpp) * 100 + costPct;
+    const perTradeTarget = target / expectedSuccessCount;
+    const requiredMovePct = (perTradeTarget / capital) * 100 + costPct;
     const { rows, files, selection } = await occurrenceKlineRows(body);
     const referencedFiles = Array.isArray(files) ? files.map((file) => path.basename(file)) : [];
     const period = summarizeReferencePeriod(rows);
@@ -1369,6 +1371,9 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
       referenced_row_count: rows.length,
       matched_row_count: 0,
       required_move_pct: requiredMovePct,
+      target_profit_jpy: target,
+      expected_success_count: expectedSuccessCount,
+      per_trade_target_jpy: perTradeTarget,
       reference_period_start_jst: period.start_jst,
       reference_period_end_jst: period.end_jst,
       reference_period_text: period.text,
@@ -1400,7 +1405,7 @@ async function estimateRequiredMoveOccurrenceRate(body = {}) {
       rate,
       required_move_pct: requiredMovePct,
       meta,
-      note: `必要値幅の出現率: ${selection.scope_label} / ${request.symbol} ${request.interval} 足 ${rows.length}本（使用${referencedFiles.length}ファイル、候補${selection.selected_file_count || 0}ファイル）のうち、必要変動率 ${requiredMovePct.toFixed(3)}% を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。チャート表示の指定日とは分離しています。
+      note: `必要値幅の出現率: ${selection.scope_label} / ${request.symbol} ${request.interval} 足 ${rows.length}本（使用${referencedFiles.length}ファイル、候補${selection.selected_file_count || 0}ファイル）のうち、1回あたり必要値幅 ${requiredMovePct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、コスト込み）を満たした足は ${matched}本、${rate.toFixed(1)}% でした。これは約定率ではなく、必要な値幅が出た頻度です。チャート表示の指定日とは分離しています。
 ${fileSummary}${period.text ? `
 ${period.text}` : ''}`,
     };

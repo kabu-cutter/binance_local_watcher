@@ -3,7 +3,7 @@ const titles = {
   chart: ['チャート', 'Electron main process で履歴または公開klineを読み、rendererでSVGチャートを描きます。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
-  daily: ['日次目標', '約定率・勝率・値動きから今日の現実度を整理します。'],
+  daily: ['日次目標', '仮想約定率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
@@ -66,6 +66,21 @@ function pct(v, digits = 3, signed = false) {
   const n = Number(v);
   const sign = signed && n > 0 ? '+' : '';
   return `${sign}${n.toFixed(digits)}%`;
+}
+function neededWinDisplay(v, digits = 1) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  if (n >= 100) return '100%以上';
+  return `${n.toFixed(digits)}%`;
+}
+function neededWinLabel(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  const n = Number(v);
+  if (n >= 100) return '全勝前提';
+  if (n >= 90) return 'ほぼ全勝前提';
+  if (n >= 75) return 'かなり重い';
+  if (n >= 60) return '重い';
+  return '確認範囲';
 }
 function qty(v) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
@@ -1205,6 +1220,8 @@ function buildDailyPayload() {
     strategy_template: elValue('dailyTemplate', 'market_priority'),
     symbol: elValue('dailySymbol', 'BTCJPY'),
     target_profit_jpy: elNumber('dailyTarget', 0),
+    expected_success_count: elNumber('dailyExpectedWins', 1),
+    take_profit_pct: elNumber('dailyTakeProfitPct', 0.4),
     capital_jpy: elNumber('dailyCapital', 1),
     min_opportunities: elNumber('dailyMinOpp', 1),
     max_opportunities: elNumber('dailyMaxOpp', 1),
@@ -1236,6 +1253,8 @@ async function calcDaily() {
   const errors = [];
   if (!Number.isFinite(payload.target_profit_jpy) || payload.target_profit_jpy < 0) errors.push('日次目標利益は0以上で入力してください。');
   if (!Number.isFinite(payload.capital_jpy) || payload.capital_jpy <= 0) errors.push('資金 / 主投入額は0より大きい値にしてください。');
+  if (!Number.isFinite(payload.expected_success_count) || payload.expected_success_count < 1) errors.push('想定成功回数は1以上にしてください。');
+  if (!Number.isFinite(payload.take_profit_pct) || payload.take_profit_pct < 0) errors.push('想定利確幅は0%以上で入力してください。');
   if (!Number.isFinite(payload.min_opportunities) || payload.min_opportunities < 1) errors.push('最小機会回数は1以上にしてください。');
   if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大機会回数は最小機会回数以上にしてください。');
   if (!Number.isFinite(payload.stop_loss_pct) || payload.stop_loss_pct < 0) errors.push('損切り逆行率は0以上で入力してください。');
@@ -1274,14 +1293,15 @@ async function calcDaily() {
     kind: p.kind,
   })).join('');
   renderTable(document.getElementById('dailyScenarioTable'), [
-    ['fill_rate', '仮想約定率'], ['opportunities', '機会'], ['effective', '約定'], ['needed_net', '1回必要Net'], ['needed_pct', '必要変動率'], ['needed_win', '必要勝率'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
+    ['fill_rate', '仮想約定率'], ['opportunities', '機会'], ['effective', '約定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
   ], data.scenarios.map((r) => ({
     fill_rate: `${Number(r.fill_rate).toFixed(0)}%`,
     opportunities: `${r.opportunities}回`,
     effective: `${r.effective}回`,
     needed_net: yen(r.needed_net_per_trade, 2),
     needed_pct: pct(r.needed_move_pct, 3),
-    needed_win: pct(r.needed_win_rate_pct, 1),
+    needed_win: neededWinDisplay(r.needed_win_rate_pct, 1),
+    win_label: neededWinLabel(r.needed_win_rate_pct),
     movement_ratio: r.movement_ratio === null ? '比較不可' : `${Number(r.movement_ratio).toFixed(2)}倍`,
     reality: r.reality,
     memo: r.memo,
@@ -1328,7 +1348,10 @@ function renderDailyOccurrence(data) {
     { item: '使用ファイル数', value: meta.referenced_file_count === undefined ? '—' : `${meta.referenced_file_count}件` },
     { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
     { item: '参照期間', value: meta.reference_period_text || '—' },
-    { item: '必要値幅', value: pct(meta.required_move_pct ?? data.required_move_occurrence_required_pct, 3) },
+    { item: '日次目標利益', value: data.target_profit_jpy === undefined ? '—' : yen(data.target_profit_jpy, 0) },
+    { item: '想定成功回数', value: data.expected_success_count ? `${data.expected_success_count}回` : '—' },
+    { item: '1回あたり目標利益', value: data.per_trade_target_jpy === undefined ? '—' : yen(data.per_trade_target_jpy, 2) },
+    { item: '1回あたり必要値幅', value: pct(meta.required_move_pct ?? data.required_move_occurrence_required_pct, 3) },
     { item: '必要値幅を満たした足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
     { item: '必要値幅出現率', value: pct(data.required_move_occurrence_rate_pct, 1) },
     { item: '使用ファイル名', value: files.length ? files.slice(0, 8).join('\n') + (files.length > 8 ? `\nほか${files.length - 8}件` : '') : '—' },
@@ -1349,7 +1372,7 @@ async function loadDailyReports() {
     fill: pct(row.virtual_fill_rate_pct_used, 1),
     width: row.required_move_occurrence_rate_pct === undefined || row.required_move_occurrence_rate_pct === '' ? '—' : pct(row.required_move_occurrence_rate_pct, 1),
     need: pct(row.needed_move_pct, 3),
-    win: pct(row.needed_win_rate_pct, 1),
+    win: neededWinDisplay(row.needed_win_rate_pct, 1),
     reality: row.reality || '—',
   }));
   renderTable(document.getElementById('dailyReportsTable'), [
@@ -1361,7 +1384,7 @@ async function loadDailyReports() {
     ['cost', '往復コスト'],
     ['fill', '仮想約定率'],
     ['width', '値幅出現率'],
-    ['need', '必要変動率'],
+    ['need', '1回あたり必要値幅'],
     ['win', '必要勝率'],
     ['reality', '現実度'],
   ], rows);

@@ -665,3 +665,117 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   min-width: 140px;
   font-size: 0.88rem;
 }
+
+/* =========================
+   Daily goal layout cleanup
+   ========================= */
+.daily-main-card {
+  display: grid;
+  gap: 16px;
+}
+.daily-layout-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 14px;
+  align-items: start;
+}
+.daily-input-block {
+  border: 1px solid rgba(203,126,170,0.22);
+  border-radius: 20px;
+  background: rgba(255,255,255,0.58);
+  padding: 14px;
+  box-shadow: 0 10px 24px rgba(118,62,98,0.045);
+}
+.daily-input-block-wide {
+  grid-row: span 2;
+}
+.daily-block-title,
+.daily-result-head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.daily-block-title span,
+.daily-result-head span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 999px;
+  color: #803b67;
+  background: rgba(255,162,201,0.24);
+  border: 1px solid rgba(217,92,156,0.26);
+  font-weight: 950;
+  font-size: 0.82rem;
+}
+.daily-block-title h4,
+.daily-result-head h3 {
+  margin: 0;
+}
+.daily-block-title p,
+.daily-result-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+  font-size: 0.84rem;
+}
+.daily-form-compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+.daily-form-compact.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.daily-template-field {
+  grid-column: 1 / -1;
+}
+.daily-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 4px;
+}
+.daily-step-card {
+  border-left: 4px solid rgba(217,92,156,0.28);
+}
+.daily-step-card .grid,
+.daily-plan-grid,
+.daily-result-cards {
+  margin-top: 12px;
+}
+.daily-result-cards:empty,
+.daily-plan-grid:empty {
+  margin-top: 0;
+}
+#dailyReadinessCards.grid.four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1320px) {
+  .daily-layout-grid {
+    grid-template-columns: 1fr;
+  }
+  .daily-input-block-wide {
+    grid-row: auto;
+  }
+  #dailyReadinessCards.grid.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .daily-form-compact,
+  .daily-form-compact.two-col,
+  #dailyReadinessCards.grid.four {
+    grid-template-columns: 1fr;
+  }
+  .daily-action-row,
+  .daily-action-row .inline-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

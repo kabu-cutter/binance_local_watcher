@@ -118,7 +118,39 @@ function neededWinRatePct({ target, capital, attempts, recentMoveAbsPct, costPct
   const winNet = capital * Math.max(recentMoveAbsPct - costPct, 0) / 100;
   if (attempts <= 0 || winNet <= 0) return 100;
   const rate = ((target + attempts * lossAbs) / (attempts * (winNet + lossAbs))) * 100;
-  return Math.max(0, Math.min(100, rate));
+  return Math.max(0, rate);
+}
+
+function formatNeededWinRate(winRate) {
+  if (!Number.isFinite(winRate)) return '—';
+  if (winRate >= 100) return '100%以上';
+  return `${winRate.toFixed(1)}%`;
+}
+
+function neededWinPremiseLabel(winRate) {
+  if (!Number.isFinite(winRate)) return '確認不可';
+  if (winRate >= 100) return '全勝前提';
+  if (winRate >= 90) return 'ほぼ全勝前提';
+  if (winRate >= 75) return 'かなり重い';
+  if (winRate >= 60) return '重い';
+  return '確認範囲';
+}
+
+
+function requiredSuccessLabel(requiredCount, plannedCount) {
+  if (!Number.isFinite(requiredCount) || requiredCount <= 0) return '計算不可';
+  if (!Number.isFinite(plannedCount) || plannedCount <= 0) return '確認範囲';
+  if (requiredCount <= plannedCount) return '計画内';
+  if (requiredCount <= plannedCount * 1.5) return 'やや多い';
+  if (requiredCount <= plannedCount * 2.5) return 'かなり多い';
+  return '現実的に重い';
+}
+
+function successLabelToReality(label) {
+  if (label === '計画内') return '軽い';
+  if (label === 'やや多い') return '普通';
+  if (label === 'かなり多い') return '重い';
+  return 'かなり重い';
 }
 
 function formatSignedPct(value, digits = 4) {
@@ -226,6 +258,8 @@ function calculateDailyGoal(body = {}) {
   const capital = Math.max(1, safeFloat(body.capital_jpy, 1));
   const minOpp = Math.max(1, safeInt(body.min_opportunities, 1));
   const maxOpp = Math.max(minOpp, safeInt(body.max_opportunities, minOpp));
+  const expectedSuccessCount = Math.max(1, safeInt(body.expected_success_count, Math.max(1, Math.round((minOpp + maxOpp) / 2))));
+  const takeProfitPct = Math.max(0, safeFloat(body.take_profit_pct, 0.4));
   const stopPct = Math.max(0, safeFloat(body.stop_loss_pct));
   const cancelRates = parseCancelRates(body.cancel_rates_text);
   const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
@@ -241,6 +275,13 @@ function calculateDailyGoal(body = {}) {
   const onePct = targetPct + costPct;
   const minPct = (target / capital / minOpp) * 100 + costPct;
   const maxPct = (target / capital / maxOpp) * 100 + costPct;
+  const perTradeTarget = target / expectedSuccessCount;
+  const perTradeRequiredPct = (perTradeTarget / capital) * 100 + costPct;
+  const takeProfitGrossPerTrade = capital * takeProfitPct / 100;
+  const takeProfitNetPerTrade = capital * Math.max(takeProfitPct - costPct, 0) / 100;
+  const requiredSuccessCountByTakeProfit = takeProfitNetPerTrade > 0 ? Math.ceil(target / takeProfitNetPerTrade) : null;
+  const requiredSuccessLabelText = requiredSuccessLabel(requiredSuccessCountByTakeProfit, expectedSuccessCount);
+  const requiredSuccessReality = successLabelToReality(requiredSuccessLabelText);
   const lossPerStop = -(capital * (stopPct + costPct) / 100);
   const lossAbs = Math.abs(lossPerStop);
   const allowedStopsBeforeTargetBreak = lossAbs > 0 ? Math.max(0, Math.floor(target / lossAbs)) : null;
@@ -274,6 +315,7 @@ function calculateDailyGoal(body = {}) {
     labelLevel(fillLabel),
     labelLevel(winLabel),
     labelLevel(moveLabel),
+    labelLevel(requiredSuccessReality),
     requiredMoveOccurrenceRate === null ? 0 : labelLevel(occurrenceLabel),
   ));
   const movementRatio = recentMoveAbsPct > 0 ? virtualNeededPct / recentMoveAbsPct : null;
@@ -282,13 +324,15 @@ function calculateDailyGoal(body = {}) {
     '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
     '有効約定回数 = 機会回数 - 未約定回数 として、何回勝つ必要があるかを診断します。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
+    `想定成功回数は${expectedSuccessCount}回、1回あたり目標利益は約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
+    `1回で捉える想定値幅は${takeProfitPct.toFixed(3)}%です。この幅なら、コスト込み1回あたり見込みNetは約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、目標達成に必要な成功回数は${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     `仮想約定率${virtualFillRate.toFixed(0)}%なら、有効約定は約${virtualEffective}回、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
-    `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、必要変動率${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
+    `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、1回あたり必要値幅${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
       : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去データ上どれくらい出たかの参考値です。`,
-    `この前提の現実度は「${overallLabel}」です。仮想約定率・必要勝率・必要変動率・必要値幅の出現率を分けて見ます。`,
+    `この前提の現実度は「${overallLabel}」です。仮想約定率・必要勝率・1回あたり必要値幅・想定利確幅から逆算した必要成功回数を分けて見ます。`,
     'これは売買指示ではなく、今日の条件が今の相場で現実的かを見る準備サジェストです。',
   ].join('\n');
   const readinessCards = [
@@ -300,16 +344,30 @@ function calculateDailyGoal(body = {}) {
       kind: realityKind(fillLabel),
     },
     {
-      title: '勝率現実度',
-      main: `${virtualNeededWinRate.toFixed(1)}%`,
-      sub: `${recentMoveLabel}を勝ち幅、損切り${stopPct.toFixed(2)}%として概算 / 現実度 ${winLabel}`,
+      title: '1回あたり必要値幅',
+      main: `${perTradeRequiredPct.toFixed(3)}%`,
+      sub: `日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / コスト込み`,
+      tag: riskLabel(perTradeRequiredPct),
+      kind: riskKind(riskLabel(perTradeRequiredPct)),
+    },
+    {
+      title: '1回で捉える想定値幅',
+      main: `${takeProfitPct.toFixed(3)}%`,
+      sub: `この利確幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}成功が必要 / 計画${expectedSuccessCount}回に対して ${requiredSuccessLabelText}`,
+      tag: requiredSuccessLabelText,
+      kind: realityKind(requiredSuccessReality),
+    },
+    {
+      title: '必要勝率',
+      main: formatNeededWinRate(virtualNeededWinRate),
+      sub: `${recentMoveLabel}を勝ち幅、損切り${stopPct.toFixed(2)}%として概算 / ${neededWinPremiseLabel(virtualNeededWinRate)}`,
       tag: winLabel,
       kind: realityKind(winLabel),
     },
     {
       title: '値動き現実度',
       main: movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`,
-      sub: `必要変動率 ${virtualNeededPct.toFixed(3)}% / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
+      sub: `1回あたり必要値幅 ${virtualNeededPct.toFixed(3)}% / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
       tag: moveLabel,
       kind: realityKind(moveLabel),
     },
@@ -325,14 +383,18 @@ function calculateDailyGoal(body = {}) {
   ];
   const prepNotes = [
     template ? `テンプレート補助: ${template.note}` : 'テンプレート補助: 売買推奨ではなく、条件の置き方を比較するための表示です。',
+    `日次目標は1回で全部取る前提ではなく、想定成功${expectedSuccessCount}回に分けて、1回あたり約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円を目安にします。`,
+    requiredSuccessCountByTakeProfit === null
+      ? '想定利確幅がコスト以下のため、1回あたり見込みNetが残りません。利確幅・コスト・投入額の見直し候補です。'
+      : `1回で捉える想定値幅は${takeProfitPct.toFixed(3)}%です。この利確幅では、日次目標達成に約${requiredSuccessCountByTakeProfit}回の成功が必要です。これは計画${expectedSuccessCount}回に対して「${requiredSuccessLabelText}」です。`,
     overallLabel === 'かなり重い'
       ? '今日の目標はかなり重い条件です。回数、投入額、損切り幅、コスト前提を先に見直す候補です。'
       : overallLabel === '重い'
         ? '今日の目標は重い条件です。未約定が増えた時の1回あたり負担を先に確認すると安全です。'
         : '今日の目標は条件上は軽いから普通の範囲です。実際の値動きとコスト負けだけ確認します。',
     moveLabel === 'かなり重い'
-      ? '直近値動きに対して必要変動率が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
-      : '必要変動率は直近値動きと比較できる範囲です。仮想約定率と勝率の前提を合わせて見ます。',
+      ? '直近値動きに対して1回あたり必要値幅が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
+      : '1回あたり必要値幅は直近値動きと比較できる範囲です。仮想約定率と必要勝率の前提を合わせて見ます。',
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。履歴DL後に確認すると、値幅が出ていた頻度を参考にできます。'
       : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去に出た割合です。`,
@@ -344,17 +406,15 @@ function calculateDailyGoal(body = {}) {
       : '未約定シナリオによる悪化は比較的読みやすい範囲です。チャンス回数の見積もりを更新しながら使います。',
     'これは売買指示ではありません。今日の条件を希望ではなく準備項目へ分解するためのメモです。',
   ];
-  const planCards = [
-    ['1回で達成', 1],
-    [`${minOpp}回で分ける`, minOpp],
-    [`${maxOpp}回で分ける`, maxOpp],
-  ].map(([title, opp]) => {
+  const planOptions = [['1回で達成', 1], [`想定${expectedSuccessCount}回で分ける`, expectedSuccessCount], [`最大${maxOpp}回で分ける`, maxOpp]];
+  const uniquePlanOptions = planOptions.filter((item, index, arr) => arr.findIndex((other) => other[1] === item[1]) === index);
+  const planCards = uniquePlanOptions.map(([title, opp]) => {
     const neededNet = target / opp;
     const neededPct = (neededNet / capital) * 100 + costPct;
     return {
       title,
-      main: `${neededPct.toFixed(3)}%`,
-      sub: `1回必要Net 約${neededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 損切り1回 約${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
+      main: `1回 ${neededPct.toFixed(3)}%`,
+      sub: `このプランでは1回あたり最低${neededPct.toFixed(3)}%の有利な値幅を捉える想定 / 1回必要Net 約${neededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 損切り1回 約${lossPerStop.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円`,
       tag: riskLabel(neededPct),
       kind: neededPct >= 1.5 ? 'bad' : neededPct < 0.8 ? 'good' : 'warn',
     };
@@ -396,18 +456,20 @@ function calculateDailyGoal(body = {}) {
         movement_ratio: recentMoveAbsPct > 0 ? neededPct / recentMoveAbsPct : null,
         reality: scenarioReality,
         risk: scenarioReality,
-        memo: `必要勝ち${Math.ceil((scenarioWinRate / 100) * effective)}回目安 / ${recentMoveLabel}比で見る`,
+        memo: scenarioWinRate >= 100 ? `全勝前提 / ${recentMoveLabel}比で見る` : `必要勝ち${Math.ceil((scenarioWinRate / 100) * effective)}回目安 / ${recentMoveLabel}比で見る`,
       });
     }
   }
   const diagnosticSummary = [
     `約定現実度: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 有効約定 約${virtualEffective}回）`,
-    `勝率現実度: ${winLabel}（必要勝率 ${virtualNeededWinRate.toFixed(1)}%）`,
-    `値動き現実度: ${moveLabel}（1回必要変動率 ${virtualNeededPct.toFixed(3)}%）`,
+    `必要勝率: ${neededWinPremiseLabel(virtualNeededWinRate)}（必要勝率 ${formatNeededWinRate(virtualNeededWinRate)}）`,
+    `1回あたり必要値幅: ${perTradeRequiredPct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円）`,
+    `1回で捉える想定値幅: ${takeProfitPct.toFixed(3)}%（この利確幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回成功が必要`} / ${requiredSuccessLabelText}）`,
+    `値動き現実度: ${moveLabel}（仮想約定率込みの1回必要値幅 ${virtualNeededPct.toFixed(3)}%）`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
       : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
-    `総合: ${overallLabel}。未約定・勝率・値動き・値幅出現率のどれが重いかを分けて確認してください。`,
+    `総合: ${overallLabel}。未約定・必要勝率・1回あたり必要値幅・1回で捉える想定値幅・値幅出現率のどれが重いかを分けて確認してください。`,
   ].join('\n');
   return {
     suggestion,
@@ -416,10 +478,23 @@ function calculateDailyGoal(body = {}) {
     prep_notes: prepNotes,
     plan_cards: planCards,
     scenarios,
+    target_profit_jpy: target,
+    expected_success_count: expectedSuccessCount,
+    take_profit_pct: takeProfitPct,
+    per_trade_target_jpy: perTradeTarget,
+    per_trade_required_move_pct: perTradeRequiredPct,
+    take_profit_gross_per_trade_jpy: takeProfitGrossPerTrade,
+    take_profit_net_per_trade_jpy: takeProfitNetPerTrade,
+    required_success_count_by_take_profit: requiredSuccessCountByTakeProfit,
+    required_success_label: requiredSuccessLabelText,
     roundtrip_cost_pct: costPct,
     required_move_occurrence_rate_pct: requiredMoveOccurrenceRate,
     required_move_occurrence_note: requiredMoveOccurrenceNote,
     required_move_occurrence_label: occurrenceLabel,
+    required_move_occurrence_required_pct: Number.isFinite(Number(body.required_move_occurrence_required_pct))
+      ? safeFloat(body.required_move_occurrence_required_pct)
+      : null,
+    required_move_occurrence_meta: body.required_move_occurrence_meta || null,
     strategy_template: body.strategy_template || '',
     strategy_template_label: template?.label || '',
     strategy_template_note: template
