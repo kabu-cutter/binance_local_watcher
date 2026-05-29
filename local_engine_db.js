@@ -530,6 +530,49 @@ async function getCandleRangeStatus(projectDir, options = {}) {
   }
 }
 
+
+async function getCandleRows(projectDir, options = {}) {
+  try {
+    const state = await openDatabase(projectDir);
+    const { db } = state;
+    const symbol = safeText(options.symbol, 'BTCJPY');
+    const interval = safeText(options.interval, '1m');
+    const startMs = safeNumber(options.start_time_ms ?? options.start_ms, NaN);
+    const endMs = safeNumber(options.end_time_ms ?? options.end_ms, NaN);
+    const includeUnclosed = Boolean(options.include_unclosed_candle);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new Error('有効な参照期間が指定されていません。');
+    }
+    const closedClause = includeUnclosed ? '' : ' AND is_closed = 1';
+    const rows = queryRows(db, `
+      SELECT symbol, interval, open_time_ms, close_time_ms, open, high, low, close, volume, is_closed, source, fetched_at_ms
+      FROM candles
+      WHERE symbol = ? AND interval = ? AND open_time_ms >= ? AND open_time_ms < ?${closedClause}
+      ORDER BY open_time_ms ASC
+    `, [symbol, interval, startMs, endMs]);
+    return {
+      ok: true,
+      enabled: true,
+      db_file: state.filePath,
+      symbol,
+      interval,
+      row_count: rows.length,
+      rows,
+      source: 'sqlite_candles',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: false,
+      db_file: dbFilePath(projectDir),
+      error: error.message,
+      rows: [],
+      row_count: 0,
+      source: 'sqlite_disabled',
+    };
+  }
+}
+
 async function pruneCandles(projectDir, options = {}) {
   return runSerialized(async () => {
     try {
@@ -561,5 +604,6 @@ module.exports = {
   saveKlineRows,
   getDbStatus,
   getCandleRangeStatus,
+  getCandleRows,
   pruneCandles,
 };

@@ -318,6 +318,10 @@
           "roundtrip_cost_pct",
           "cancel_rates_text",
           "virtual_fill_rate_pct",
+          "limit_distance_pct",
+          "virtual_fill_side",
+          "virtual_fill_reference_days",
+          "virtual_fill_history_enabled",
           "virtual_fill_rate_auto",
           "occurrence_interval",
           "occurrence_scope",
@@ -343,7 +347,11 @@
           "strategy_template_label",
           "strategy_template_note",
           "virtual_fill_rate_pct_used",
-          "virtual_fill_rate_note"
+          "virtual_fill_rate_note",
+          "virtual_fill_history_rate_pct",
+          "virtual_fill_history_note",
+          "virtual_fill_history_meta",
+          "virtual_fill_manual_fallback_pct"
         ]
       },
       "save-daily-goal-report": {

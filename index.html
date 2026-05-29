@@ -277,8 +277,20 @@
             <label>未約定シナリオ %
               <input id="dailyCancelRates" value="10,30,50,70" />
             </label>
-            <label>仮想約定率（手入力） %
+            <label>仮想約定率（手入力/代替） %
               <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
+            </label>
+            <label class="check-field">仮想約定率を1分足で試算
+              <input id="dailyVirtualFillHistoryEnabled" type="checkbox" checked />
+            </label>
+            <label>仮想約定率の参照期間
+              <select id="dailyVirtualFillReferenceDays"><option value="7">直近7日</option><option value="14">直近14日</option><option value="30" selected>直近30日</option></select>
+            </label>
+            <label>指値方向
+              <select id="dailyVirtualFillSide"><option value="buy_limit">買い指値（下に置く）</option><option value="sell_limit">売り指値（上に置く）</option></select>
+            </label>
+            <label>指値距離 %
+              <input id="dailyLimitDistancePct" type="number" value="0.20" min="0" step="0.01" />
             </label>
             <label class="check-field">必要値幅を履歴確認
               <input id="dailyOccurrenceEnabled" type="checkbox" checked />
@@ -321,10 +333,16 @@
           <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
           <p class="memo-text" id="dailyErrorMemo"></p>
           <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
-          <p class="memo-text" id="dailyFillRateMemo">仮想約定率は手入力またはテンプレート値です。履歴確認は必要値幅の出現率として別表示します。</p>
+          <p class="memo-text" id="dailyFillRateMemo">仮想約定率は、分析用1分足キャッシュから試算します。計算できない場合だけ手入力値を使います。</p>
           <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
         </div>
         <div class="grid four" id="dailyReadinessCards"></div>
+        <div class="card">
+          <h3>仮想約定率の履歴試算</h3>
+          <p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p>
+          <p class="memo-text" id="dailyVirtualFillMemo">まだ計算していません。</p>
+          <div class="table-wrap"><table id="dailyVirtualFillTable"></table></div>
+        </div>
         <div class="card">
           <h3>必要値幅の履歴参照</h3>
           <p class="memo-text">ここは「約定率」ではなく、過去データ上で必要な値幅が出た頻度だけを見ます。チャートタブの表示日とは分離します。</p>

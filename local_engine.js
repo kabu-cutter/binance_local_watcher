@@ -2304,6 +2304,152 @@ async function tradePreview(body = {}) {
   });
 }
 
+
+function normalizeVirtualFillSide(value) {
+  return value === 'sell_limit' ? 'sell_limit' : 'buy_limit';
+}
+
+function virtualFillSideLabel(side) {
+  return normalizeVirtualFillSide(side) === 'sell_limit'
+    ? '売り指値（現在価格より上）'
+    : '買い指値（現在価格より下）';
+}
+
+async function analysisRowsForWindow({ symbol, start_ms: startMs, end_ms: endMs } = {}) {
+  const csvData = await downloadedKlineRowsForWindow({ symbol, interval: '1m', start_ms: startMs, end_ms: endMs });
+  const dbRows = await dbStore.getCandleRows(projectDir(), {
+    symbol,
+    interval: '1m',
+    start_time_ms: startMs,
+    end_time_ms: endMs,
+    include_unclosed_candle: false,
+  });
+  const csvRows = Array.isArray(csvData.rows) ? csvData.rows : [];
+  const rows = dbRows.enabled && Array.isArray(dbRows.rows) && dbRows.rows.length >= csvRows.length
+    ? dbRows.rows
+    : csvRows;
+  return {
+    rows,
+    files: csvData.files || [],
+    source: dbRows.enabled && rows === dbRows.rows ? 'sqlite_candles' : 'long_data_csv',
+    db_row_count: dbRows.row_count || 0,
+    csv_row_count: csvRows.length,
+    db_enabled: Boolean(dbRows.enabled),
+    db_error: dbRows.error || '',
+  };
+}
+
+async function estimateVirtualFillRate(body = {}, summary = null) {
+  const enabled = body.virtual_fill_history_enabled !== false;
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
+  const side = normalizeVirtualFillSide(body.virtual_fill_side);
+  const referenceDays = normalizeAnalysisCacheDays(body.virtual_fill_reference_days || body.reference_days, 30);
+  const limitDistancePct = Math.max(0, safeFloat(body.limit_distance_pct, 0.2));
+  const window = analysisCacheWindow(referenceDays);
+  const currentPrice = safeFloat(summary?.price_jpy, NaN);
+  const currentLimitPrice = Number.isFinite(currentPrice)
+    ? (side === 'sell_limit' ? currentPrice * (1 + limitDistancePct / 100) : currentPrice * (1 - limitDistancePct / 100))
+    : null;
+  const baseMeta = {
+    enabled,
+    symbol,
+    interval: '1m',
+    reference_days: referenceDays,
+    side,
+    side_label: virtualFillSideLabel(side),
+    limit_distance_pct: limitDistancePct,
+    current_price: Number.isFinite(currentPrice) ? currentPrice : null,
+    current_limit_price: Number.isFinite(currentLimitPrice) ? currentLimitPrice : null,
+    include_unclosed_candle: false,
+    start_time_ms: window.start_ms,
+    end_time_ms: window.end_ms,
+    reference_period_text: `${window.start_jst} → ${window.end_jst}`,
+    referenced_row_count: 0,
+    expected_row_count: expectedRowsForAnalysisWindow(window.start_ms, window.end_ms),
+    matched_row_count: 0,
+    quality_label: '未計算',
+    source: 'analysis_cache',
+    used_for_daily_goal: false,
+  };
+  if (!enabled) {
+    return {
+      rate: null,
+      meta: { ...baseMeta, enabled: false, quality_label: 'OFF' },
+      note: '仮想約定率の履歴試算はOFFです。手入力値を使います。',
+    };
+  }
+  try {
+    const cache = await analysisRowsForWindow({ symbol, start_ms: window.start_ms, end_ms: window.end_ms });
+    const rows = (cache.rows || []).filter((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t >= window.start_ms && t < window.end_ms
+        && Number.isFinite(open) && Number.isFinite(high) && Number.isFinite(low) && open > 0;
+    });
+    const expected = expectedRowsForAnalysisWindow(window.start_ms, window.end_ms);
+    const coverage = expected > 0 ? rows.length / expected : 0;
+    let matched = 0;
+    rows.forEach((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      if (!Number.isFinite(open) || open <= 0) return;
+      const target = side === 'sell_limit'
+        ? open * (1 + limitDistancePct / 100)
+        : open * (1 - limitDistancePct / 100);
+      if (side === 'sell_limit') {
+        if (high >= target) matched += 1;
+      } else if (low <= target) {
+        matched += 1;
+      }
+    });
+    const rate = rows.length ? Math.max(0, Math.min(100, (matched / rows.length) * 100)) : null;
+    const qualityLabel = rows.length <= 0
+      ? '不足'
+      : coverage >= 0.95
+        ? '良好'
+        : coverage >= 0.5
+          ? '一部不足'
+          : '不足';
+    const meta = {
+      ...baseMeta,
+      referenced_row_count: rows.length,
+      expected_row_count: expected,
+      missing_count: Math.max(0, expected - rows.length),
+      matched_row_count: matched,
+      coverage_pct: coverage * 100,
+      quality_label: qualityLabel,
+      source: cache.source,
+      csv_row_count: cache.csv_row_count,
+      db_row_count: cache.db_row_count,
+      db_enabled: cache.db_enabled,
+      referenced_files: (cache.files || []).map((file) => path.basename(file)),
+      referenced_file_count: (cache.files || []).length,
+      used_for_daily_goal: Number.isFinite(rate),
+    };
+    if (rows.length < 10 || !Number.isFinite(rate)) {
+      return {
+        rate: null,
+        meta: { ...meta, used_for_daily_goal: false },
+        note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（参照足数 ${rows.length}/${expected}本）。手入力値を代替使用します。`,
+      };
+    }
+    return {
+      rate,
+      meta,
+      note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日 / ${virtualFillSideLabel(side)} / 指値距離 ${limitDistancePct.toFixed(3)}%。参照${rows.length}本のうち価格到達は${matched}本、${rate.toFixed(1)}%でした。これは実約定率ではなく、価格到達ベースの仮想値です。未確定足は除外しています。`,
+    };
+  } catch (error) {
+    return {
+      rate: null,
+      meta: { ...baseMeta, quality_label: 'エラー', error: error.message, used_for_daily_goal: false },
+      note: `仮想約定率: ${error.message} のため履歴試算できませんでした。手入力値を代替使用します。`,
+    };
+  }
+}
+
 async function dailyGoal(body = {}) {
   const { symbols } = await currentPriceData();
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
@@ -2311,11 +2457,16 @@ async function dailyGoal(body = {}) {
   const manualFillRate = Math.max(0, Math.min(100, safeFloat(body.virtual_fill_rate_pct, 70)));
   const autoEnabled = body.virtual_fill_rate_auto !== false;
   const occurrence = autoEnabled ? await estimateRequiredMoveOccurrenceRate(body) : null;
-  const fillRateNote = '仮想約定率は手入力値またはテンプレート値を使います。履歴確認は約定率ではなく、必要値幅の出現率として別表示します。';
-  return calculations.calculateDailyGoal({
+  const virtualFill = await estimateVirtualFillRate(body, summary);
+  const historyFillRate = Number.isFinite(virtualFill?.rate) ? Math.max(0, Math.min(100, safeFloat(virtualFill.rate))) : null;
+  const fillRateUsed = historyFillRate === null ? manualFillRate : historyFillRate;
+  const fillRateNote = historyFillRate === null
+    ? `${virtualFill?.note || '仮想約定率の履歴試算は使えませんでした。'} 手入力値 ${manualFillRate.toFixed(1)}% を代替使用します。`
+    : `${virtualFill.note} 日次目標の仮想約定率として ${fillRateUsed.toFixed(1)}% を使います。`;
+  const result = calculations.calculateDailyGoal({
     ...body,
-    virtual_fill_rate_pct: manualFillRate,
-    virtual_fill_rate_pct_used: manualFillRate,
+    virtual_fill_rate_pct: fillRateUsed,
+    virtual_fill_rate_pct_used: fillRateUsed,
     virtual_fill_rate_note: fillRateNote,
     required_move_occurrence_rate_pct: Number.isFinite(occurrence?.rate) ? occurrence.rate : null,
     required_move_occurrence_note: autoEnabled
@@ -2326,6 +2477,13 @@ async function dailyGoal(body = {}) {
     recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
     recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
   });
+  return {
+    ...result,
+    virtual_fill_history_rate_pct: historyFillRate,
+    virtual_fill_history_note: virtualFill?.note || '',
+    virtual_fill_history_meta: virtualFill?.meta || null,
+    virtual_fill_manual_fallback_pct: manualFillRate,
+  };
 }
 
 async function invoke(route, payload = {}) {

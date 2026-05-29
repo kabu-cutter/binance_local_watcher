@@ -1212,7 +1212,11 @@ function buildDailyPayload() {
     roundtrip_cost_pct: linkedCost,
     cancel_rates_text: elValue('dailyCancelRates', '10,30,50'),
     virtual_fill_rate_pct: elNumber('dailyFillRate', 70),
-    // trueなら、約定率ではなく「必要値幅の出現率」を別計算します。
+    virtual_fill_history_enabled: elChecked('dailyVirtualFillHistoryEnabled', true),
+    virtual_fill_reference_days: elNumber('dailyVirtualFillReferenceDays', 30),
+    virtual_fill_side: elValue('dailyVirtualFillSide', 'buy_limit'),
+    limit_distance_pct: elNumber('dailyLimitDistancePct', 0.2),
+    // trueなら「必要値幅の出現率」を別計算します。仮想約定率の履歴試算とは分離します。
     virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
     occurrence_interval: occurrenceInterval,
     occurrence_scope: elValue('dailyOccurrenceScope', 'latest'),
@@ -1236,14 +1240,15 @@ async function calcDaily() {
   if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大機会回数は最小機会回数以上にしてください。');
   if (!Number.isFinite(payload.stop_loss_pct) || payload.stop_loss_pct < 0) errors.push('損切り逆行率は0以上で入力してください。');
   if (!Number.isFinite(payload.roundtrip_cost_pct) || payload.roundtrip_cost_pct < 0) errors.push('往復コストは0以上で入力してください。');
-  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('仮想約定率（手入力）は0〜100%で入力してください。');
+  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('仮想約定率（手入力/代替）は0〜100%で入力してください。');
+  if (!Number.isFinite(payload.limit_distance_pct) || payload.limit_distance_pct < 0) errors.push('指値距離は0%以上で入力してください。');
   if (errors.length) {
     errorMemo.textContent = `入力エラー: ${errors.join(' / ')}`;
     return;
   }
   errorMemo.textContent = '';
   const data = await postJson('/api/daily-goal', payload);
-  // 仮想約定率は手入力/テンプレート値を維持します。履歴確認は「必要値幅の出現率」として別表示します。
+  // 仮想約定率は、分析用1分足キャッシュで試算できればそれを使い、できない場合は手入力値を代替にします。
   document.getElementById('dailyCostPct').value = Number(data.roundtrip_cost_pct || payload.roundtrip_cost_pct).toFixed(2);
   document.getElementById('dailyTemplateMemo').textContent = data.strategy_template_note
     || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
@@ -1251,6 +1256,7 @@ async function calcDaily() {
   document.getElementById('dailyDiagnosticSummary').textContent = data.diagnostic_summary || '総合診断はまだありません。';
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
     || '仮想約定率は手入力値またはテンプレート値です。必要値幅の履歴確認とは別扱いです。';
+  renderDailyVirtualFill(data);
   renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
     title: p.title,
@@ -1280,6 +1286,32 @@ async function calcDaily() {
     reality: r.reality,
     memo: r.memo,
   })));
+}
+
+
+function renderDailyVirtualFill(data) {
+  const memoEl = document.getElementById('dailyVirtualFillMemo');
+  const tableEl = document.getElementById('dailyVirtualFillTable');
+  if (!memoEl || !tableEl) return;
+  const meta = data.virtual_fill_history_meta || {};
+  memoEl.textContent = data.virtual_fill_history_note || data.virtual_fill_rate_note || '仮想約定率の履歴試算はまだ計算していません。';
+  const rows = [
+    { item: '使用した仮想約定率', value: pct(data.virtual_fill_rate_pct_used, 1) },
+    { item: '履歴試算の状態', value: meta.enabled === false ? 'OFF' : (meta.used_for_daily_goal ? '日次目標に使用' : '手入力値を代替使用') },
+    { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || '1m'}` },
+    { item: '参照期間', value: meta.reference_period_text || '—' },
+    { item: '参照日数', value: meta.reference_days ? `直近${meta.reference_days}日` : '—' },
+    { item: '指値方向', value: meta.side_label || '—' },
+    { item: '指値距離', value: pct(meta.limit_distance_pct, 3) },
+    { item: '現在価格ベースの仮想指値', value: meta.current_limit_price === undefined ? '—' : yen(meta.current_limit_price, 2) },
+    { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
+    { item: '価格到達足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
+    { item: '仮想約定率', value: data.virtual_fill_history_rate_pct === null || data.virtual_fill_history_rate_pct === undefined ? '—' : pct(data.virtual_fill_history_rate_pct, 1) },
+    { item: 'データ品質', value: meta.quality_label || '—' },
+    { item: '未確定足', value: meta.include_unclosed_candle ? '含む' : '除外' },
+    { item: '参照元', value: meta.source || '—' },
+  ];
+  renderTable(tableEl, [['item', '項目'], ['value', '値']], rows);
 }
 
 function renderDailyOccurrence(data) {
