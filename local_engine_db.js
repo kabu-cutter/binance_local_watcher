@@ -462,10 +462,104 @@ async function getDbStatus(projectDir) {
   }
 }
 
+
+function expectedRowsForExclusiveRange(interval, startMs, endMs) {
+  const step = INTERVAL_MS[interval];
+  if (!step || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.max(0, Math.floor((endMs - startMs) / step));
+}
+
+async function getCandleRangeStatus(projectDir, options = {}) {
+  try {
+    const state = await openDatabase(projectDir);
+    const { db } = state;
+    const symbol = safeText(options.symbol, 'BTCJPY');
+    const interval = safeText(options.interval, '1m');
+    const startMs = safeNumber(options.start_time_ms ?? options.start_ms, NaN);
+    const endMs = safeNumber(options.end_time_ms ?? options.end_ms, NaN);
+    const includeUnclosed = Boolean(options.include_unclosed_candle);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new Error('有効な参照期間が指定されていません。');
+    }
+    const closedClause = includeUnclosed ? '' : ' AND is_closed = 1';
+    const rows = queryRows(db, `
+      SELECT COUNT(*) AS row_count, MIN(open_time_ms) AS start_time_ms, MAX(open_time_ms) AS end_time_ms
+      FROM candles
+      WHERE symbol = ? AND interval = ? AND open_time_ms >= ? AND open_time_ms < ?${closedClause}
+    `, [symbol, interval, startMs, endMs]);
+    const row = rows[0] || {};
+    const expected = expectedRowsForExclusiveRange(interval, startMs, endMs);
+    const rowCount = Number(row.row_count || 0);
+    const missing = Math.max(0, expected - rowCount);
+    const q = qualityLabel(rowCount, expected, missing);
+    return {
+      ok: true,
+      enabled: true,
+      db_file: state.filePath,
+      symbol,
+      interval,
+      start_time_ms: startMs,
+      end_time_ms: endMs,
+      actual_start_time_ms: Number(row.start_time_ms || 0) || null,
+      actual_end_time_ms: Number(row.end_time_ms || 0) || null,
+      row_count: rowCount,
+      expected_row_count: expected,
+      missing_count: missing,
+      coverage_rate: expected > 0 ? rowCount / expected : (rowCount > 0 ? 1 : 0),
+      quality_label: q,
+      enough: expected > 0 ? rowCount / expected >= 0.95 : rowCount > 0,
+      include_unclosed_candle: includeUnclosed,
+      source: 'sqlite_candles',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: false,
+      db_file: dbFilePath(projectDir),
+      error: error.message,
+      symbol: options.symbol || 'BTCJPY',
+      interval: options.interval || '1m',
+      row_count: 0,
+      expected_row_count: 0,
+      missing_count: 0,
+      coverage_rate: 0,
+      quality_label: 'disabled',
+      enough: false,
+      source: 'sqlite_disabled',
+    };
+  }
+}
+
+async function pruneCandles(projectDir, options = {}) {
+  return runSerialized(async () => {
+    try {
+      const state = await openDatabase(projectDir);
+      const { db } = state;
+      const symbol = options.symbol ? safeText(options.symbol) : null;
+      const interval = options.interval ? safeText(options.interval) : null;
+      const beforeMs = safeNumber(options.before_time_ms ?? options.before_ms, NaN);
+      if (!Number.isFinite(beforeMs)) throw new Error('削除基準時刻が不正です。');
+      const params = [];
+      let where = 'open_time_ms < ?';
+      params.push(beforeMs);
+      if (symbol) { where += ' AND symbol = ?'; params.push(symbol); }
+      if (interval) { where += ' AND interval = ?'; params.push(interval); }
+      const before = Number(firstScalar(db, `SELECT COUNT(*) FROM candles WHERE ${where}`, params, 0));
+      db.run(`DELETE FROM candles WHERE ${where}`, params);
+      await persistDatabase(state);
+      return { ok: true, enabled: true, deleted_rows: before, before_time_ms: beforeMs, db_file: state.filePath };
+    } catch (error) {
+      return { ok: false, enabled: false, deleted_rows: 0, error: error.message, db_file: dbFilePath(projectDir) };
+    }
+  });
+}
+
 module.exports = {
   DB_VERSION,
   dbFilePath,
   ensureSchema,
   saveKlineRows,
   getDbStatus,
+  getCandleRangeStatus,
+  pruneCandles,
 };

@@ -374,6 +374,22 @@
               <button class="secondary" id="reloadDbStatus">DB確認</button>
             </div>
             <p class="memo-text" id="dbStatusMemo">DB状態を確認中です。</p>
+            <div class="cache-control-panel">
+              <h4>分析用1分足キャッシュ</h4>
+              <p class="card-desc">仮想約定率・必要値幅出現率・日次目標診断に使う1分足データです。チャート表示用ではなく、分析用データとしてlong_data/DBへ保存します。</p>
+              <div class="form-row compact-row">
+                <label>対象
+                  <select id="analysisCacheSymbol"><option value="all" selected>BTCJPY / ETHJPY</option><option>BTCJPY</option><option>ETHJPY</option></select>
+                </label>
+                <label>参照期間
+                  <select id="analysisCacheDays"><option value="7" selected>直近7日</option><option value="14">直近14日</option><option value="30">直近30日</option></select>
+                </label>
+                <button class="secondary" id="reloadAnalysisCacheStatus">キャッシュ確認</button>
+                <button id="ensureAnalysisCache">不足分を整備</button>
+              </div>
+              <p class="memo-text" id="analysisCacheMemo">分析用1分足キャッシュは未確認です。</p>
+              <div class="table-wrap"><table id="analysisCacheTable"></table></div>
+            </div>
             <h4>ローソク足キャッシュ</h4>
             <div class="table-wrap"><table id="dbCandlesTable"></table></div>
             <h4>取得記録</h4>

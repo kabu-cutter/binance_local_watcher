@@ -193,6 +193,27 @@
           "missing_requests",
           "message"
         ]
+      },
+      "analysis-cache-status": {
+        "query": [
+          "symbols",
+          "reference_days"
+        ],
+        "response": [
+          "symbols",
+          "interval",
+          "reference_days",
+          "retention_days",
+          "start_jst",
+          "end_jst",
+          "row_count",
+          "expected_row_count",
+          "coverage_pct",
+          "enough",
+          "rows",
+          "message"
+        ],
+        "notes": "仮想約定率・必要値幅出現率・日次目標診断用の1分足分析キャッシュ状態を返す。チャート表示設定とは分離。"
       }
     },
     "POST": {
@@ -367,6 +388,24 @@
           "message",
           "file"
         ]
+      },
+      "ensure-analysis-cache": {
+        "body": [
+          "symbols",
+          "reference_days",
+          "wait_ms",
+          "force"
+        ],
+        "response": [
+          "symbols",
+          "interval",
+          "reference_days",
+          "retention_days",
+          "results",
+          "status",
+          "message"
+        ],
+        "notes": "分析用1分足キャッシュを整備する。Binance public klineから取得し、long_data CSVとSQLite Phase 1へ保存する。実注文・自動売買・APIキー保存は行わない。"
       }
     }
   }

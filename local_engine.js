@@ -793,6 +793,11 @@ const CHART_RANGE_LABELS = {
   '1w': '直近1週間',
 };
 
+const ANALYSIS_CACHE_ALLOWED_DAYS = [7, 14, 30];
+const ANALYSIS_CACHE_RETENTION_DAYS = 30;
+const ANALYSIS_CACHE_SYMBOLS = SYMBOLS;
+
+
 function normalizeChartInterval(interval = 'auto', rangeKey = '24h') {
   const requested = CHART_INTERVALS.includes(interval) ? interval : 'auto';
   if (requested !== 'auto') return requested;
@@ -813,6 +818,115 @@ function normalizeChartRange(range = '24h') {
     end_ms: endMs,
     start_jst: formatJst(new Date(startMs)),
     end_jst: formatJst(new Date(endMs)),
+  };
+}
+
+
+function normalizeAnalysisCacheDays(value, fallback = 7) {
+  const n = safeInt(value, fallback);
+  return ANALYSIS_CACHE_ALLOWED_DAYS.includes(n) ? n : fallback;
+}
+
+function normalizeAnalysisCacheSymbols(value) {
+  if (Array.isArray(value)) {
+    const symbols = value.filter((symbol) => SYMBOLS.includes(symbol));
+    return symbols.length ? symbols : ANALYSIS_CACHE_SYMBOLS;
+  }
+  const text = String(value || '').trim();
+  if (!text) return ANALYSIS_CACHE_SYMBOLS;
+  const symbols = text.split(',').map((item) => item.trim()).filter((symbol) => SYMBOLS.includes(symbol));
+  return symbols.length ? symbols : ANALYSIS_CACHE_SYMBOLS;
+}
+
+function analysisCacheWindow(days = 7) {
+  const referenceDays = normalizeAnalysisCacheDays(days, 7);
+  const endMs = currentOpenTimeMs('1m', Date.now());
+  const startMs = endMs - referenceDays * 24 * 60 * 60 * 1000;
+  return {
+    reference_days: referenceDays,
+    interval: '1m',
+    start_ms: startMs,
+    end_ms: endMs,
+    start_jst: formatJst(new Date(startMs)),
+    end_jst: formatJst(new Date(endMs)),
+  };
+}
+
+function expectedRowsForAnalysisWindow(startMs, endMs) {
+  const step = INTERVAL_MS['1m'];
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return 0;
+  return Math.max(0, Math.floor((endMs - startMs) / step));
+}
+
+async function downloadedKlineRowsForWindow({ symbol, interval = '1m', start_ms: startMs, end_ms: endMs } = {}) {
+  const normalizedSymbol = SYMBOLS.includes(symbol) ? symbol : 'BTCJPY';
+  const normalizedInterval = normalizeInterval(interval || '1m');
+  const dir = longDataDir();
+  const byOpenTime = new Map();
+  const usedFiles = new Set();
+  if (fs.existsSync(dir)) {
+    const prefix = `binance_${normalizedSymbol}_${normalizedInterval}_`;
+    const files = (await fs.promises.readdir(dir))
+      .filter((name) => name.startsWith(prefix) && name.endsWith('_JST.csv'))
+      .map((name) => path.join(dir, name));
+    for (const file of files) {
+      const rows = await readLongDataRows(file);
+      let used = false;
+      rows.forEach((row) => {
+        if (row.symbol !== normalizedSymbol || row.interval !== normalizedInterval) return;
+        const timeMs = safeFloat(row.open_time_ms, NaN);
+        if (!Number.isFinite(timeMs)) return;
+        if (timeMs < startMs || timeMs >= endMs) return;
+        byOpenTime.set(timeMs, row);
+        used = true;
+      });
+      if (used) usedFiles.add(file);
+    }
+  }
+  return {
+    rows: Array.from(byOpenTime.values()).sort((a, b) => safeFloat(a.open_time_ms) - safeFloat(b.open_time_ms)),
+    files: Array.from(usedFiles),
+  };
+}
+
+function summarizeAnalysisCacheCoverage({ symbol, rows, files, window, dbStatus = null } = {}) {
+  const expected = expectedRowsForAnalysisWindow(window.start_ms, window.end_ms);
+  const rowCount = Array.isArray(rows) ? rows.length : 0;
+  const dbRowCount = Number(dbStatus?.row_count || 0);
+  const effectiveRows = dbStatus?.enabled ? dbRowCount : rowCount;
+  const missing = Math.max(0, expected - effectiveRows);
+  const coverageRate = expected > 0 ? effectiveRows / expected : (effectiveRows > 0 ? 1 : 0);
+  const quality = effectiveRows <= 0
+    ? 'empty'
+    : coverageRate >= 0.95
+      ? 'good'
+      : coverageRate >= 0.5
+        ? 'partial'
+        : 'thin';
+  const period = rows?.length
+    ? `${formatJst(new Date(safeFloat(rows[0].open_time_ms)))} → ${formatJst(new Date(safeFloat(rows[rows.length - 1].open_time_ms)))}`
+    : `${window.start_jst} → ${window.end_jst}`;
+  return {
+    symbol,
+    interval: '1m',
+    reference_days: window.reference_days,
+    start_time_ms: window.start_ms,
+    end_time_ms: window.end_ms,
+    start_jst: window.start_jst,
+    end_jst: window.end_jst,
+    row_count: effectiveRows,
+    csv_row_count: rowCount,
+    db_row_count: dbRowCount,
+    expected_row_count: expected,
+    missing_count: missing,
+    coverage_rate: coverageRate,
+    coverage_pct: coverageRate * 100,
+    quality,
+    enough: coverageRate >= 0.95,
+    referenced_file_count: Array.isArray(files) ? files.length : 0,
+    referenced_files: (files || []).map((file) => path.basename(file)),
+    period_text: period,
+    source: dbStatus?.enabled ? 'sqlite_candles' : 'long_data_csv',
   };
 }
 
@@ -1497,6 +1611,125 @@ async function updateDownloadedHistoryToNow(body = {}) {
   };
 }
 
+
+async function analysisCacheStatus(params = {}) {
+  const referenceDays = normalizeAnalysisCacheDays(params.reference_days || params.days, 7);
+  const symbols = normalizeAnalysisCacheSymbols(params.symbols || params.symbol);
+  const window = analysisCacheWindow(referenceDays);
+  const rows = [];
+  for (const symbol of symbols) {
+    const csvData = await downloadedKlineRowsForWindow({ symbol, interval: '1m', start_ms: window.start_ms, end_ms: window.end_ms });
+    const dbStatus = await dbStore.getCandleRangeStatus(projectDir(), {
+      symbol,
+      interval: '1m',
+      start_time_ms: window.start_ms,
+      end_time_ms: window.end_ms,
+      include_unclosed_candle: false,
+    });
+    rows.push(summarizeAnalysisCacheCoverage({ symbol, rows: csvData.rows, files: csvData.files, window, dbStatus }));
+  }
+  const totalExpected = rows.reduce((sum, row) => sum + Number(row.expected_row_count || 0), 0);
+  const totalRows = rows.reduce((sum, row) => sum + Number(row.row_count || 0), 0);
+  const enough = rows.length > 0 && rows.every((row) => row.enough);
+  return {
+    ok: true,
+    symbols,
+    interval: '1m',
+    reference_days: referenceDays,
+    retention_days: ANALYSIS_CACHE_RETENTION_DAYS,
+    start_time_ms: window.start_ms,
+    end_time_ms: window.end_ms,
+    start_jst: window.start_jst,
+    end_jst: window.end_jst,
+    row_count: totalRows,
+    expected_row_count: totalExpected,
+    coverage_pct: totalExpected > 0 ? (totalRows / totalExpected) * 100 : 0,
+    enough,
+    rows,
+    message: enough
+      ? `分析用1分足キャッシュは直近${referenceDays}日分を概ね満たしています。`
+      : `分析用1分足キャッシュが不足しています。直近${referenceDays}日分を整備できます。`,
+  };
+}
+
+async function ensureAnalysisCache(body = {}) {
+  const referenceDays = normalizeAnalysisCacheDays(body.reference_days || body.days, 7);
+  const symbols = normalizeAnalysisCacheSymbols(body.symbols || body.symbol);
+  const waitMs = Math.max(0, Math.min(5000, safeInt(body.wait_ms, 250)));
+  const force = Boolean(body.force);
+  const window = analysisCacheWindow(referenceDays);
+  const results = [];
+  for (let i = 0; i < symbols.length; i += 1) {
+    const symbol = symbols[i];
+    const before = await analysisCacheStatus({ symbols: [symbol], reference_days: referenceDays });
+    const beforeRow = before.rows?.[0] || null;
+    if (beforeRow?.enough && !force) {
+      results.push({
+        ok: true,
+        symbol,
+        interval: '1m',
+        skipped: true,
+        fetched_rows: 0,
+        inserted_rows: 0,
+        request_count: 0,
+        before: beforeRow,
+        after: beforeRow,
+        message: `${symbol}: 直近${referenceDays}日分の分析用1分足キャッシュは既に十分あります。`,
+      });
+      continue;
+    }
+    const fetched = await fetchKlineRowsBetween(symbol, '1m', window.start_ms, window.end_ms, waitMs);
+    const mergeResult = fetched.rows.length
+      ? await mergeDownloadedRowsIntoDailyFiles(symbol, '1m', fetched.rows)
+      : { files: [], inserted_rows: 0 };
+    const dbResult = await dbStore.saveKlineRows(projectDir(), {
+      symbol,
+      interval: '1m',
+      rows: fetched.rows,
+      requested_start_ms: window.start_ms,
+      requested_end_ms: window.end_ms,
+      source: 'binance_public_kline_analysis_cache',
+      reference_source: 'analysis_cache_csv_and_db',
+      fetch_type: beforeRow?.row_count ? 'analysis_cache_refresh' : 'analysis_cache_initial_backfill',
+      purpose: 'fill_rate_calc',
+      file_names: mergeResult.files ? mergeResult.files.map((item) => path.basename(item.file)) : [],
+      include_unclosed_candle: false,
+      status: fetched.errors.length === 0 ? 'ok' : 'partial',
+      message: `分析用1分足キャッシュ整備: ${symbol} 直近${referenceDays}日 ${fetched.rows.length}本`,
+    });
+    const after = await analysisCacheStatus({ symbols: [symbol], reference_days: referenceDays });
+    const afterRow = after.rows?.[0] || null;
+    results.push({
+      ok: fetched.errors.length === 0,
+      symbol,
+      interval: '1m',
+      skipped: false,
+      fetched_rows: fetched.rows.length,
+      inserted_rows: mergeResult.inserted_rows,
+      request_count: fetched.request_count,
+      errors: fetched.errors,
+      file_names: (mergeResult.files || []).map((item) => path.basename(item.file)),
+      db_phase1: dbResult,
+      before: beforeRow,
+      after: afterRow,
+      message: `${symbol}: 直近${referenceDays}日分の1分足を取得 ${fetched.rows.length}本 / 追加 ${mergeResult.inserted_rows}本 / API回数 ${fetched.request_count}。${dbResult.enabled ? `DB保存 ${dbResult.rows_inserted}追加 ${dbResult.rows_updated}更新。` : `DB未有効: ${dbResult.error || 'npm install が必要です'}。`}`,
+    });
+  }
+  const status = await analysisCacheStatus({ symbols, reference_days: referenceDays });
+  return {
+    ok: results.every((item) => item.ok),
+    symbols,
+    interval: '1m',
+    reference_days: referenceDays,
+    retention_days: ANALYSIS_CACHE_RETENTION_DAYS,
+    start_jst: window.start_jst,
+    end_jst: window.end_jst,
+    results,
+    status,
+    message: `分析用1分足キャッシュ整備完了: ${symbols.join(', ')} / 直近${referenceDays}日 / 合計 ${status.row_count}/${status.expected_row_count}本 / カバー率 ${status.coverage_pct.toFixed(1)}%。`,
+  };
+}
+
 async function fetchAllPrices() {
   const timestamp = nowJstIso();
   const rows = [];
@@ -1562,8 +1795,8 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'contract', 'api-readiness', 'db-status'],
-      POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'analysis-cache-status', 'contract', 'api-readiness', 'db-status'],
+      POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'ensure-analysis-cache', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
     },
     api_boundary: API_BOUNDARY,
     calculation_engine: {
@@ -1583,7 +1816,7 @@ async function contract() {
       forbidden: API_BOUNDARY.forbidden,
       routes: {
         GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'api-readiness', 'db-status'],
-        POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
+        POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'ensure-analysis-cache', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
     };
@@ -2108,12 +2341,14 @@ async function invoke(route, payload = {}) {
     case 'daily-goal-reports': return dailyGoalReports(query);
     case 'chart': return chart(query);
     case 'chart-coverage': return chartDataCoverage(query);
+    case 'analysis-cache-status': return analysisCacheStatus(query);
     case 'contract': return contract();
     case 'api-readiness': return apiReadiness();
     case 'db-status': return dbStatus();
     case 'fetch-prices': return fetchPrices();
     case 'download-history': return downloadHistoricalKlines(body);
     case 'update-history-to-now': return updateDownloadedHistoryToNow(body);
+    case 'ensure-analysis-cache': return ensureAnalysisCache(body);
     case 'trade-preview': return tradePreview(body);
     case 'daily-goal': return dailyGoal(body);
     case 'save-daily-goal-report': return saveDailyGoalReport(body);
@@ -2133,6 +2368,8 @@ module.exports = {
   dbStatus,
   chart,
   chartDataCoverage,
+  analysisCacheStatus,
+  ensureAnalysisCache,
   downloadHistoricalKlines,
   updateDownloadedHistoryToNow,
   buildKlineDownloadPlan,

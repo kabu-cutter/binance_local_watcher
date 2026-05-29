@@ -172,6 +172,7 @@ async function getJson(path) {
     if (url.pathname === '/api/daily-goal-reports') return window.blw.api.getDailyGoalReports(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     if (url.pathname === '/api/chart-coverage') return window.blw.api.getChartCoverage(query);
+    if (url.pathname === '/api/analysis-cache-status') return window.blw.api.getAnalysisCacheStatus(query);
     throw new Error(`未対応のローカルエンジンGET: ${url.pathname}`);
   }
   throw new Error('Electron preload の window.blw.api が見つかりません。npm start から起動してください。');
@@ -181,6 +182,7 @@ async function postJson(path, body) {
     if (path === '/api/fetch-prices') return window.blw.api.fetchPrices();
     if (path === '/api/download-history') return window.blw.api.downloadHistory(body || {});
     if (path === '/api/update-history-to-now') return window.blw.api.updateHistoryToNow(body || {});
+    if (path === '/api/ensure-analysis-cache') return window.blw.api.ensureAnalysisCache(body || {});
     if (path === '/api/trade-preview') return window.blw.api.tradePreview(body || {});
     if (path === '/api/daily-goal') return window.blw.api.dailyGoal(body || {});
     if (path === '/api/save-daily-goal-report') return window.blw.api.saveDailyGoalReport(body || {});
@@ -303,6 +305,92 @@ function renderDbStatusTables(data) {
     ['missing', '欠損'],
     ['at', '作成時刻(JST)'],
   ], refRows);
+}
+
+
+function analysisCacheSymbolSelection() {
+  const value = elValue('analysisCacheSymbol', 'all');
+  if (value === 'BTCJPY' || value === 'ETHJPY') return [value];
+  return CURRENT_UPDATE_SYMBOLS;
+}
+
+function renderAnalysisCacheStatus(data) {
+  const rows = (data.rows || []).map((row) => ({
+    symbol: row.symbol,
+    interval: row.interval || '1m',
+    period: `${row.start_jst || '—'} → ${row.end_jst || '—'}`,
+    rows: `${row.row_count ?? 0}/${row.expected_row_count ?? '?'}本`,
+    coverage: Number.isFinite(Number(row.coverage_pct)) ? `${Number(row.coverage_pct).toFixed(1)}%` : '—',
+    quality: row.quality || '—',
+    files: row.referenced_file_count ?? 0,
+    source: row.source || '—',
+  }));
+  const table = document.getElementById('analysisCacheTable');
+  if (table) {
+    renderTable(table, [
+      ['symbol', '通貨'],
+      ['interval', '足'],
+      ['period', '参照期間(JST)'],
+      ['rows', '本数'],
+      ['coverage', 'カバー率'],
+      ['quality', '品質'],
+      ['files', 'CSV'],
+      ['source', '主ソース'],
+    ], rows);
+  }
+  const memo = document.getElementById('analysisCacheMemo');
+  if (memo) {
+    memo.textContent = [
+      data.message || '分析用キャッシュ状態を確認しました。',
+      `参照: 1分足 / 直近${data.reference_days || '?'}日 / 保持方針${data.retention_days || 30}日`,
+      `合計: ${data.row_count ?? 0}/${data.expected_row_count ?? '?'}本 / カバー率 ${Number.isFinite(Number(data.coverage_pct)) ? `${Number(data.coverage_pct).toFixed(1)}%` : '—'}`,
+      '診断計算では未確定足を除外する方針です。',
+    ].join('\n');
+  }
+}
+
+async function loadAnalysisCacheStatus() {
+  const days = elValue('analysisCacheDays', '7');
+  const symbols = analysisCacheSymbolSelection().join(',');
+  const data = await getJson(`/api/analysis-cache-status?reference_days=${encodeURIComponent(days)}&symbols=${encodeURIComponent(symbols)}`);
+  renderAnalysisCacheStatus(data);
+  return data;
+}
+
+async function ensureAnalysisCache() {
+  const btn = document.getElementById('ensureAnalysisCache');
+  const old = btn ? btn.textContent : '';
+  const memo = document.getElementById('analysisCacheMemo');
+  const days = elValue('analysisCacheDays', '7');
+  const symbols = analysisCacheSymbolSelection();
+  const label = symbols.length === CURRENT_UPDATE_SYMBOLS.length ? 'BTCJPY / ETHJPY' : symbols.join(', ');
+  const ok = window.confirm(`分析用1分足キャッシュを整備します。\n\n対象: ${label}\n参照期間: 直近${days}日\n\n不足している場合は、Binance public klineから1分足を取得してlong_dataとDBへ保存します。\nこれは表示用ではなく、仮想約定率・必要値幅出現率・日次目標診断のためのデータ準備です。`);
+  if (!ok) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '整備中...';
+  }
+  if (memo) memo.textContent = `分析用1分足キャッシュを整備中です...\n${label} / 直近${days}日`;
+  try {
+    const data = await postJson('/api/ensure-analysis-cache', {
+      symbols,
+      reference_days: Number(days),
+      wait_ms: 250,
+    });
+    const lines = [data.message];
+    (data.results || []).forEach((item) => lines.push(item.message));
+    if (memo) memo.textContent = lines.filter(Boolean).join('\n');
+    renderAnalysisCacheStatus(data.status || await loadAnalysisCacheStatus());
+    await loadDbStatus();
+    await loadSummaryMiniCharts();
+  } catch (error) {
+    if (memo) memo.textContent = `分析用1分足キャッシュ整備に失敗しました。\n${error.message}`;
+  } finally {
+    if (btn) {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  }
 }
 
 async function loadDbStatus() {
@@ -1302,6 +1390,7 @@ async function refreshAll() {
   await loadAlertPreview();
   await loadApiReadiness();
   await loadDbStatus();
+  await loadAnalysisCacheStatus().catch(console.error);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1314,6 +1403,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadDbStatus').addEventListener('click', loadDbStatus);
+  document.getElementById('reloadAnalysisCacheStatus').addEventListener('click', loadAnalysisCacheStatus);
+  document.getElementById('ensureAnalysisCache').addEventListener('click', ensureAnalysisCache);
+  document.getElementById('analysisCacheDays').addEventListener('change', loadAnalysisCacheStatus);
+  document.getElementById('analysisCacheSymbol').addEventListener('change', loadAnalysisCacheStatus);
   document.getElementById('reloadChart').addEventListener('click', reloadChartWithDownloadConfirm);
   document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
   document.getElementById('updateHistoryToNow').addEventListener('click', updateHistoryToNow);

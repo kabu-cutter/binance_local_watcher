@@ -642,3 +642,26 @@ tr:hover td { background: rgba(255,255,255,0.34); }
     grid-template-columns: 1fr;
   }
 }
+
+.cache-control-panel {
+  border: 1px solid rgba(120, 110, 160, 0.18);
+  border-radius: 18px;
+  padding: 14px;
+  margin: 14px 0;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.form-row.compact-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 10px 0;
+}
+
+.form-row.compact-row label {
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  font-size: 0.88rem;
+}
