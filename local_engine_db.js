@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DEFAULT_DB_RELATIVE_PATH = path.join('data', 'blw.sqlite');
 const INTERVAL_MS = {
   '1m': 60 * 1000,
@@ -130,6 +130,67 @@ function ensureSchema(db) {
     );
     CREATE INDEX IF NOT EXISTS idx_data_references_purpose_symbol_time
       ON data_references(purpose, symbol, interval, start_time_ms, end_time_ms);
+
+    CREATE TABLE IF NOT EXISTS daily_goal_inputs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at_ms INTEGER NOT NULL,
+      symbol TEXT NOT NULL,
+      strategy_template TEXT,
+      target_profit_jpy REAL,
+      capital_jpy REAL,
+      expected_success_count INTEGER,
+      take_profit_pct REAL,
+      min_opportunities INTEGER,
+      max_opportunities INTEGER,
+      stop_loss_pct REAL,
+      roundtrip_cost_pct REAL,
+      cancel_rates_text TEXT,
+      virtual_fill_rate_pct_manual REAL,
+      virtual_fill_history_enabled INTEGER NOT NULL DEFAULT 1,
+      virtual_fill_reference_days INTEGER,
+      virtual_fill_side TEXT,
+      limit_distance_pct REAL,
+      occurrence_enabled INTEGER NOT NULL DEFAULT 1,
+      occurrence_reference_days INTEGER,
+      occurrence_window_minutes INTEGER,
+      occurrence_direction TEXT,
+      input_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_goal_inputs_created
+      ON daily_goal_inputs(created_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS idx_daily_goal_inputs_symbol_created
+      ON daily_goal_inputs(symbol, created_at_ms DESC);
+
+    CREATE TABLE IF NOT EXISTS daily_goal_results (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      input_id INTEGER NOT NULL,
+      calculated_at_ms INTEGER NOT NULL,
+      symbol TEXT NOT NULL,
+      target_profit_jpy REAL,
+      capital_jpy REAL,
+      per_trade_target_jpy REAL,
+      per_trade_required_move_pct REAL,
+      take_profit_pct REAL,
+      take_profit_net_per_trade_jpy REAL,
+      required_success_count_by_take_profit INTEGER,
+      virtual_fill_rate_pct_used REAL,
+      virtual_fill_history_rate_pct REAL,
+      required_move_occurrence_rate_pct REAL,
+      required_move_occurrence_required_pct REAL,
+      virtual_needed_win_rate_pct REAL,
+      needed_win_premise_label TEXT,
+      overall_label TEXT,
+      diagnostic_summary TEXT,
+      suggestion TEXT,
+      result_json TEXT,
+      virtual_fill_meta_json TEXT,
+      occurrence_meta_json TEXT,
+      FOREIGN KEY(input_id) REFERENCES daily_goal_inputs(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_goal_results_calculated
+      ON daily_goal_results(calculated_at_ms DESC);
+    CREATE INDEX IF NOT EXISTS idx_daily_goal_results_symbol_calculated
+      ON daily_goal_results(symbol, calculated_at_ms DESC);
   `);
 }
 
@@ -403,6 +464,8 @@ function tableCounts(db) {
     candles: Number(firstScalar(db, 'SELECT COUNT(*) FROM candles', [], 0)),
     fetch_runs: Number(firstScalar(db, 'SELECT COUNT(*) FROM fetch_runs', [], 0)),
     data_references: Number(firstScalar(db, 'SELECT COUNT(*) FROM data_references', [], 0)),
+    daily_goal_inputs: Number(firstScalar(db, 'SELECT COUNT(*) FROM daily_goal_inputs', [], 0)),
+    daily_goal_results: Number(firstScalar(db, 'SELECT COUNT(*) FROM daily_goal_results', [], 0)),
   };
 }
 
@@ -411,6 +474,236 @@ function queryRows(db, sql, params = []) {
   if (!result?.length) return [];
   const columns = result[0].columns;
   return result[0].values.map((values) => Object.fromEntries(columns.map((column, index) => [column, values[index]])));
+}
+
+function jsonText(value) {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch (error) {
+    return JSON.stringify({ error: 'json_stringify_failed', message: error.message });
+  }
+}
+
+function boolInt(value, fallback = true) {
+  if (value === undefined || value === null) return fallback ? 1 : 0;
+  return value === false || value === 0 || value === 'false' ? 0 : 1;
+}
+
+function maxScenarioNumber(result, key) {
+  const rows = Array.isArray(result?.scenarios) ? result.scenarios : [];
+  const values = rows.map((row) => safeNumber(row?.[key], NaN)).filter(Number.isFinite);
+  return values.length ? Math.max(...values) : null;
+}
+
+function insertDailyGoalInput(db, input, createdAtMs) {
+  const symbol = safeText(input.symbol, 'BTCJPY');
+  db.run(`
+    INSERT INTO daily_goal_inputs (
+      created_at_ms, symbol, strategy_template, target_profit_jpy, capital_jpy,
+      expected_success_count, take_profit_pct, min_opportunities, max_opportunities,
+      stop_loss_pct, roundtrip_cost_pct, cancel_rates_text, virtual_fill_rate_pct_manual,
+      virtual_fill_history_enabled, virtual_fill_reference_days, virtual_fill_side,
+      limit_distance_pct, occurrence_enabled, occurrence_reference_days,
+      occurrence_window_minutes, occurrence_direction, input_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    createdAtMs,
+    symbol,
+    safeText(input.strategy_template, ''),
+    safeNumber(input.target_profit_jpy, 0),
+    safeNumber(input.capital_jpy, 0),
+    safeNumber(input.expected_success_count, 0),
+    safeNumber(input.take_profit_pct, 0),
+    safeNumber(input.min_opportunities, 0),
+    safeNumber(input.max_opportunities, 0),
+    safeNumber(input.stop_loss_pct, 0),
+    safeNumber(input.roundtrip_cost_pct, 0),
+    safeText(input.cancel_rates_text, ''),
+    safeNumber(input.virtual_fill_rate_pct, 0),
+    boolInt(input.virtual_fill_history_enabled, true),
+    safeNumber(input.virtual_fill_reference_days, null),
+    safeText(input.virtual_fill_side, ''),
+    safeNumber(input.limit_distance_pct, 0),
+    boolInt(input.virtual_fill_rate_auto, true),
+    safeNumber(input.occurrence_reference_days, null),
+    safeNumber(input.occurrence_window_minutes, null),
+    safeText(input.occurrence_direction, ''),
+    jsonText(input),
+  ]);
+  const idRow = db.exec('SELECT last_insert_rowid() AS id');
+  return Number(idRow?.[0]?.values?.[0]?.[0] || 0);
+}
+
+function insertDailyGoalResult(db, inputId, input, result, calculatedAtMs) {
+  const symbol = safeText(input.symbol || result?.required_move_occurrence_meta?.symbol || result?.virtual_fill_history_meta?.symbol, 'BTCJPY');
+  const virtualFillHistoryRate = Number.isFinite(Number(result?.virtual_fill_history_rate_pct))
+    ? safeNumber(result.virtual_fill_history_rate_pct)
+    : null;
+  const occurrenceRate = Number.isFinite(Number(result?.required_move_occurrence_rate_pct))
+    ? safeNumber(result.required_move_occurrence_rate_pct)
+    : null;
+  const occurrenceRequired = Number.isFinite(Number(result?.required_move_occurrence_required_pct))
+    ? safeNumber(result.required_move_occurrence_required_pct)
+    : null;
+  const winRate = Number.isFinite(Number(result?.virtual_needed_win_rate_pct))
+    ? safeNumber(result.virtual_needed_win_rate_pct)
+    : maxScenarioNumber(result, 'needed_win_rate_pct');
+  db.run(`
+    INSERT INTO daily_goal_results (
+      input_id, calculated_at_ms, symbol, target_profit_jpy, capital_jpy,
+      per_trade_target_jpy, per_trade_required_move_pct, take_profit_pct,
+      take_profit_net_per_trade_jpy, required_success_count_by_take_profit,
+      virtual_fill_rate_pct_used, virtual_fill_history_rate_pct,
+      required_move_occurrence_rate_pct, required_move_occurrence_required_pct,
+      virtual_needed_win_rate_pct, needed_win_premise_label, overall_label,
+      diagnostic_summary, suggestion, result_json, virtual_fill_meta_json, occurrence_meta_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    inputId,
+    calculatedAtMs,
+    symbol,
+    safeNumber(result?.target_profit_jpy ?? input.target_profit_jpy, 0),
+    safeNumber(input.capital_jpy, 0),
+    safeNumber(result?.per_trade_target_jpy, null),
+    safeNumber(result?.per_trade_required_move_pct, null),
+    safeNumber(result?.take_profit_pct ?? input.take_profit_pct, null),
+    safeNumber(result?.take_profit_net_per_trade_jpy, null),
+    safeNumber(result?.required_success_count_by_take_profit, null),
+    safeNumber(result?.virtual_fill_rate_pct_used, null),
+    virtualFillHistoryRate,
+    occurrenceRate,
+    occurrenceRequired,
+    winRate,
+    safeText(result?.needed_win_premise_label, ''),
+    safeText(result?.overall_label, ''),
+    safeText(result?.diagnostic_summary, ''),
+    safeText(result?.suggestion, ''),
+    jsonText(result),
+    jsonText(result?.virtual_fill_history_meta || null),
+    jsonText(result?.required_move_occurrence_meta || null),
+  ]);
+  const idRow = db.exec('SELECT last_insert_rowid() AS id');
+  return Number(idRow?.[0]?.values?.[0]?.[0] || 0);
+}
+
+async function saveDailyGoalDiagnosis(projectDir, options = {}) {
+  return runSerialized(async () => {
+    try {
+      const input = options.input || options.body || {};
+      const result = options.result || {};
+      const timestamp = safeNumber(options.created_at_ms ?? options.calculated_at_ms, nowMs());
+      const state = await openDatabase(projectDir);
+      const { db } = state;
+      db.run('BEGIN TRANSACTION');
+      try {
+        const inputId = insertDailyGoalInput(db, input, timestamp);
+        const resultId = insertDailyGoalResult(db, inputId, input, result, timestamp);
+        db.run('COMMIT');
+        await persistDatabase(state);
+        return {
+          ok: true,
+          enabled: true,
+          db_file: state.filePath,
+          input_id: inputId,
+          result_id: resultId,
+          message: `DB Phase 2: 日次目標診断を保存しました（input ${inputId}, result ${resultId}）。`,
+        };
+      } catch (error) {
+        try { db.run('ROLLBACK'); } catch {}
+        throw error;
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        enabled: false,
+        db_file: dbFilePath(projectDir),
+        input_id: null,
+        result_id: null,
+        error: error.message,
+        message: `DB Phase 2: 日次目標診断を保存できませんでした。${error.message}`,
+      };
+    }
+  });
+}
+
+async function getDailyGoalDiagnosisLogs(projectDir, options = {}) {
+  try {
+    const state = await openDatabase(projectDir);
+    const { db } = state;
+    const limit = Math.max(1, Math.min(300, safeNumber(options.limit, 20)));
+    const rows = queryRows(db, `
+      SELECT
+        r.id AS result_id,
+        r.input_id,
+        r.calculated_at_ms,
+        r.symbol,
+        r.target_profit_jpy,
+        r.capital_jpy,
+        r.per_trade_target_jpy,
+        r.per_trade_required_move_pct,
+        r.take_profit_pct,
+        r.take_profit_net_per_trade_jpy,
+        r.required_success_count_by_take_profit,
+        r.virtual_fill_rate_pct_used,
+        r.virtual_fill_history_rate_pct,
+        r.required_move_occurrence_rate_pct,
+        r.required_move_occurrence_required_pct,
+        r.virtual_needed_win_rate_pct,
+        r.needed_win_premise_label,
+        r.overall_label,
+        i.strategy_template,
+        i.expected_success_count,
+        i.occurrence_reference_days,
+        i.occurrence_window_minutes,
+        i.virtual_fill_reference_days
+      FROM daily_goal_results r
+      LEFT JOIN daily_goal_inputs i ON i.id = r.input_id
+      ORDER BY r.id DESC
+      LIMIT ?
+    `, [limit]);
+    return {
+      ok: true,
+      enabled: true,
+      db_file: state.filePath,
+      count: Number(firstScalar(db, 'SELECT COUNT(*) FROM daily_goal_results', [], 0)),
+      rows,
+      limit,
+      message: 'DB Phase 2 の日次目標診断ログを取得しました。',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      enabled: false,
+      db_file: dbFilePath(projectDir),
+      count: 0,
+      rows: [],
+      limit: Math.max(1, Math.min(300, safeNumber(options.limit, 20))),
+      error: error.message,
+      message: error.message,
+    };
+  }
+}
+
+async function clearDailyGoalDiagnosisLogs(projectDir) {
+  return runSerialized(async () => {
+    try {
+      const state = await openDatabase(projectDir);
+      const { db } = state;
+      db.run('BEGIN TRANSACTION');
+      try {
+        db.run('DELETE FROM daily_goal_results');
+        db.run('DELETE FROM daily_goal_inputs');
+        db.run('COMMIT');
+        await persistDatabase(state);
+        return { ok: true, enabled: true, db_file: state.filePath, message: 'DB Phase 2 の日次目標診断ログをクリアしました。' };
+      } catch (error) {
+        try { db.run('ROLLBACK'); } catch {}
+        throw error;
+      }
+    } catch (error) {
+      return { ok: false, enabled: false, db_file: dbFilePath(projectDir), error: error.message, message: error.message };
+    }
+  });
 }
 
 async function getDbStatus(projectDir) {
@@ -436,6 +729,15 @@ async function getDbStatus(projectDir) {
       ORDER BY id DESC
       LIMIT 5
     `);
+    const latestDailyGoalResults = queryRows(db, `
+      SELECT id, input_id, calculated_at_ms, symbol, target_profit_jpy, capital_jpy,
+             per_trade_required_move_pct, virtual_fill_rate_pct_used,
+             required_move_occurrence_rate_pct, virtual_needed_win_rate_pct,
+             needed_win_premise_label, overall_label
+      FROM daily_goal_results
+      ORDER BY id DESC
+      LIMIT 5
+    `);
     return {
       ok: true,
       enabled: true,
@@ -445,7 +747,8 @@ async function getDbStatus(projectDir) {
       latest_candles: latestCandles,
       latest_fetch_runs: latestFetchRuns,
       latest_references: latestReferences,
-      message: 'DB Phase 1 は有効です。candles / fetch_runs / data_references を使えます。',
+      latest_daily_goal_results: latestDailyGoalResults,
+      message: 'DB Phase 2 は有効です。candles / fetch_runs / data_references / daily_goal_inputs / daily_goal_results を使えます。',
     };
   } catch (error) {
     return {
@@ -453,10 +756,11 @@ async function getDbStatus(projectDir) {
       enabled: false,
       db_file: dbFilePath(projectDir),
       schema_version: DB_VERSION,
-      counts: { candles: 0, fetch_runs: 0, data_references: 0 },
+      counts: { candles: 0, fetch_runs: 0, data_references: 0, daily_goal_inputs: 0, daily_goal_results: 0 },
       latest_candles: [],
       latest_fetch_runs: [],
       latest_references: [],
+      latest_daily_goal_results: [],
       message: error.message,
     };
   }
@@ -606,4 +910,7 @@ module.exports = {
   getCandleRangeStatus,
   getCandleRows,
   pruneCandles,
+  saveDailyGoalDiagnosis,
+  getDailyGoalDiagnosisLogs,
+  clearDailyGoalDiagnosisLogs,
 };

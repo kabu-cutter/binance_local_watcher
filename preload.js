@@ -7,12 +7,12 @@ async function invokeEngine(route, payload) {
 }
 
 contextBridge.exposeInMainWorld('blw', {
-  version: 'electron-node-engine-v0.5-phase1-db',
+  version: 'electron-node-engine-v0.5.2-db-phase2-daily-goal',
   engineMode: 'electron-main-node-engine',
   safetyMode: 'read-only-market-data-and-local-calculation',
   capabilities: {
     ui: ['display', 'input', 'navigation'],
-    backend: ['public_price_fetch', 'history_csv', 'sqlite_phase1_cache', 'chart_data', 'local_calculation'],
+    backend: ['public_price_fetch', 'history_csv', 'sqlite_phase1_cache', 'sqlite_phase2_daily_goal_logs', 'chart_data', 'local_calculation'],
     forbidden: ['real_order', 'auto_trading', 'withdrawal', 'api_key_storage', 'secret_storage'],
   },
   api: {

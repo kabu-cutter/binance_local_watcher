@@ -1,5 +1,5 @@
 {
-  "version": "electron-node-engine-v0.5-phase1-db",
+  "version": "electron-node-engine-v0.5.2-db-phase2-daily-goal",
   "mode": "electron-ui + electron-main-node-engine",
   "forbidden": [
     "real_order",
@@ -22,7 +22,8 @@
           "data_source",
           "api_boundary",
           "calculation_engine",
-          "db_phase1"
+          "db_phase1",
+          "db_phase2"
         ]
       },
       "capabilities": {
@@ -98,7 +99,8 @@
           "rows",
           "count",
           "limit",
-          "file"
+          "file",
+          "db_phase2"
         ]
       },
       "chart": {
@@ -168,7 +170,8 @@
           "latest_candles",
           "latest_fetch_runs",
           "latest_references",
-          "message"
+          "message",
+          "latest_daily_goal_results"
         ]
       },
       "chart-coverage": {
@@ -383,13 +386,18 @@
           "occurrence_scope",
           "occurrence_reference_days",
           "occurrence_window_minutes",
-          "occurrence_direction"
+          "occurrence_direction",
+          "virtual_fill_history_enabled",
+          "virtual_fill_reference_days",
+          "virtual_fill_side",
+          "limit_distance_pct"
         ],
         "response": [
           "ok",
           "rows_saved",
           "file",
-          "message"
+          "message",
+          "db_phase2"
         ]
       },
       "clear-alert-history": {

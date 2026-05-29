@@ -511,6 +511,15 @@ function calculateDailyGoal(body = {}) {
       : 'テンプレートは売買シグナルではなく、日次目標の条件比較を補助するためのものです。',
     virtual_fill_rate_pct_used: safeFloat(body.virtual_fill_rate_pct_used, virtualFillRate),
     virtual_fill_rate_note: body.virtual_fill_rate_note || '',
+    overall_label: overallLabel,
+    virtual_effective_count: virtualEffective,
+    virtual_needed_net_per_trade_jpy: virtualNeededNet,
+    virtual_needed_move_pct: virtualNeededPct,
+    virtual_needed_win_rate_pct: virtualNeededWinRate,
+    needed_win_premise_label: neededWinPremiseLabel(virtualNeededWinRate),
+    loss_per_stop_jpy: lossPerStop,
+    loss_abs_per_stop_jpy: lossAbs,
+    allowed_stops_before_target_break: allowedStopsBeforeTargetBreak,
   };
 }
 

@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const calculations = require('./local_engine_calculations');
 const dbStore = require('./local_engine_db');
 
-const VERSION = 'electron-node-engine-v0.5-phase1-db';
+const VERSION = 'electron-node-engine-v0.5.2-db-phase2-daily-goal';
 const SYMBOLS = ['BTCJPY', 'ETHJPY'];
 const HISTORY_COLUMNS = ['timestamp', 'symbol', 'price_jpy'];
 const LONG_DATA_COLUMNS = [
@@ -1654,7 +1654,7 @@ async function updateDownloadedHistoryToNow(body = {}) {
       files: [],
       file_names: [],
       errors: [],
-      db_phase1: {
+      db_phase2: {
         enabled: db.enabled,
         db_file: db.db_file,
         counts: db.counts,
@@ -1889,6 +1889,13 @@ async function status() {
       enabled: db.enabled,
       db_file: db.db_file,
       counts: db.counts,
+      message: db.message,
+    },
+    db_phase2: {
+      enabled: db.enabled,
+      db_file: db.db_file,
+      counts: db.counts,
+      latest_daily_goal_results: db.latest_daily_goal_results || [],
       message: db.message,
     },
   };
@@ -2212,6 +2219,7 @@ async function saveDailyGoalReport(body = {}) {
   const lines = [];
   if (!exists) lines.push(header.join(','));
   const now = nowJstIso();
+  const nowMsValue = Date.now();
   rows.forEach((row) => {
     lines.push([
       now,
@@ -2233,21 +2241,47 @@ async function saveDailyGoalReport(body = {}) {
   });
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   if (lines.length) await fs.promises.appendFile(file, `${lines.join('\n')}\n`, 'utf8');
+
+  const dbPhase2 = await dbStore.saveDailyGoalDiagnosis(projectDir(), {
+    input: body,
+    result: daily,
+    created_at_ms: nowMsValue,
+    calculated_at_ms: nowMsValue,
+  });
+
   return {
     ok: true,
     rows_saved: rows.length,
     file,
-    message: `日次目標レポートを${rows.length}行保存しました。`,
+    db_phase2: dbPhase2,
+    message: `日次目標レポートをCSVに${rows.length}行保存しました。${dbPhase2.enabled ? `DB Phase 2にも保存しました（input ${dbPhase2.input_id}, result ${dbPhase2.result_id}）。` : `DB Phase 2は未保存: ${dbPhase2.error || dbPhase2.message || 'DB未有効'}`}`,
   };
 }
 
 async function dailyGoalReports(params = {}) {
   const limit = Math.max(1, Math.min(300, safeInt(params.limit, 20)));
   const file = dailyGoalReportFilePath();
-  if (!fs.existsSync(file)) return { rows: [], count: 0, limit, file };
+  const dbLogs = await dbStore.getDailyGoalDiagnosisLogs(projectDir(), { limit });
+  if (!fs.existsSync(file)) {
+    return {
+      rows: [],
+      count: 0,
+      limit,
+      file,
+      db_phase2: dbLogs,
+    };
+  }
   const text = await fs.promises.readFile(file, 'utf8');
   const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return { rows: [], count: 0, limit, file };
+  if (lines.length < 2) {
+    return {
+      rows: [],
+      count: 0,
+      limit,
+      file,
+      db_phase2: dbLogs,
+    };
+  }
   const headers = parseCsvLine(lines[0]);
   const allRows = lines.slice(1).map((line) => {
     const values = parseCsvLine(line);
@@ -2258,6 +2292,7 @@ async function dailyGoalReports(params = {}) {
     count: allRows.length,
     limit,
     file,
+    db_phase2: dbLogs,
   };
 }
 
@@ -2265,10 +2300,14 @@ async function clearDailyGoalReports() {
   const file = dailyGoalReportFilePath();
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   await fs.promises.writeFile(file, '', 'utf8');
+  const dbPhase2 = await dbStore.clearDailyGoalDiagnosisLogs(projectDir());
   return {
     ok: true,
-    message: 'daily_goal_reports.csv をクリアしました。',
+    message: dbPhase2.enabled
+      ? 'daily_goal_reports.csv と DB Phase 2 の日次目標診断ログをクリアしました。'
+      : `daily_goal_reports.csv をクリアしました。DB Phase 2 は未クリア: ${dbPhase2.error || dbPhase2.message || 'DB未有効'}`,
     file,
+    db_phase2: dbPhase2,
   };
 }
 
