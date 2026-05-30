@@ -772,6 +772,38 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   font-size: 0.78rem;
   line-height: 1.55;
 }
+
+.candidate-history-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+.candidate-history-metrics div {
+  border: 1px solid rgba(232,112,173,0.16);
+  border-radius: 12px;
+  padding: 7px 6px;
+  background: rgba(255,255,255,0.58);
+}
+.candidate-history-metrics small {
+  display: block;
+  color: var(--muted-2);
+  font-size: 0.66rem;
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+.candidate-history-metrics b {
+  display: block;
+  color: var(--ink);
+  font-size: 0.85rem;
+  line-height: 1.25;
+}
+.candidate-card-foot {
+  margin-top: 8px;
+  color: var(--muted-2);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
 .daily-limit-table-wrap { margin-top: 10px; }
 .limit-candidate-table th:nth-child(2),
 .limit-candidate-table td:nth-child(2) { min-width: 190px; }

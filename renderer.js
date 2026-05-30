@@ -1395,6 +1395,12 @@ function renderDailyLimitCandidates(data) {
               指値後必要値幅 ${yen(row.required_move_jpy_from_limit, 0)} / ${pct(row.required_move_pct_from_limit, 3)}<br />
               参考利確幅: ${row.take_profit_simulation_label || '—'}（差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}）
             </div>
+            <div class="candidate-history-metrics">
+              <div><small>指値到達</small><b>${pct(row.limit_hit_rate_pct, 1)}</b></div>
+              <div><small>利確到達</small><b>${pct(row.take_profit_after_hit_rate_pct, 1)}</b></div>
+              <div><small>損切り先行</small><b>${pct(row.stop_first_rate_pct, 1)}</b></div>
+            </div>
+            <div class="candidate-card-foot">${row.history_window_minutes ? `${row.history_window_minutes}分以内 / ${row.history_label || '履歴確認'}` : '履歴診断は未確認'}</div>
           </div>
         `;
       }).join('');
@@ -1407,6 +1413,9 @@ function renderDailyLimitCandidates(data) {
     ['limit_to_tp', '指値 → 必要利確'],
     ['width', '指値後必要値幅'],
     ['width_pct', '必要変動率'],
+    ['hit', '指値到達率'],
+    ['tp', '利確到達率'],
+    ['stop', '損切り先行率'],
     ['sim', '参考利確幅'],
     ['distance', '現在価格から'],
     ['qty', '数量'],
@@ -1418,6 +1427,9 @@ function renderDailyLimitCandidates(data) {
     limit_to_tp: `${yen(row.limit_price, 0)} → ${yen(row.required_take_profit_price, 0)}`,
     width: yen(row.required_move_jpy_from_limit, 0),
     width_pct: pct(row.required_move_pct_from_limit, 3),
+    hit: pct(row.limit_hit_rate_pct, 1),
+    tp: pct(row.take_profit_after_hit_rate_pct, 1),
+    stop: pct(row.stop_first_rate_pct, 1),
     sim: `${row.take_profit_simulation_label || '—'} / 差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}`,
     distance: pct(row.current_price_distance_pct, 3, true),
     qty: qty(row.quantity),
@@ -1434,8 +1446,8 @@ function renderDailyLimitCandidates(data) {
     notesEl.innerHTML = [
       `<li>${sideText}候補の比較です。必要利確価格は、手数料・スプレッド/スリッページ見積と1回目標を含めた概算です。</li>`,
       '<li>「参考利確幅」は、利確幅シミュレーション%が必要変動率に足りるかだけを見る補助欄です。主判断は必要利確価格と指値→利確幅です。</li>',
-      '<li>浅い候補は価格到達しやすい一方、約定後の余裕が薄くなりやすいです。深い候補は約定しにくい代わりに、刺さった後の余裕を見やすくなります。</li>',
-      '<li>次段階で、1分足キャッシュを使って指値到達率・約定後利確到達率・損切り先行率を追加します。</li>',
+      '<li>候補ごとの「指値到達率」「利確到達率」「損切り先行率」は、分析用1分足キャッシュから指定判定窓内で試算した参考値です。</li>',
+      '<li>利確到達率は「指値に届いた後、必要利確価格まで届いた割合」です。損切り先行率は利確より先に損切り幅へ触れた割合です。同じ1分足内の順序は確定できないため参考扱いです。</li>',
     ].join('');
   }
 }

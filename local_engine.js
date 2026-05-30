@@ -2483,6 +2483,226 @@ async function analysisRowsForWindow({ symbol, start_ms: startMs, end_ms: endMs 
   };
 }
 
+
+function limitCandidateHistoryLabel(rate) {
+  if (!Number.isFinite(rate)) return '未確認';
+  if (rate >= 45) return '高め';
+  if (rate >= 20) return '確認範囲';
+  if (rate >= 8) return '少なめ';
+  return '低め';
+}
+
+function firstLimitOutcomeWithinWindow({ rows, startIndex, endTimeExclusive, side, limitPrice, takeProfitPrice, stopLossPrice }) {
+  let hitIndex = -1;
+  for (let i = startIndex; i < rows.length; i += 1) {
+    const row = rows[i];
+    const t = safeFloat(row.open_time_ms, NaN);
+    if (!Number.isFinite(t)) continue;
+    if (t >= endTimeExclusive) break;
+    const high = safeFloat(row.high, NaN);
+    const low = safeFloat(row.low, NaN);
+    const hit = side === 'sell_limit'
+      ? Number.isFinite(high) && high >= limitPrice
+      : Number.isFinite(low) && low <= limitPrice;
+    if (hit) {
+      hitIndex = i;
+      break;
+    }
+  }
+  if (hitIndex < 0) return { hit: false, outcome: 'no_hit' };
+
+  for (let i = hitIndex; i < rows.length; i += 1) {
+    const row = rows[i];
+    const t = safeFloat(row.open_time_ms, NaN);
+    if (!Number.isFinite(t)) continue;
+    if (t >= endTimeExclusive) break;
+    const high = safeFloat(row.high, NaN);
+    const low = safeFloat(row.low, NaN);
+    let takeProfitTouched = false;
+    let stopTouched = false;
+    if (side === 'sell_limit') {
+      takeProfitTouched = Number.isFinite(low) && low <= takeProfitPrice;
+      stopTouched = Number.isFinite(high) && Number.isFinite(stopLossPrice) && high >= stopLossPrice;
+    } else {
+      takeProfitTouched = Number.isFinite(high) && high >= takeProfitPrice;
+      stopTouched = Number.isFinite(low) && Number.isFinite(stopLossPrice) && low <= stopLossPrice;
+    }
+    if (takeProfitTouched && stopTouched) return { hit: true, outcome: 'ambiguous' };
+    if (takeProfitTouched) return { hit: true, outcome: 'take_profit_first' };
+    if (stopTouched) return { hit: true, outcome: 'stop_first' };
+  }
+  return { hit: true, outcome: 'no_exit' };
+}
+
+async function estimateLimitCandidateOutcomeRates(body = {}, summary = null, candidateRows = []) {
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
+  const side = normalizeVirtualFillSide(body.limit_candidate_side || body.virtual_fill_side);
+  const referenceDays = normalizeOccurrenceReferenceDays(body);
+  const windowMinutes = normalizeOccurrenceWindowMinutes(body.occurrence_window_minutes || body.virtual_fill_window_minutes || 15);
+  const windowMs = windowMinutes * 60 * 1000;
+  const stopPct = Math.max(0, safeFloat(body.stop_loss_pct, 0));
+  const window = analysisCacheWindow(referenceDays);
+  const baseMeta = {
+    symbol,
+    interval: '1m',
+    reference_days: referenceDays,
+    evaluation_window_minutes: windowMinutes,
+    side,
+    side_label: virtualFillSideLabel(side),
+    stop_loss_pct: stopPct,
+    start_time_ms: window.start_ms,
+    end_time_ms: window.end_ms,
+    reference_period_text: `${window.start_jst} → ${window.end_jst}`,
+    source: 'analysis_cache',
+    referenced_row_count: 0,
+    start_row_count: 0,
+    quality_label: '未計算',
+    note: '',
+  };
+  if (!Array.isArray(candidateRows) || candidateRows.length === 0) {
+    return { by_key: {}, meta: { ...baseMeta, quality_label: '候補なし' }, note: '指値候補別の履歴診断: 指値候補がないため計算していません。' };
+  }
+  try {
+    const cache = await analysisRowsForWindow({ symbol, start_ms: window.start_ms, end_ms: window.end_ms });
+    const rows = (cache.rows || []).filter((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t >= window.start_ms && t < window.end_ms
+        && Number.isFinite(open) && open > 0
+        && Number.isFinite(high) && Number.isFinite(low);
+    }).sort((a, b) => safeFloat(a.open_time_ms, 0) - safeFloat(b.open_time_ms, 0));
+    const expected = expectedRowsForAnalysisWindow(window.start_ms, window.end_ms);
+    const coverage = expected > 0 ? rows.length / expected : 0;
+    const startRows = rows.filter((row) => {
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t + windowMs <= window.end_ms;
+    });
+    const qualityLabel = rows.length <= 0 ? '不足' : coverage >= 0.95 ? '良好' : coverage >= 0.5 ? '一部不足' : '不足';
+    const byKey = {};
+    for (const candidate of candidateRows) {
+      const distancePct = Math.abs(safeFloat(candidate.distance_pct, NaN));
+      const requiredMovePct = Math.max(0, safeFloat(candidate.required_move_pct_from_limit, NaN));
+      const item = {
+        key: candidate.key,
+        candidate_label: candidate.candidate_label || candidate.label || candidate.key,
+        reference_days: referenceDays,
+        evaluation_window_minutes: windowMinutes,
+        stop_loss_pct: stopPct,
+        start_count: startRows.length,
+        hit_count: 0,
+        take_profit_first_count: 0,
+        stop_first_count: 0,
+        ambiguous_count: 0,
+        no_exit_count: 0,
+        no_hit_count: 0,
+        limit_hit_rate_pct: null,
+        take_profit_after_hit_rate_pct: null,
+        stop_first_rate_pct: null,
+        ambiguous_rate_pct: null,
+        no_exit_rate_pct: null,
+        label: '未確認',
+        note: '',
+      };
+      if (!Number.isFinite(distancePct) || !Number.isFinite(requiredMovePct) || startRows.length < 10) {
+        item.note = '履歴データまたは候補条件が不足しているため、候補別の到達診断は未確認です。';
+        byKey[candidate.key] = item;
+        continue;
+      }
+      let searchStartIndex = 0;
+      for (const startRow of startRows) {
+        const startTime = safeFloat(startRow.open_time_ms, NaN);
+        const open = safeFloat(startRow.open, NaN);
+        if (!Number.isFinite(startTime) || !Number.isFinite(open) || open <= 0) continue;
+        while (searchStartIndex < rows.length && safeFloat(rows[searchStartIndex].open_time_ms, NaN) < startTime) {
+          searchStartIndex += 1;
+        }
+        const limitPrice = side === 'sell_limit'
+          ? open * (1 + distancePct / 100)
+          : open * (1 - distancePct / 100);
+        const takeProfitPrice = side === 'sell_limit'
+          ? limitPrice * (1 - requiredMovePct / 100)
+          : limitPrice * (1 + requiredMovePct / 100);
+        const stopLossPrice = stopPct > 0
+          ? (side === 'sell_limit' ? limitPrice * (1 + stopPct / 100) : limitPrice * (1 - stopPct / 100))
+          : null;
+        const outcome = firstLimitOutcomeWithinWindow({
+          rows,
+          startIndex: searchStartIndex,
+          endTimeExclusive: startTime + windowMs,
+          side,
+          limitPrice,
+          takeProfitPrice,
+          stopLossPrice,
+        });
+        if (!outcome.hit) {
+          item.no_hit_count += 1;
+        } else {
+          item.hit_count += 1;
+          if (outcome.outcome === 'take_profit_first') item.take_profit_first_count += 1;
+          else if (outcome.outcome === 'stop_first') item.stop_first_count += 1;
+          else if (outcome.outcome === 'ambiguous') item.ambiguous_count += 1;
+          else item.no_exit_count += 1;
+        }
+      }
+      item.limit_hit_rate_pct = item.start_count ? (item.hit_count / item.start_count) * 100 : null;
+      item.take_profit_after_hit_rate_pct = item.hit_count ? (item.take_profit_first_count / item.hit_count) * 100 : null;
+      item.stop_first_rate_pct = item.hit_count ? (item.stop_first_count / item.hit_count) * 100 : null;
+      item.ambiguous_rate_pct = item.hit_count ? (item.ambiguous_count / item.hit_count) * 100 : null;
+      item.no_exit_rate_pct = item.hit_count ? (item.no_exit_count / item.hit_count) * 100 : null;
+      item.label = limitCandidateHistoryLabel(item.limit_hit_rate_pct);
+      item.note = `${candidate.candidate_label || candidate.key}: ${windowMinutes}分以内の指値到達率 ${Number.isFinite(item.limit_hit_rate_pct) ? item.limit_hit_rate_pct.toFixed(1) : '—'}%。到達後の必要利確到達率 ${Number.isFinite(item.take_profit_after_hit_rate_pct) ? item.take_profit_after_hit_rate_pct.toFixed(1) : '—'}%、損切り先行率 ${Number.isFinite(item.stop_first_rate_pct) ? item.stop_first_rate_pct.toFixed(1) : '—'}%。`;
+      byKey[candidate.key] = item;
+    }
+    const meta = {
+      ...baseMeta,
+      referenced_row_count: rows.length,
+      expected_row_count: expected,
+      missing_count: Math.max(0, expected - rows.length),
+      start_row_count: startRows.length,
+      coverage_pct: coverage * 100,
+      quality_label: qualityLabel,
+      source: cache.source,
+      csv_row_count: cache.csv_row_count,
+      db_row_count: cache.db_row_count,
+      db_enabled: cache.db_enabled,
+      referenced_files: (cache.files || []).map((file) => path.basename(file)),
+      referenced_file_count: (cache.files || []).length,
+      note: `候補別履歴診断: ${symbol} 1分足 / 直近${referenceDays}日 / 判定窓${windowMinutes}分以内。1分足のため、同じ足の中で利確と損切りに触れた順序は確定できず、同時扱いとして分けています。`,
+    };
+    return { by_key: byKey, meta, note: meta.note };
+  } catch (error) {
+    return { by_key: {}, meta: { ...baseMeta, quality_label: 'エラー', error: error.message }, note: `候補別履歴診断: ${error.message} のため計算できませんでした。` };
+  }
+}
+
+function mergeLimitCandidateHistoryRows(rows = [], history = {}) {
+  const byKey = history?.by_key || {};
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const stat = byKey[row.key] || null;
+    if (!stat) return row;
+    return {
+      ...row,
+      history_reference_days: stat.reference_days,
+      history_window_minutes: stat.evaluation_window_minutes,
+      history_start_count: stat.start_count,
+      limit_hit_count: stat.hit_count,
+      limit_hit_rate_pct: stat.limit_hit_rate_pct,
+      take_profit_first_count: stat.take_profit_first_count,
+      take_profit_after_hit_rate_pct: stat.take_profit_after_hit_rate_pct,
+      stop_first_count: stat.stop_first_count,
+      stop_first_rate_pct: stat.stop_first_rate_pct,
+      ambiguous_count: stat.ambiguous_count,
+      ambiguous_rate_pct: stat.ambiguous_rate_pct,
+      no_exit_count: stat.no_exit_count,
+      no_exit_rate_pct: stat.no_exit_rate_pct,
+      history_label: stat.label,
+      history_note: stat.note,
+    };
+  });
+}
+
 async function estimateVirtualFillRate(body = {}, summary = null) {
   const enabled = body.virtual_fill_history_enabled !== false;
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
@@ -2651,8 +2871,18 @@ async function dailyGoal(body = {}) {
     recent_move_pct: body.recent_move_pct ?? summary?.short_pct ?? 0,
     recent_move_label: summary?.timestamp ? `${symbol} 短期値動き` : `${symbol} 短期値動き`,
   });
+  const limitCandidateHistory = await estimateLimitCandidateOutcomeRates({
+    ...body,
+    current_price_jpy: Number.isFinite(summary?.price_jpy) ? summary.price_jpy : null,
+    limit_candidate_side: body.limit_candidate_side || body.virtual_fill_side || 'buy_limit',
+  }, summary, result.limit_candidate_rows);
+  const mergedLimitCandidateRows = mergeLimitCandidateHistoryRows(result.limit_candidate_rows, limitCandidateHistory);
   return {
     ...result,
+    limit_candidate_rows: mergedLimitCandidateRows,
+    limit_candidate_note: `${String(result.limit_candidate_note || '').replace('指値到達率・約定後利確到達率・損切り先行率は次段階で追加します。', '指値到達率・約定後利確到達率・損切り先行率を分析用1分足キャッシュから参考表示します。')} ${limitCandidateHistory?.note || ''}`.trim(),
+    limit_candidate_history_note: limitCandidateHistory?.note || '',
+    limit_candidate_history_meta: limitCandidateHistory?.meta || null,
     virtual_fill_history_rate_pct: historyFillRate,
     virtual_fill_history_note: virtualFill?.note || '',
     virtual_fill_history_meta: virtualFill?.meta || null,
