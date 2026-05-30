@@ -142,6 +142,23 @@ function neededWinPremiseLabel(winRate) {
   return '確認範囲';
 }
 
+function formatExpectedReachCount(count) {
+  if (!Number.isFinite(count) || count <= 0) return '0回相当';
+  if (count < 1) return `1回未満（${count.toFixed(2)}回相当）`;
+  if (count < 10) return `${count.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}回相当`;
+  return `${count.toFixed(1).replace(/\.0$/, '')}回相当`;
+}
+
+function formatMaybePct(value, digits = 3) {
+  if (!Number.isFinite(value)) return '計算不可';
+  return `${value.toFixed(digits)}%`;
+}
+
+function formatMaybeYen(value, digits = 2) {
+  if (!Number.isFinite(value)) return '計算不可';
+  return `${value.toLocaleString('ja-JP', { maximumFractionDigits: digits })}円`;
+}
+
 
 function requiredSuccessLabel(requiredCount, plannedCount) {
   if (!Number.isFinite(requiredCount) || requiredCount <= 0) return '計算不可';
@@ -434,13 +451,17 @@ function calculateDailyGoal(body = {}) {
   const worstNeededPct = (worstNeededNet / capital) * 100 + costPct;
   const nofillMultiplier = balancedNet > 0 ? worstNeededNet / balancedNet : 1;
   const stopPressurePct = target > 0 ? (lossAbs / target) * 100 : 0;
-  const virtualEffective = Math.max(1, Math.round(maxOpp * virtualFillRate / 100));
-  const virtualNeededNet = target / virtualEffective;
-  const virtualNeededPct = (virtualNeededNet / capital) * 100 + costPct;
+  // 指値到達見込みは「取引機会数 × 指値到達率」で出します。
+  // 1未満でも切り上げず、0.03回相当のように表示します。
+  const virtualExpectedReachCount = maxOpp * virtualFillRate / 100;
+  const virtualReachCountForCalc = virtualExpectedReachCount > 0 ? virtualExpectedReachCount : 0;
+  const virtualNeededNet = virtualReachCountForCalc > 0 ? target / virtualReachCountForCalc : Infinity;
+  const virtualNeededPct = Number.isFinite(virtualNeededNet) ? (virtualNeededNet / capital) * 100 + costPct : Infinity;
+  const virtualReachCountText = formatExpectedReachCount(virtualExpectedReachCount);
   const virtualNeededWinRate = neededWinRatePct({
     target,
     capital,
-    attempts: virtualEffective,
+    attempts: virtualReachCountForCalc,
     recentMoveAbsPct,
     costPct,
     lossAbs,
@@ -468,7 +489,7 @@ function calculateDailyGoal(body = {}) {
   const suggestion = [
     template ? `今日の見方: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
     '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
-    '想定到達回数 = 機会回数 - 未約定回数 として、指値が刺さった可能性を見ます。これは勝った回数ではありません。',
+    '指値到達見込み = 取引機会数 × 指値到達率 として見ます。これは勝ち回数でも利益が出る回数でもありません。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `想定成功回数は${expectedSuccessCount}回、1回あたり目標利益は約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     standardLimitCandidate
@@ -477,19 +498,19 @@ function calculateDailyGoal(body = {}) {
     `利確幅シミュレーションは${takeProfitPct.toFixed(3)}%です。これは参考条件で、最初に決める主条件ではありません。この幅なら、コスト込み1回あたり見込みNetは約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、目標達成に必要な成功回数は${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     limitCandidateDiagnostics.note,
-    `仮想約定率${virtualFillRate.toFixed(0)}%なら、指値に到達した想定は約${virtualEffective}回です。これは勝ち回数ではなく、1回必要Netは約${virtualNeededNet.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
-    `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、1回あたり必要値幅${virtualNeededPct.toFixed(3)}%は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
+    `指値到達率${virtualFillRate.toFixed(1)}%なら、${maxOpp}回の取引機会に対する指値到達見込みは${virtualReachCountText}です。これは勝ち回数ではなく、到達見込みあたり必要Netは約${formatMaybeYen(virtualNeededNet)}です。`,
+    `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、到達見込み加味の必要値幅${formatMaybePct(virtualNeededPct)}は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
       : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去データ上どれくらい出たかの参考値です。`,
-    `この前提の現実度は「${overallLabel}」です。主診断は必要利確価格・仮想約定率・必要勝率・1回あたり必要値幅を分けて見ます。利確幅シミュレーションは参考として扱います。`,
+    `この前提の現実度は「${overallLabel}」です。主診断は必要利確価格・指値到達率・必要勝率・1回あたり必要値幅を分けて見ます。利確幅シミュレーションは参考として扱います。`,
     'これは売買指示ではなく、今日の条件が今の相場で現実的かを見る準備サジェストです。',
   ].join('\n');
   const readinessCards = [
     {
-      title: '指値到達想定',
-      main: `${virtualFillRate.toFixed(0)}%`,
-      sub: `${maxOpp}機会中、約${virtualEffective}回は指値に到達した想定 / 勝ち回数ではありません / 現実度 ${fillLabel}`,
+      title: '指値到達見込み',
+      main: virtualReachCountText,
+      sub: `取引機会数${maxOpp}回 × 指値到達率${virtualFillRate.toFixed(1)}% = ${virtualReachCountText} / 勝ち回数ではありません / 現実度 ${fillLabel}`,
       tag: fillLabel,
       kind: realityKind(fillLabel),
     },
@@ -526,7 +547,7 @@ function calculateDailyGoal(body = {}) {
     {
       title: '値動き現実度',
       main: movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`,
-      sub: `1回あたり必要値幅 ${virtualNeededPct.toFixed(3)}% / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
+      sub: `到達見込み加味の必要値幅 ${formatMaybePct(virtualNeededPct)} / ${recentMoveLabel} ${recentMoveAbsPct.toFixed(3)}% / 現実度 ${moveLabel}`,
       tag: moveLabel,
       kind: realityKind(moveLabel),
     },
@@ -553,7 +574,7 @@ function calculateDailyGoal(body = {}) {
         : '今日の目標は条件上は軽いから普通の範囲です。実際の値動きとコスト負けだけ確認します。',
     moveLabel === 'かなり重い'
       ? '直近値動きに対して1回あたり必要値幅が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
-      : '1回あたり必要値幅は直近値動きと比較できる範囲です。仮想約定率と必要勝率の前提を合わせて見ます。',
+      : '1回あたり必要値幅は直近値動きと比較できる範囲です。指値到達率と必要勝率の前提を合わせて見ます。',
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。履歴DL後に確認すると、値幅が出ていた頻度を参考にできます。'
       : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去に出た割合です。`,
@@ -630,18 +651,18 @@ function calculateDailyGoal(body = {}) {
     }
   }
   const diagnosticSummary = [
-    `指値到達想定: ${fillLabel}（仮想約定率 ${virtualFillRate.toFixed(0)}% / 到達想定 約${virtualEffective}回。勝ち回数ではありません）`,
+    `指値到達見込み: ${fillLabel}（取引機会数 ${maxOpp}回 × 指値到達率 ${virtualFillRate.toFixed(1)}% = ${virtualReachCountText}。勝ち回数でも利益回数でもありません）`,
     `必要勝率: ${neededWinPremiseLabel(virtualNeededWinRate)}（必要勝率 ${formatNeededWinRate(virtualNeededWinRate)}）`,
     `1回あたり必要値幅: ${perTradeRequiredPct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円）`,
     standardLimitCandidate
       ? `必要利確価格ベース: 標準指値 ${standardLimitCandidate.limit_price.toLocaleString('ja-JP', { maximumFractionDigits: 0 })}円 → 必要利確 ${standardLimitCandidate.required_take_profit_price.toLocaleString('ja-JP', { maximumFractionDigits: 0 })}円（指値後必要値幅 ${standardLimitCandidate.required_move_jpy_from_limit.toLocaleString('ja-JP', { maximumFractionDigits: 0 })}円 / ${standardLimitCandidate.required_move_pct_from_limit.toFixed(3)}%）`
       : '必要利確価格ベース: 未計算',
     `利確幅シミュレーション: ${takeProfitPct.toFixed(3)}%（参考条件。この幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回成功が必要`} / ${requiredSuccessLabelText}）`,
-    `値動き現実度: ${moveLabel}（仮想約定率込みの1回必要値幅 ${virtualNeededPct.toFixed(3)}%）`,
+    `値動き現実度: ${moveLabel}（到達見込み加味の必要値幅 ${formatMaybePct(virtualNeededPct)}）`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
       : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
-    `総合: ${overallLabel}。必要利確価格・指値到達想定・必要勝率・1回あたり必要値幅・値幅出現率のどれが重いかを分けて確認してください。利確幅シミュレーションは参考表示です。`,
+    `総合: ${overallLabel}。必要利確価格・指値到達見込み・必要勝率・1回あたり必要値幅・値幅出現率のどれが重いかを分けて確認してください。利確幅シミュレーションは参考表示です。`,
   ].join('\n');
   return {
     suggestion,
@@ -678,7 +699,9 @@ function calculateDailyGoal(body = {}) {
     virtual_fill_rate_pct_used: safeFloat(body.virtual_fill_rate_pct_used, virtualFillRate),
     virtual_fill_rate_note: body.virtual_fill_rate_note || '',
     overall_label: overallLabel,
-    virtual_effective_count: virtualEffective,
+    virtual_effective_count: virtualExpectedReachCount,
+    virtual_expected_reach_count: virtualExpectedReachCount,
+    virtual_expected_reach_count_text: virtualReachCountText,
     virtual_needed_net_per_trade_jpy: virtualNeededNet,
     virtual_needed_move_pct: virtualNeededPct,
     virtual_needed_win_rate_pct: virtualNeededWinRate,
