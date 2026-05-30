@@ -462,6 +462,40 @@ h1 {
   justify-content: flex-end;
 }
 
+.compact-hero-actions {
+  align-items: center;
+}
+
+.tiny-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(232,112,173,0.25);
+  background:
+    radial-gradient(circle at 25% 18%, rgba(255,255,255,0.94), transparent 30%),
+    linear-gradient(135deg, rgba(255,255,255,0.82), rgba(255,224,240,0.78));
+  color: #8a4d75;
+  font-size: 0.82rem;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 0 10px 22px rgba(198,112,159,0.10);
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+}
+
+.tiny-refresh:hover {
+  transform: translateY(-1px);
+  border-color: rgba(232,112,173,0.42);
+  box-shadow: 0 14px 26px rgba(198,112,159,0.15);
+}
+
+.tiny-refresh:active {
+  transform: translateY(0);
+}
+
 .eyebrow {
   margin: 0 0 5px;
   color: var(--pink-strong);

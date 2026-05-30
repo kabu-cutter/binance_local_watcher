@@ -1573,8 +1573,8 @@ async function refreshAll() {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupNav();
-  document.getElementById('refreshAll').addEventListener('click', refreshAll);
-  document.getElementById('fetchPrices').addEventListener('click', () => fetchPrices({ source: 'manual' }));
+  document.getElementById('refreshAll')?.addEventListener('click', refreshAll);
+  document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
