@@ -697,7 +697,7 @@ function scheduleAutoCurrentUpdate(delayMs = AUTO_CURRENT_UPDATE_MS) {
   }, delayMs);
 }
 
-function setupAutoCurrentUpdate() {
+function setupAutoCurrentUpdate({ startupUpdate = true } = {}) {
   const checkbox = document.getElementById('autoUpdateEnabled');
   if (!checkbox) return;
   checkbox.addEventListener('change', () => {
@@ -707,7 +707,11 @@ function setupAutoCurrentUpdate() {
       scheduleAutoCurrentUpdate();
     }
   });
-  scheduleAutoCurrentUpdate(AUTO_CURRENT_UPDATE_MS);
+
+  // 自動更新がONなら、起動後すぐに現在価格を1回更新する。
+  // これにより、左ペインの現在価格カードが古いローカル履歴のまま残りにくくなる。
+  // 以後は通常どおり1分間隔で更新する。
+  scheduleAutoCurrentUpdate(startupUpdate ? 1000 : AUTO_CURRENT_UPDATE_MS);
 }
 
 function summarizeHistoryToNowResults(results) {
@@ -766,49 +770,36 @@ async function fetchPrices({ source = 'manual' } = {}) {
   const btn = document.getElementById('fetchPrices');
   const old = btn ? btn.textContent : '';
   const summaryMemo = document.getElementById('summaryMemo');
-  const historyMemo = document.getElementById('historyDownloadMemo');
-  const interval = elValue('historyInterval', elValue('chartInterval', '1m'));
 
   if (btn) {
-    btn.textContent = source === 'auto' ? '自動更新中...' : '現在まで更新中...';
+    btn.textContent = source === 'auto' ? '価格更新中...' : '価格更新中...';
     btn.disabled = true;
   }
-  setAutoUpdateStatus(source === 'auto' ? '自動更新中...' : '手動更新中...');
-  if (summaryMemo) summaryMemo.textContent = `現在価格を保存し、BTCJPY / ETHJPY のDL済み履歴を現在時刻まで更新しています。`;
+  setAutoUpdateStatus(source === 'auto' ? '現在価格を自動更新中...' : '現在価格を更新中...');
+  if (summaryMemo) {
+    summaryMemo.textContent = 'BTCJPY / ETHJPY の現在価格を更新しています。チャート用DLや分析キャッシュ更新はここでは行いません。';
+  }
   try {
     const priceData = await postJson('/api/fetch-prices', {});
-    const historyResults = await updateHistoryToNowBatch({
-      symbols: CURRENT_UPDATE_SYMBOLS,
-      interval,
-      memo: summaryMemo,
-      progressLabel: '現在価格保存後、チャート用DL履歴を現在時刻まで更新中',
-    });
-    const historyLines = summarizeHistoryToNowResults(historyResults);
     const priceLines = [
       priceData.message,
-      `保存先: ${priceData.history_file}`,
+      'チャートはKlineを一時表示します。分析用1分足キャッシュは日次目標・指値候補診断の実行時に確認します。',
       priceData.errors?.length ? `価格取得エラー: ${priceData.errors.join(' / ')}` : '',
     ].filter(Boolean);
 
-    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
-    if (historyMemo) historyMemo.textContent = historyLines.join('\n');
-
-    setValueIfExists('historyInterval', interval);
-    setValueIfExists('chartInterval', interval);
-    setValueIfExists('chartSource', 'combined');
     await loadStatus();
     await loadSummary();
-    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
+    if (summaryMemo) summaryMemo.textContent = priceLines.join('\n');
     await loadSummaryMiniCharts();
     await loadImpact();
     await loadAlertPreview();
     await loadChart();
     autoCurrentUpdateLastRunAt = new Date();
     const nextText = isAutoCurrentUpdateEnabled() ? ` / 次回 ${formatClock(new Date(Date.now() + AUTO_CURRENT_UPDATE_MS))}` : '';
-    setAutoUpdateStatus(`${source === 'auto' ? '自動更新完了' : '手動更新完了'} / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}${nextText}`);
+    setAutoUpdateStatus(`${source === 'auto' ? '自動価格更新完了' : '価格更新完了'} / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}${nextText}`);
   } catch (e) {
-    if (summaryMemo) summaryMemo.textContent = `現在価格＋履歴更新に失敗しました。\n${e.message}`;
-    setAutoUpdateStatus(`${source === 'auto' ? '自動更新失敗' : '手動更新失敗'}: ${e.message}`);
+    if (summaryMemo) summaryMemo.textContent = `現在価格の更新に失敗しました。\n${e.message}`;
+    setAutoUpdateStatus(`${source === 'auto' ? '自動価格更新失敗' : '価格更新失敗'}: ${e.message}`);
   } finally {
     if (btn) {
       btn.textContent = old;

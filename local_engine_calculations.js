@@ -466,6 +466,14 @@ function calculateDailyGoal(body = {}) {
     ? Math.max(0, Math.min(100, safeFloat(body.required_move_occurrence_rate_pct)))
     : null;
   const requiredMoveOccurrenceNote = body.required_move_occurrence_note || '';
+  const requiredMoveOccurrenceMeta = body.required_move_occurrence_meta || null;
+  const occurrenceWindowMinutes = Math.max(
+    1,
+    safeInt(requiredMoveOccurrenceMeta?.window_minutes || body.occurrence_window_minutes || virtualFillWindowMinutes, virtualFillWindowMinutes),
+  );
+  const occurrenceDirectionLabelText = requiredMoveOccurrenceMeta?.direction_label
+    || (body.occurrence_direction === 'down' ? '下方向' : body.occurrence_direction === 'both' ? '上下どちらか' : '上方向');
+  const occurrenceScopeText = `${occurrenceWindowMinutes}分以内・${occurrenceDirectionLabelText}`;
   const targetPct = (target / capital) * 100;
   const onePct = targetPct + costPct;
   const minPct = (target / capital / minOpp) * 100 + costPct;
@@ -542,8 +550,8 @@ function calculateDailyGoal(body = {}) {
     `指値到達率（${virtualFillWindowMinutes}分以内）は${virtualFillRate.toFixed(1)}%です。${maxOpp}機会なら指値到達の期待回数は${virtualReachCountText}です。これは勝ち回数ではなく、指値価格に届いたかだけの見込みです。`,
     `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% です。1回あたり必要値幅${formatMaybePct(perTradeRequiredPct)}は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。指値到達率とは分けて確認します。`,
     requiredMoveOccurrenceRate === null
-      ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
-      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去データ上どれくらい出たかの参考値です。`,
+      ? `必要値幅の出現率（${occurrenceScopeText}）は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。`
+      : `必要値幅の出現率（${occurrenceScopeText}）は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、指定時間内に必要な値幅が過去データ上どれくらい出たかの参考値です。`,
     `この前提の現実度は「${overallLabel}」です。主診断は必要利確価格・指値到達率・必要勝率・1回あたり必要値幅を分けて見ます。利確幅シミュレーションは参考として扱います。`,
     'これは売買指示ではなく、今日の条件が今の相場で現実的かを見る準備サジェストです。',
   ].join('\n');
@@ -593,11 +601,11 @@ function calculateDailyGoal(body = {}) {
       kind: realityKind(moveLabel),
     },
     {
-      title: '必要値幅の出現率',
+      title: `必要値幅の出現率（${occurrenceWindowMinutes}分）`,
       main: requiredMoveOccurrenceRate === null ? '未確認' : `${requiredMoveOccurrenceRate.toFixed(1)}%`,
       sub: requiredMoveOccurrenceRate === null
-        ? '履歴確認OFFまたは履歴不足。これは約定率とは別の参考値です。'
-        : `過去データで必要値幅が出た頻度 / これは約定率ではありません / 現実度 ${occurrenceLabel}`,
+        ? `履歴確認OFFまたは履歴不足。${occurrenceScopeText}で見ます。これは約定率とは別の参考値です。`
+        : `1回あたり必要値幅 ${formatMaybePct(perTradeRequiredPct)} が${occurrenceScopeText}で出た頻度 / 約定率ではありません / 現実度 ${occurrenceLabel}`,
       tag: occurrenceLabel,
       kind: occurrenceLabel === '未確認' ? 'warn' : realityKind(occurrenceLabel),
     },
@@ -617,8 +625,8 @@ function calculateDailyGoal(body = {}) {
       ? '直近値動きに対して1回あたり必要値幅が大きいです。値幅が出ていない時間帯では無理が出やすい前提です。'
       : '1回あたり必要値幅は直近値動きと比較できる範囲です。指値到達率と必要勝率の前提を合わせて見ます。',
     requiredMoveOccurrenceRate === null
-      ? '必要値幅の出現率は未確認です。履歴DL後に確認すると、値幅が出ていた頻度を参考にできます。'
-      : `必要値幅の出現率は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去に出た割合です。`,
+      ? `必要値幅の出現率（${occurrenceScopeText}）は未確認です。履歴DL後に確認すると、値幅が出ていた頻度を参考にできます。`
+      : `必要値幅の出現率（${occurrenceScopeText}）は${requiredMoveOccurrenceRate.toFixed(1)}%です。これは約定率ではなく、必要な値幅が過去に出た割合です。`,
     stopPressurePct >= 50
       ? '損切り1回の影響が大きいです。何回狙うかより、逆行時にどこで止めるかが先に効きます。'
       : '損切り1回の影響は目標内で確認できる範囲です。連続ミス時の崩れ方だけ見ておきます。',
@@ -701,8 +709,8 @@ function calculateDailyGoal(body = {}) {
     `利確幅シミュレーション: ${takeProfitPct.toFixed(3)}%（参考条件。この幅なら1回Net約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円 / 日次目標には${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回成功が必要`} / ${requiredSuccessLabelText}）`,
     `値動き現実度: ${moveLabel}（1回あたり必要値幅 ${formatMaybePct(perTradeRequiredPct)} / 指値到達率とは別判定）`,
     requiredMoveOccurrenceRate === null
-      ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
-      : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
+      ? `必要値幅の出現率（${occurrenceScopeText}）: 未確認（履歴確認OFFまたは履歴不足）`
+      : `必要値幅の出現率（${occurrenceScopeText}）: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
     `総合: ${overallLabel}。必要利確価格・指値到達率・必要勝率・1回あたり必要値幅・値幅出現率のどれが重いかを分けて確認してください。利確幅シミュレーションは参考表示です。`,
   ].join('\n');
   return {
@@ -731,7 +739,7 @@ function calculateDailyGoal(body = {}) {
     required_move_occurrence_required_pct: Number.isFinite(Number(body.required_move_occurrence_required_pct))
       ? safeFloat(body.required_move_occurrence_required_pct)
       : null,
-    required_move_occurrence_meta: body.required_move_occurrence_meta || null,
+    required_move_occurrence_meta: requiredMoveOccurrenceMeta,
     strategy_template: body.strategy_template || '',
     strategy_template_label: template?.label || '',
     strategy_template_note: template
