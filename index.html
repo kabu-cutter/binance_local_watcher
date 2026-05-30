@@ -143,58 +143,35 @@
         <div class="card highlight">
           <div class="card-head">
             <div>
-              <p class="eyebrow">Price Chart</p>
-              <h3>価格グラフ</h3>
-              <p class="card-desc">表示だけなら公開klineを一時取得できます。1週間など広い範囲もCSV保存なしで確認し、あとで指値到達率の参照範囲にも使える形にします。</p>
+              <p class="eyebrow">Kline Viewer</p>
+              <h3>Klineチャート</h3>
+              <p class="card-desc">Binance公開Klineを一時取得して表示します。ここでは保存・DL操作を前面に出さず、見るための軽いチャートにします。</p>
             </div>
             <div class="inline-form wrap">
               <label>通貨</label>
               <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
-              <label>データ</label>
-              <select id="chartSource"><option value="klines" selected>公開kline一時表示（範囲・足切替用）</option><option value="combined">DL済み＋現在まで更新済み</option><option value="downloaded">DL済みファイルのみ</option></select>
               <label>表示範囲</label>
               <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
               <label>足</label>
               <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
-              <button class="primary" id="reloadChart">グラフ更新</button>
+              <button class="primary" id="reloadChart">チャートを更新</button>
             </div>
-            <p class="card-desc">グラフ更新を押すと、選択した表示範囲をDL保存してから更新するか確認します。「はい」でlong_data/DBへ保存し、DL済み＋現在まで更新済みで表示します。</p>
+            <p class="card-desc">表示更新のみです。分析用1分足キャッシュは、日次目標・指値候補診断を実行する時点で必要分だけ確認・更新する方針に分けます。</p>
           </div>
           <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
           <div class="chart-box">
             <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
           </div>
         </div>
-        <div class="card">
-          <div class="card-head">
+        <div class="card soft-info-card">
+          <div class="card-head compact-head">
             <div>
-              <h3>履歴データDL</h3>
-              <p class="card-desc">Binance公開klineを1時間チャンクに分けて取得し、long_dataへ保存します。通常のグラフは「DL済み＋現在まで更新済み」を使います。上部の現在更新ボタンは、現在価格保存とBTC/ETHの履歴更新をまとめて行います。</p>
+              <h3>チャートと分析データの分け方</h3>
+              <p class="card-desc">このタブは閲覧用のKline表示です。指値到達率・利確到達率・損切り先行率は、日次目標側で分析用キャッシュを使って計算します。</p>
             </div>
+            <span class="tag soft">表示専用</span>
           </div>
-          <div class="form-grid history-form">
-            <label>通貨
-              <select id="historySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
-            </label>
-            <label>間隔
-              <select id="historyInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
-            </label>
-            <label>日付
-              <input id="historyDate" type="date" />
-            </label>
-            <label>開始時
-              <input id="historyStartHour" type="number" value="0" min="0" max="23" />
-            </label>
-            <label>終了時
-              <input id="historyEndHour" type="number" value="24" min="1" max="24" />
-            </label>
-            <label class="check-field">取得済みスキップ
-              <input id="historySkipExisting" type="checkbox" checked />
-            </label>
-          </div>
-          <button class="primary" id="downloadHistory">履歴を分割DL</button>
-          <button class="secondary" id="updateHistoryToNow">選択通貨を現在時刻まで差分DL</button>
-          <p class="memo-text" id="historyDownloadMemo">未取得です。丸1日なら開始0、終了24にします。</p>
+          <p class="memo-text">手動DLボタンはここでは出さず、必要になったらデータ管理・設定・デバッグ側へ移します。</p>
         </div>
       </section>
 

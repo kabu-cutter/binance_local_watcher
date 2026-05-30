@@ -2313,7 +2313,7 @@ async function clearDailyGoalReports() {
 
 async function chart(params = {}) {
   const symbol = SYMBOLS.includes(params.symbol) ? params.symbol : 'BTCJPY';
-  const sourceMode = params.source || 'combined';
+  const sourceMode = params.source || 'klines';
   const intervalRequested = params.interval || 'auto';
   const rangeKey = params.range || '24h';
   const limit = Math.min(Math.max(safeInt(params.limit, 500), 2), 1200);
@@ -2381,7 +2381,7 @@ async function chart(params = {}) {
       rawRows = result.raw_rows;
       sampled = result.sampled;
       usedSource = 'binance-klines';
-      message = `Binance公開APIの ${result.range.label} / ${actualInterval} 足からチャートを作成しました。履歴CSVには保存していません。${sampled ? ` 表示用に${rawRows}本から${points.length}点へ間引きました。` : ''}`;
+      message = `Binance公開Klineの ${result.range.label} / ${actualInterval} 足を一時表示しています。CSV/DBには保存していません。${sampled ? ` 表示用に${rawRows}本から${points.length}点へ間引きました。` : ''}`;
     } catch (error) {
       errors.push(error.message);
       if (points.length < 2) {

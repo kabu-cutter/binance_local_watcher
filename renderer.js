@@ -1,6 +1,6 @@
 const titles = {
   summary: ['サマリー', 'Electron main process が公開データ取得・履歴・計算を担当します。'],
-  chart: ['チャート', 'Electron main process で履歴または公開klineを読み、rendererでSVGチャートを描きます。'],
+  chart: ['チャート', 'Binance公開Klineを一時取得して、保存せず軽く表示します。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
   daily: ['日次目標', '指値到達率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
@@ -937,7 +937,7 @@ function chartSourceLabel(source) {
     'local-history+downloaded-kline': 'DL済み＋現在まで更新済み',
     'downloaded-kline-current': 'DL済み＋現在まで更新済みkline',
     'downloaded-kline': 'DL済みファイルのみ',
-    'binance-klines': '公開kline一時表示',
+    'binance-klines': '公開Kline一時表示',
     'local-history': 'ローカル履歴フォールバック',
     mock: 'サンプル',
   };
@@ -989,33 +989,17 @@ function renderChart(data) {
 }
 
 async function loadChart() {
-  const symbol = document.getElementById('chartSymbol').value;
-  let source = document.getElementById('chartSource').value;
-  if (source === 'local') {
-    source = 'combined';
-    setValueIfExists('chartSource', 'combined');
-  }
-  let interval = document.getElementById('chartInterval').value;
-
-  // 表示範囲・足切替は公開kline一時表示用。
-  // DL済み表示は保存ファイル確認用なので、autoのままDL表示へ入ると1mフォールバックになりやすい。
-  if (source !== 'klines' && interval === 'auto') {
-    interval = '1m';
-    setValueIfExists('chartInterval', '1m');
-  }
-
+  const symbol = elValue('chartSymbol', 'BTCJPY');
+  const interval = elValue('chartInterval', 'auto');
   const range = elValue('chartRange', '24h');
-  const date = document.getElementById('historyDate').value;
-  const startHour = document.getElementById('historyStartHour').value;
-  const endHour = document.getElementById('historyEndHour').value;
-  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=520`);
+
+  // チャートタブは表示専用の公開Klineビューアにします。
+  // 保存・DL・分析用キャッシュ更新はここでは行いません。
+  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=klines&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&limit=520`);
   renderChart(data);
 }
 
 function loadChartRangeFromKlines() {
-  // 「表示範囲」と「足」はkline直取得で効かせる。
-  // DL済み＋現在データは基本1m保存なので、ここを切り替えないと5m/15m/30m/1hが同じ見た目になりやすい。
-  setValueIfExists('chartSource', 'klines');
   return loadChart();
 }
 
@@ -1610,16 +1594,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('ensureAnalysisCache').addEventListener('click', ensureAnalysisCache);
   document.getElementById('analysisCacheDays').addEventListener('change', loadAnalysisCacheStatus);
   document.getElementById('analysisCacheSymbol').addEventListener('change', loadAnalysisCacheStatus);
-  document.getElementById('reloadChart').addEventListener('click', reloadChartWithDownloadConfirm);
-  document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
-  document.getElementById('updateHistoryToNow').addEventListener('click', updateHistoryToNow);
+  document.getElementById('reloadChart').addEventListener('click', loadChartRangeFromKlines);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
-  document.getElementById('chartSource').addEventListener('change', loadChart);
   document.getElementById('chartInterval').addEventListener('change', loadChartRangeFromKlines);
   document.getElementById('chartRange').addEventListener('change', loadChartRangeFromKlines);
-  document.getElementById('historyDate').addEventListener('change', loadChart);
-  document.getElementById('historyStartHour').addEventListener('change', loadChart);
-  document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
   document.getElementById('tradeCostPct').addEventListener('input', syncRoundtripCostFromTrade);
   document.getElementById('applyDailyTemplate').addEventListener('click', applyDailyTemplate);
@@ -1634,7 +1612,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveDailyReport').addEventListener('click', saveDailyReport);
   document.getElementById('reloadDailyReports').addEventListener('click', loadDailyReports);
   document.getElementById('clearDailyReports').addEventListener('click', clearDailyReports);
-  document.getElementById('historyDate').value = todayJstDateText();
+  setValueIfExists('historyDate', todayJstDateText());
   setValueIfExists('dailyOccurrenceStartDate', todayJstDateText());
   setValueIfExists('dailyOccurrenceEndDate', todayJstDateText());
   setCheckedIfExists('dailyOccurrenceEnabled', true);
