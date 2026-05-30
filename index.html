@@ -266,7 +266,7 @@
                 <label>想定成功回数（分割プラン）
                   <input id="dailyExpectedWins" type="number" value="3" min="1" />
                 </label>
-                <label>想定利確幅 %（1回で捉える値幅）
+                <label>利確幅シミュレーション %（参考）
                   <input id="dailyTakeProfitPct" type="number" value="0.40" min="0" step="0.01" />
                 </label>
                 <label>資金 / 主投入額
@@ -367,19 +367,34 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>5</span><div><h3>仮想約定率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
+          <div class="daily-result-head"><span>5</span><div><h3>必要利確価格ベースの指値候補診断</h3><p class="memo-text">固定%の指値候補ごとに、指値価格から必要利確価格までの値幅を比較します。利確幅シミュレーション%は参考で、主役は必要利確価格です。</p></div></div>
+          <div class="daily-guide-box" id="dailyLimitCandidateGuide">
+            <strong>読み方</strong>
+            <ul>
+              <li>まず「指値価格 → 必要利確価格」を見ます。</li>
+              <li>「指値後必要値幅」は、現在価格からではなく、指値で約定した後に必要な値幅です。</li>
+              <li>この表は条件診断で、買い/売りの指示ではありません。</li>
+            </ul>
+          </div>
+          <p class="memo-text" id="dailyLimitCandidateMemo">まだ計算していません。</p>
+          <div class="table-wrap"><table id="dailyLimitCandidateTable"></table></div>
+          <ul class="daily-candidate-notes" id="dailyLimitCandidateNotes"></ul>
+        </div>
+
+        <div class="card daily-step-card">
+          <div class="daily-result-head"><span>6</span><div><h3>仮想約定率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
           <p class="memo-text" id="dailyVirtualFillMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyVirtualFillTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>6</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
+          <div class="daily-result-head"><span>7</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
           <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>7</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
+          <div class="daily-result-head"><span>8</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
           <ul class="prep-list" id="dailyPrepNotes">
             <li>まだ計算していません。</li>
           </ul>

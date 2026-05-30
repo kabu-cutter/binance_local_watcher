@@ -1233,6 +1233,7 @@ function buildDailyPayload() {
     virtual_fill_reference_days: elNumber('dailyVirtualFillReferenceDays', 30),
     virtual_fill_side: elValue('dailyVirtualFillSide', 'buy_limit'),
     limit_distance_pct: elNumber('dailyLimitDistancePct', 0.2),
+    limit_candidate_side: elValue('dailyVirtualFillSide', 'buy_limit'),
     // trueなら「必要値幅の出現率」を別計算します。仮想約定率の履歴試算とは分離します。
     virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
     occurrence_reference_days: occurrenceReferenceDays,
@@ -1275,6 +1276,7 @@ async function calcDaily() {
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
     || '仮想約定率は手入力値またはテンプレート値です。必要値幅の履歴確認とは別扱いです。';
   renderDailyVirtualFill(data);
+  renderDailyLimitCandidates(data);
   renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
     title: p.title,
@@ -1307,6 +1309,52 @@ async function calcDaily() {
   })));
 }
 
+
+
+function renderDailyLimitCandidates(data) {
+  const memoEl = document.getElementById('dailyLimitCandidateMemo');
+  const tableEl = document.getElementById('dailyLimitCandidateTable');
+  const notesEl = document.getElementById('dailyLimitCandidateNotes');
+  if (!memoEl || !tableEl) return;
+  const rows = Array.isArray(data.limit_candidate_rows) ? data.limit_candidate_rows : [];
+  const meta = data.limit_candidate_meta || {};
+  memoEl.textContent = data.limit_candidate_note || '必要利確価格ベースの指値候補診断はまだ計算していません。';
+  renderTable(tableEl, [
+    ['candidate', '候補'],
+    ['limit', '指値価格'],
+    ['take_profit', '必要利確価格'],
+    ['width', '指値→利確幅'],
+    ['width_pct', '必要変動率'],
+    ['distance', '現在価格から'],
+    ['qty', '数量'],
+    ['per_target', '1回目標'],
+    ['cost', '概算コスト'],
+    ['condition', '条件診断'],
+  ], rows.map((row) => ({
+    candidate: row.candidate_label || '—',
+    limit: yen(row.limit_price, 2),
+    take_profit: yen(row.required_take_profit_price, 2),
+    width: yen(row.required_move_jpy_from_limit, 2),
+    width_pct: pct(row.required_move_pct_from_limit, 3),
+    distance: pct(row.current_price_distance_pct, 3, true),
+    qty: qty(row.quantity),
+    per_target: yen(row.per_trade_target_jpy, 2),
+    cost: yen(row.estimated_roundtrip_cost_jpy, 2),
+    condition: row.condition_label || '—',
+  })));
+  if (notesEl) {
+    if (!rows.length) {
+      notesEl.innerHTML = '<li>現在価格が取得できると、指値価格から必要利確価格までの比較を表示します。</li>';
+      return;
+    }
+    const sideText = meta.side === 'sell_limit' ? '売り指値' : '買い指値';
+    notesEl.innerHTML = [
+      `<li>${sideText}候補の比較です。必要利確価格は、手数料・スプレッド/スリッページ見積と1回目標を含めた概算です。</li>`,
+      '<li>浅い候補は価格到達しやすい一方、約定後の余裕が薄くなりやすいです。深い候補は約定しにくい代わりに、刺さった後の余裕を見やすくなります。</li>',
+      '<li>次段階で、1分足キャッシュを使って指値到達率・約定後利確到達率・損切り先行率を追加します。</li>',
+    ].join('');
+  }
+}
 
 function renderDailyVirtualFill(data) {
   const memoEl = document.getElementById('dailyVirtualFillMemo');

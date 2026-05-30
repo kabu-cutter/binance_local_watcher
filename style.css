@@ -755,6 +755,30 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.daily-guide-box {
+  border: 1px solid rgba(203,126,170,0.22);
+  border-radius: 16px;
+  background: rgba(255,255,255,0.56);
+  padding: 12px 14px;
+  margin: 8px 0 12px;
+  color: #60475b;
+}
+.daily-guide-box strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #803b67;
+}
+.daily-guide-box ul,
+.daily-candidate-notes {
+  margin: 6px 0 0;
+  padding-left: 1.2rem;
+  line-height: 1.75;
+}
+.daily-candidate-notes {
+  color: #60475b;
+  font-size: 0.88rem;
+}
+
 @media (max-width: 1320px) {
   .daily-layout-grid {
     grid-template-columns: 1fr;

@@ -2611,6 +2611,8 @@ async function dailyGoal(body = {}) {
     ...body,
     virtual_fill_rate_pct: fillRateUsed,
     virtual_fill_rate_pct_used: fillRateUsed,
+    current_price_jpy: summary?.price_jpy ?? null,
+    limit_candidate_side: body.limit_candidate_side || body.virtual_fill_side || 'buy_limit',
     virtual_fill_rate_note: fillRateNote,
     required_move_occurrence_rate_pct: Number.isFinite(occurrence?.rate) ? occurrence.rate : null,
     required_move_occurrence_note: autoEnabled
