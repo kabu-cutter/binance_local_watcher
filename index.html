@@ -16,6 +16,16 @@
           <div class="brand-subtitle">Electron UI / Node engine</div>
         </div>
       </div>
+      <div class="side-price-panel" aria-live="polite">
+        <div class="side-price-head">
+          <span>現在価格</span>
+          <small id="sidePriceSource">読み込み中</small>
+        </div>
+        <div class="side-price-rows" id="sidePriceRows">
+          <div class="side-price-empty">価格を読み込み中...</div>
+        </div>
+        <div class="side-price-foot" id="sidePriceUpdated">最終更新: —</div>
+      </div>
       <nav class="nav">
         <button class="nav-item active" data-section="summary">サマリー</button>
         <button class="nav-item" data-section="chart">チャート</button>
@@ -380,7 +390,8 @@
             </ul>
           </div>
           <p class="memo-text" id="dailyLimitCandidateMemo">まだ計算していません。</p>
-          <div class="table-wrap"><table id="dailyLimitCandidateTable"></table></div>
+          <div class="daily-limit-candidate-cards" id="dailyLimitCandidateCards"></div>
+          <div class="table-wrap daily-limit-table-wrap"><table id="dailyLimitCandidateTable"></table></div>
           <ul class="daily-candidate-notes" id="dailyLimitCandidateNotes"></ul>
         </div>
 

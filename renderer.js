@@ -511,12 +511,47 @@ async function loadApiReadiness() {
   }
 }
 
+function renderSidebarPrices(data) {
+  const rowsEl = document.getElementById('sidePriceRows');
+  const sourceEl = document.getElementById('sidePriceSource');
+  const updatedEl = document.getElementById('sidePriceUpdated');
+  if (!rowsEl) return;
+  const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+  if (sourceEl) sourceEl.textContent = data?.data_source ? String(data.data_source) : '—';
+  if (!symbols.length) {
+    rowsEl.innerHTML = '<div class="side-price-empty">価格データなし</div>';
+    if (updatedEl) updatedEl.textContent = '最終更新: —';
+    return;
+  }
+  rowsEl.innerHTML = symbols.map((s) => {
+    const isUp = Number(s.prev_diff_yen) >= 0;
+    const directionClass = isUp ? 'up' : 'down';
+    const shortText = Number.isFinite(Number(s.short_pct)) ? `短期 ${pct(s.short_pct, 3, true)}` : (s.status || '—');
+    return `
+      <div class="side-price-row ${directionClass}">
+        <div>
+          <div class="side-price-symbol">${s.symbol || '—'}</div>
+          <div class="side-price-sub">${shortText}</div>
+        </div>
+        <div class="side-price-value-block">
+          <div class="side-price-value">${yen(s.price_jpy)}</div>
+          <div class="side-price-change">${pct(s.prev_pct, 3, true)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  const latest = symbols.map((s) => s.timestamp).filter(Boolean)[0];
+  if (updatedEl) updatedEl.textContent = latest ? `最終更新: ${latest}` : '最終更新: —';
+}
+
 async function loadSummary() {
   const data = await getJson('/api/summary');
+  renderSidebarPrices(data);
   const cards = data.symbols.map((s) => card({
     title: s.symbol,
     value: yen(s.price_jpy),
-    sub: `前回比 ${yen(s.prev_diff_yen, 0, true)} / ${pct(s.prev_pct, 4, true)}\n${s.note}`,
+    sub: `前回比 ${yen(s.prev_diff_yen, 0, true)} / ${pct(s.prev_pct, 4, true)}
+${s.note}`,
     tag: s.status,
     kind: s.prev_diff_yen >= 0 ? 'good' : 'bad',
   })).join('');
@@ -1329,16 +1364,46 @@ async function calcDaily() {
 function renderDailyLimitCandidates(data) {
   const memoEl = document.getElementById('dailyLimitCandidateMemo');
   const tableEl = document.getElementById('dailyLimitCandidateTable');
+  const cardsEl = document.getElementById('dailyLimitCandidateCards');
   const notesEl = document.getElementById('dailyLimitCandidateNotes');
   if (!memoEl || !tableEl) return;
   const rows = Array.isArray(data.limit_candidate_rows) ? data.limit_candidate_rows : [];
   const meta = data.limit_candidate_meta || {};
   memoEl.textContent = data.limit_candidate_note || '必要利確価格ベースの指値候補診断はまだ計算していません。';
+
+  if (cardsEl) {
+    if (!rows.length) {
+      cardsEl.innerHTML = '<div class="daily-limit-empty">現在価格が取得できると、指値候補カードを表示します。</div>';
+    } else {
+      cardsEl.innerHTML = rows.map((row) => {
+        const simGap = Number(row.take_profit_simulation_gap_pct);
+        const simClass = Number.isFinite(simGap) && simGap >= 0 ? 'ok' : 'warn';
+        return `
+          <div class="daily-limit-candidate-card ${simClass}">
+            <div class="candidate-card-head">
+              <strong>${row.candidate_label || '—'}</strong>
+              <span>${row.condition_label || '条件確認'}</span>
+            </div>
+            <div class="candidate-price-flow">
+              <div><small>指値価格</small><b>${yen(row.limit_price, 0)}</b></div>
+              <div class="flow-arrow">→</div>
+              <div><small>必要利確</small><b>${yen(row.required_take_profit_price, 0)}</b></div>
+            </div>
+            <div class="candidate-card-sub">
+              指値後必要値幅 ${yen(row.required_move_jpy_from_limit, 0)} / ${pct(row.required_move_pct_from_limit, 3)}<br />
+              参考利確幅: ${row.take_profit_simulation_label || '—'}（差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}）
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  tableEl.classList.add('limit-candidate-table');
   renderTable(tableEl, [
     ['candidate', '候補'],
-    ['limit', '指値価格'],
-    ['take_profit', '必要利確価格'],
-    ['width', '指値→利確幅'],
+    ['limit_to_tp', '指値 → 必要利確'],
+    ['width', '指値後必要値幅'],
     ['width_pct', '必要変動率'],
     ['sim', '参考利確幅'],
     ['distance', '現在価格から'],
@@ -1348,11 +1413,10 @@ function renderDailyLimitCandidates(data) {
     ['condition', '条件診断'],
   ], rows.map((row) => ({
     candidate: row.candidate_label || '—',
-    limit: yen(row.limit_price, 2),
-    take_profit: yen(row.required_take_profit_price, 2),
-    width: yen(row.required_move_jpy_from_limit, 2),
+    limit_to_tp: `${yen(row.limit_price, 0)} → ${yen(row.required_take_profit_price, 0)}`,
+    width: yen(row.required_move_jpy_from_limit, 0),
     width_pct: pct(row.required_move_pct_from_limit, 3),
-    sim: `${row.take_profit_simulation_label || '—'}（${pct(row.take_profit_simulation_pct, 3)} / 差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}）`,
+    sim: `${row.take_profit_simulation_label || '—'} / 差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}`,
     distance: pct(row.current_price_distance_pct, 3, true),
     qty: qty(row.quantity),
     per_target: yen(row.per_trade_target_jpy, 2),
@@ -1373,6 +1437,7 @@ function renderDailyLimitCandidates(data) {
     ].join('');
   }
 }
+
 
 function renderDailyVirtualFill(data) {
   const memoEl = document.getElementById('dailyVirtualFillMemo');
