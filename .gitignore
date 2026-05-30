@@ -62,3 +62,4 @@ Thumbs.db
 .idea/
 data/blw.sqlite
 /data
+*.sqlite
