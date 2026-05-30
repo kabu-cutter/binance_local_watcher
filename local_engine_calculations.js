@@ -96,6 +96,21 @@ function fillRealityLabel(fillRate) {
   return 'かなり重い';
 }
 
+
+function fillOpportunityLabel(fillRate) {
+  if (!Number.isFinite(fillRate)) return '未確認';
+  if (fillRate < 5) return '機会不足';
+  if (fillRate < 15) return '少なめ';
+  if (fillRate < 40) return '確認範囲';
+  return '到達多め';
+}
+
+function fillOpportunityKind(label) {
+  if (label === '到達多め' || label === '確認範囲') return 'good';
+  if (label === '少なめ' || label === '未確認') return 'warn';
+  return 'bad';
+}
+
 function occurrenceRealityLabel(rate) {
   if (!Number.isFinite(rate)) return '未確認';
   if (rate >= 35) return '軽い';
@@ -467,6 +482,7 @@ function calculateDailyGoal(body = {}) {
     lossAbs,
   });
   const fillLabel = fillRealityLabel(virtualFillRate);
+  const fillOpportunity = fillOpportunityLabel(virtualFillRate);
   const winLabel = winRealityLabel(virtualNeededWinRate);
   const moveLabel = movementRealityLabel(virtualNeededPct, recentMoveAbsPct);
   const occurrenceLabel = requiredMoveOccurrenceRate === null ? '未確認' : occurrenceRealityLabel(requiredMoveOccurrenceRate);
@@ -489,7 +505,7 @@ function calculateDailyGoal(body = {}) {
   const suggestion = [
     template ? `今日の見方: ${template.label}（売買シグナルではなく条件テンプレート）` : 'テンプレート未選択: 条件比較モードで計算しています。',
     '日次Net = 勝ち回数 × 1回勝ちNet + 負け回数 × 1回負けNet で見ます。',
-    '指値到達見込み = 取引機会数 × 指値到達率 として見ます。これは勝ち回数でも利益が出る回数でもありません。',
+    '指値到達率は、過去データ上その指値価格まで届いた割合です。未来の確率そのものではなく、勝ち回数でも利益回数でもありません。',
     `今日の目標は ${target.toLocaleString('ja-JP')}円、資金/主投入額は ${capital.toLocaleString('ja-JP')}円です。`,
     `想定成功回数は${expectedSuccessCount}回、1回あたり目標利益は約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円です。`,
     standardLimitCandidate
@@ -498,7 +514,7 @@ function calculateDailyGoal(body = {}) {
     `利確幅シミュレーションは${takeProfitPct.toFixed(3)}%です。これは参考条件で、最初に決める主条件ではありません。この幅なら、コスト込み1回あたり見込みNetは約${takeProfitNetPerTrade.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円、目標達成に必要な成功回数は${requiredSuccessCountByTakeProfit === null ? '計算不可' : `${requiredSuccessCountByTakeProfit}回`}です。`,
     `この日次目標は往復コスト${costPct.toFixed(2)}%前提で計算しています。`,
     limitCandidateDiagnostics.note,
-    `指値到達率${virtualFillRate.toFixed(1)}%なら、${maxOpp}回の取引機会に対する指値到達見込みは${virtualReachCountText}です。これは勝ち回数ではなく、到達見込みあたり必要Netは約${formatMaybeYen(virtualNeededNet)}です。`,
+    `指値到達率は${virtualFillRate.toFixed(1)}%です。${maxOpp}機会なら指値到達の期待回数は${virtualReachCountText}です。これは勝ち回数ではなく、指値価格に届いたかだけの見込みです。`,
     `${recentMoveLabel}は ${recentMovePct >= 0 ? '+' : ''}${recentMovePct.toFixed(3)}% なので、到達見込み加味の必要値幅${formatMaybePct(virtualNeededPct)}は直近値動き比で${movementRatio === null ? '比較不可' : `${movementRatio.toFixed(2)}倍`}です。`,
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率は未確認です。これは約定率とは別に、必要な値幅が過去データでどれくらい出たかを見る参考値です。'
@@ -508,11 +524,11 @@ function calculateDailyGoal(body = {}) {
   ].join('\n');
   const readinessCards = [
     {
-      title: '指値到達見込み',
-      main: virtualReachCountText,
-      sub: `取引機会数${maxOpp}回 × 指値到達率${virtualFillRate.toFixed(1)}% = ${virtualReachCountText} / 勝ち回数ではありません / 現実度 ${fillLabel}`,
-      tag: fillLabel,
-      kind: realityKind(fillLabel),
+      title: '指値到達率',
+      main: `${virtualFillRate.toFixed(1)}%`,
+      sub: `${maxOpp}機会なら${virtualReachCountText} / 勝ち回数・利益回数ではありません / ${fillOpportunity}`,
+      tag: fillOpportunity,
+      kind: fillOpportunityKind(fillOpportunity),
     },
     {
       title: '1回あたり必要値幅',
@@ -651,7 +667,7 @@ function calculateDailyGoal(body = {}) {
     }
   }
   const diagnosticSummary = [
-    `指値到達見込み: ${fillLabel}（取引機会数 ${maxOpp}回 × 指値到達率 ${virtualFillRate.toFixed(1)}% = ${virtualReachCountText}。勝ち回数でも利益回数でもありません）`,
+    `指値到達率: ${virtualFillRate.toFixed(1)}%（${maxOpp}機会なら${virtualReachCountText}。未来の確率そのものではなく、勝ち回数でも利益回数でもありません / ${fillOpportunity}）`,
     `必要勝率: ${neededWinPremiseLabel(virtualNeededWinRate)}（必要勝率 ${formatNeededWinRate(virtualNeededWinRate)}）`,
     `1回あたり必要値幅: ${perTradeRequiredPct.toFixed(3)}%（日次目標${target.toLocaleString('ja-JP')}円 ÷ 想定成功${expectedSuccessCount}回 = 1回約${perTradeTarget.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円）`,
     standardLimitCandidate
@@ -662,7 +678,7 @@ function calculateDailyGoal(body = {}) {
     requiredMoveOccurrenceRate === null
       ? '必要値幅の出現率: 未確認（履歴確認OFFまたは履歴不足）'
       : `必要値幅の出現率: ${occurrenceLabel}（過去データで必要値幅が出た割合 ${requiredMoveOccurrenceRate.toFixed(1)}% / 約定率ではありません）`,
-    `総合: ${overallLabel}。必要利確価格・指値到達見込み・必要勝率・1回あたり必要値幅・値幅出現率のどれが重いかを分けて確認してください。利確幅シミュレーションは参考表示です。`,
+    `総合: ${overallLabel}。必要利確価格・指値到達率・必要勝率・1回あたり必要値幅・値幅出現率のどれが重いかを分けて確認してください。利確幅シミュレーションは参考表示です。`,
   ].join('\n');
   return {
     suggestion,
