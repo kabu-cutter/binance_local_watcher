@@ -803,3 +803,14 @@ tr:hover td { background: rgba(255,255,255,0.34); }
     flex-direction: column;
   }
 }
+
+.daily-summary-after-cards {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(194, 87, 139, 0.18);
+}
+
+.daily-summary-after-cards h4 {
+  margin: 0 0 8px;
+  color: var(--ink);
+}

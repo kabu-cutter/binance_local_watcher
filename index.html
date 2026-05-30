@@ -261,28 +261,28 @@
                   <select id="dailySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
                 </label>
                 <label>日次目標利益
-                  <input id="dailyTarget" type="number" value="100" />
+                  <input id="dailyTarget" type="text" inputmode="decimal" value="100" />
                 </label>
                 <label>想定成功回数（分割プラン）
-                  <input id="dailyExpectedWins" type="number" value="3" min="1" />
+                  <input id="dailyExpectedWins" type="text" inputmode="decimal" value="3" min="1" />
                 </label>
                 <label>利確幅シミュレーション %（参考）
-                  <input id="dailyTakeProfitPct" type="number" value="0.40" min="0" step="0.01" />
+                  <input id="dailyTakeProfitPct" type="text" inputmode="decimal" value="0.40" min="0" step="0.01" />
                 </label>
                 <label>資金 / 主投入額
-                  <input id="dailyCapital" type="number" value="2000" />
+                  <input id="dailyCapital" type="text" inputmode="decimal" value="2000" />
                 </label>
                 <label>最小取引機会数
-                  <input id="dailyMinOpp" type="number" value="5" />
+                  <input id="dailyMinOpp" type="text" inputmode="decimal" value="5" />
                 </label>
                 <label>最大取引機会数
-                  <input id="dailyMaxOpp" type="number" value="10" />
+                  <input id="dailyMaxOpp" type="text" inputmode="decimal" value="10" />
                 </label>
                 <label>損切り逆行率 %
-                  <input id="dailyStopPct" type="number" value="0.5" step="0.1" />
+                  <input id="dailyStopPct" type="text" inputmode="decimal" value="0.5" step="0.1" />
                 </label>
                 <label>往復コスト %
-                  <input id="dailyCostPct" type="number" value="0.28" step="0.01" readonly />
+                  <input id="dailyCostPct" type="text" inputmode="decimal" value="0.28" step="0.01" />
                 </label>
                 <label>未約定シナリオ %
                   <input id="dailyCancelRates" value="10,30,50,70" />
@@ -294,7 +294,7 @@
               <div class="daily-block-title"><span>2</span><div><h4>指値到達率（仮想）</h4><p>1分足キャッシュで、指値価格へ到達した割合を試算します。勝ち回数ではありません。</p></div></div>
               <div class="form-grid daily-form daily-form-compact two-col">
                 <label>指値到達率（手入力/代替） %
-                  <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
+                  <input id="dailyFillRate" type="text" inputmode="decimal" value="70" min="0" max="100" step="1" />
                 </label>
                 <label class="check-field">1分足で試算
                   <input id="dailyVirtualFillHistoryEnabled" type="checkbox" checked />
@@ -306,7 +306,7 @@
                   <select id="dailyVirtualFillSide"><option value="buy_limit">買い指値（下に置く）</option><option value="sell_limit">売り指値（上に置く）</option></select>
                 </label>
                 <label>指値距離 %
-                  <input id="dailyLimitDistancePct" type="number" value="0.20" min="0" step="0.01" />
+                  <input id="dailyLimitDistancePct" type="text" inputmode="decimal" value="0.20" min="0" step="0.01" />
                 </label>
               </div>
             </div>
@@ -355,15 +355,18 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>4</span><div><h3>条件診断サマリー</h3><p class="memo-text">指値到達率・必要勝率・値動き・必要値幅を分けて表示します。</p></div></div>
-          <p class="memo-text">これは売買指示ではありません。今日の目標に対する条件の重さを診断するための表示です。</p>
-          <p class="memo-text" id="dailyApiReadinessLine">API準備度: 確認中です。</p>
-          <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
+          <div class="daily-result-head"><span>4</span><div><h3>診断カード</h3><p class="memo-text">まず主要カードで、指値到達率・必要値幅・必要利確価格・必要勝率を確認します。</p></div></div>
           <p class="memo-text" id="dailyErrorMemo"></p>
-          <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
-          <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
-          <p class="memo-text" id="dailyFillRateMemo">指値到達率は、分析用1分足キャッシュから試算します。勝ち回数・利益回数ではありません。計算できない場合だけ手入力値を使います。</p>
           <div class="grid four daily-result-cards" id="dailyReadinessCards"></div>
+          <div class="daily-summary-after-cards">
+            <h4>条件診断サマリー</h4>
+            <p class="memo-text">これは売買指示ではありません。カードの結果を文章で確認するための補足です。</p>
+            <p class="memo-text" id="dailyApiReadinessLine">API準備度: 確認中です。</p>
+            <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
+            <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
+            <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
+            <p class="memo-text" id="dailyFillRateMemo">指値到達率は、分析用1分足キャッシュから試算します。勝ち回数・利益回数ではありません。計算できない場合だけ手入力値を使います。</p>
+          </div>
         </div>
 
         <div class="card daily-step-card">
