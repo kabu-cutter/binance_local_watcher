@@ -2634,6 +2634,10 @@ async function dailyGoal(body = {}) {
     : `${virtualFill.note} 日次目標の仮想約定率として ${fillRateUsed.toFixed(1)}% を使います。`;
   const result = calculations.calculateDailyGoal({
     ...body,
+    // 必要利確価格ベースの指値候補診断で使う現在価格。
+    // ここで渡さないと、日次目標側では現在価格を持てず、候補表が未計算になる。
+    current_price_jpy: Number.isFinite(summary?.price_jpy) ? summary.price_jpy : null,
+    current_price_source: summary?.timestamp ? 'price_history' : 'mock_or_latest_summary',
     virtual_fill_rate_pct: fillRateUsed,
     virtual_fill_rate_pct_used: fillRateUsed,
     virtual_fill_rate_note: fillRateNote,

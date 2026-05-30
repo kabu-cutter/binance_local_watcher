@@ -91,8 +91,22 @@ function elValue(id, fallback = '') {
   const el = document.getElementById(id);
   return el ? el.value : fallback;
 }
+
+function normalizeNumberText(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/[．。]/g, '.')
+    .replace(/[，、]/g, ',')
+    .replace(/[％%]/g, '')
+    .replace(/[−－ー―]/g, '-')
+    .replace(/[,\s]/g, '');
+}
+
 function elNumber(id, fallback = 0) {
-  const value = Number(elValue(id, fallback));
+  const normalized = normalizeNumberText(elValue(id, ''));
+  if (normalized === '') return fallback;
+  const value = Number(normalized);
   return Number.isFinite(value) ? value : fallback;
 }
 function elChecked(id, fallback = false) {
@@ -1213,8 +1227,9 @@ function syncRoundtripCostFromTrade() {
 }
 
 function buildDailyPayload() {
-  syncRoundtripCostFromTrade();
-  const linkedCost = Number(document.getElementById('tradeCostPct').value);
+  // 日次目標側の往復コストは手入力できるようにします。
+  // 損益プレビューのコストは初期同期・変更時同期だけにし、計算直前に上書きしません。
+  const linkedCost = elNumber('dailyCostPct', elNumber('tradeCostPct', 0.28));
   const occurrenceReferenceDays = elNumber('dailyOccurrenceReferenceDays', elNumber('dailyVirtualFillReferenceDays', 30));
   return {
     strategy_template: elValue('dailyTemplate', 'market_priority'),
@@ -1325,6 +1340,7 @@ function renderDailyLimitCandidates(data) {
     ['take_profit', '必要利確価格'],
     ['width', '指値→利確幅'],
     ['width_pct', '必要変動率'],
+    ['sim', '参考利確幅'],
     ['distance', '現在価格から'],
     ['qty', '数量'],
     ['per_target', '1回目標'],
@@ -1336,6 +1352,7 @@ function renderDailyLimitCandidates(data) {
     take_profit: yen(row.required_take_profit_price, 2),
     width: yen(row.required_move_jpy_from_limit, 2),
     width_pct: pct(row.required_move_pct_from_limit, 3),
+    sim: `${row.take_profit_simulation_label || '—'}（${pct(row.take_profit_simulation_pct, 3)} / 差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}）`,
     distance: pct(row.current_price_distance_pct, 3, true),
     qty: qty(row.quantity),
     per_target: yen(row.per_trade_target_jpy, 2),
@@ -1350,6 +1367,7 @@ function renderDailyLimitCandidates(data) {
     const sideText = meta.side === 'sell_limit' ? '売り指値' : '買い指値';
     notesEl.innerHTML = [
       `<li>${sideText}候補の比較です。必要利確価格は、手数料・スプレッド/スリッページ見積と1回目標を含めた概算です。</li>`,
+      '<li>「参考利確幅」は、利確幅シミュレーション%が必要変動率に足りるかだけを見る補助欄です。主判断は必要利確価格と指値→利確幅です。</li>',
       '<li>浅い候補は価格到達しやすい一方、約定後の余裕が薄くなりやすいです。深い候補は約定しにくい代わりに、刺さった後の余裕を見やすくなります。</li>',
       '<li>次段階で、1分足キャッシュを使って指値到達率・約定後利確到達率・損切り先行率を追加します。</li>',
     ].join('');

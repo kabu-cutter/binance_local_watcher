@@ -305,6 +305,21 @@ function limitCandidateConditionKind(label) {
   return 'bad';
 }
 
+function takeProfitSimulationLabel(simulationPct, requiredMovePct) {
+  if (!Number.isFinite(simulationPct) || !Number.isFinite(requiredMovePct)) return '比較不可';
+  const diff = simulationPct - requiredMovePct;
+  if (diff >= 0.05) return '参考幅に余裕';
+  if (diff >= 0) return '参考幅内';
+  if (diff >= -0.05) return '少し不足';
+  return '不足';
+}
+
+function takeProfitSimulationKind(label) {
+  if (label === '参考幅に余裕' || label === '参考幅内') return 'good';
+  if (label === '少し不足' || label === '比較不可') return 'warn';
+  return 'bad';
+}
+
 function limitCandidateNote({ label, distancePct, requiredMovePct, currentPriceDistancePct }) {
   const depthText = distancePct <= 0.05
     ? '現在価格に近い浅め候補です。指値到達は見込みやすい一方、約定後の余裕は薄くなりやすい前提です。'
@@ -331,6 +346,7 @@ function calculateLimitCandidateDiagnostics(body = {}) {
   const expectedSuccessCount = Math.max(1, safeInt(body.expected_success_count, 1));
   const perTradeTarget = target / expectedSuccessCount;
   const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
+  const takeProfitSimulationPct = Math.max(0, safeFloat(body.take_profit_pct, 0.4));
   const side = body.limit_candidate_side === 'sell_limit' ? 'sell_limit' : 'buy_limit';
   const rows = [];
   if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
@@ -348,6 +364,7 @@ function calculateLimitCandidateDiagnostics(body = {}) {
         expected_success_count: expectedSuccessCount,
         per_trade_target_jpy: perTradeTarget,
         roundtrip_cost_pct: costPct,
+        take_profit_simulation_pct: takeProfitSimulationPct,
       },
     };
   }
@@ -369,6 +386,8 @@ function calculateLimitCandidateDiagnostics(body = {}) {
       ? ((requiredTakeProfitPrice - currentPrice) / currentPrice) * 100
       : null;
     const label = limitCandidateConditionLabel(requiredMovePctFromLimit, distancePct);
+    const simulationLabel = takeProfitSimulationLabel(takeProfitSimulationPct, requiredMovePctFromLimit);
+    const simulationGapPct = takeProfitSimulationPct - requiredMovePctFromLimit;
     rows.push({
       key: candidate.key,
       candidate_label: candidate.label,
@@ -390,6 +409,10 @@ function calculateLimitCandidateDiagnostics(body = {}) {
       required_move_jpy_from_limit: Math.abs(requiredTakeProfitPrice - limitPrice),
       required_move_pct_from_limit: requiredMovePctFromLimit,
       take_profit_distance_from_current_pct: takeProfitDistanceFromCurrentPct,
+      take_profit_simulation_pct: takeProfitSimulationPct,
+      take_profit_simulation_gap_pct: simulationGapPct,
+      take_profit_simulation_label: simulationLabel,
+      take_profit_simulation_kind: takeProfitSimulationKind(simulationLabel),
       condition_label: label,
       condition_kind: limitCandidateConditionKind(label),
       note: limitCandidateNote({
@@ -403,7 +426,7 @@ function calculateLimitCandidateDiagnostics(body = {}) {
 
   return {
     rows,
-    note: `必要利確価格ベース: 現在価格${currentPrice.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円を基準に、固定%の${side === 'sell_limit' ? '売り' : '買い'}指値候補を比較しました。主役は「この指値で約定した場合、コスト込みでどの価格まで戻れば1回目標が残るか」です。利確幅シミュレーション%は参考条件で、過去データによる指値到達率・利確到達率・損切り先行率は次段階で追加します。`,
+    note: `必要利確価格ベース: 現在価格${currentPrice.toLocaleString('ja-JP', { maximumFractionDigits: 2 })}円を基準に、固定%の${side === 'sell_limit' ? '売り' : '買い'}指値候補を比較しました。主役は「この指値で約定した場合、コスト込みでどの価格まで戻れば1回目標が残るか」です。利確幅シミュレーション${takeProfitSimulationPct.toFixed(3)}%は参考条件として、必要変動率に足りるかだけ補助表示します。指値到達率・約定後利確到達率・損切り先行率は次段階で追加します。`,
     meta: {
       enabled: true,
       side,
@@ -414,6 +437,7 @@ function calculateLimitCandidateDiagnostics(body = {}) {
       expected_success_count: expectedSuccessCount,
       per_trade_target_jpy: perTradeTarget,
       roundtrip_cost_pct: costPct,
+      take_profit_simulation_pct: takeProfitSimulationPct,
       candidate_count: rows.length,
       candidate_source: 'fixed_percent',
       candidate_distances_pct: DEFAULT_LIMIT_CANDIDATES.map((candidate) => candidate.distance_pct),
