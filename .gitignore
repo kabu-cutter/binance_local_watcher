@@ -60,3 +60,5 @@ release/
 Thumbs.db
 .vscode/
 .idea/
+data/blw.sqlite
+/data
