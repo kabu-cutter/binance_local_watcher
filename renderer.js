@@ -513,29 +513,31 @@ async function loadApiReadiness() {
 
 function renderSidebarPrices(data) {
   const rowsEl = document.getElementById('sidePriceRows');
-  const sourceEl = document.getElementById('sidePriceSource');
   const updatedEl = document.getElementById('sidePriceUpdated');
   if (!rowsEl) return;
   const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
-  if (sourceEl) sourceEl.textContent = data?.data_source ? String(data.data_source) : '—';
   if (!symbols.length) {
     rowsEl.innerHTML = '<div class="side-price-empty">価格データなし</div>';
     if (updatedEl) updatedEl.textContent = '最終更新: —';
     return;
   }
   rowsEl.innerHTML = symbols.map((s) => {
-    const isUp = Number(s.prev_diff_yen) >= 0;
+    const prevDiff = Number(s.prev_diff_yen);
+    const shortPct = Number(s.short_pct);
+    const isUp = Number.isFinite(prevDiff) ? prevDiff >= 0 : shortPct >= 0;
     const directionClass = isUp ? 'up' : 'down';
-    const shortText = Number.isFinite(Number(s.short_pct)) ? `短期 ${pct(s.short_pct, 3, true)}` : (s.status || '—');
+    const shortText = Number.isFinite(shortPct) ? `短期 ${pct(shortPct, 3, true)}` : (s.status || '—');
+    const prevText = Number.isFinite(prevDiff) ? `前回比 ${yen(prevDiff, 0, true)}` : `前回比 ${pct(s.prev_pct, 3, true)}`;
     return `
       <div class="side-price-row ${directionClass}">
-        <div>
+        <div class="side-price-mainline">
           <div class="side-price-symbol">${s.symbol || '—'}</div>
-          <div class="side-price-sub">${shortText}</div>
+          <span class="side-price-chip">${isUp ? '上向き' : '下向き'}</span>
         </div>
-        <div class="side-price-value-block">
-          <div class="side-price-value">${yen(s.price_jpy)}</div>
-          <div class="side-price-change">${pct(s.prev_pct, 3, true)}</div>
+        <div class="side-price-value">${yen(s.price_jpy)}</div>
+        <div class="side-price-meta">
+          <span>${shortText}</span>
+          <span>${prevText}</span>
         </div>
       </div>
     `;
