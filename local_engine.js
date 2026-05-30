@@ -2489,6 +2489,8 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
   const side = normalizeVirtualFillSide(body.virtual_fill_side);
   const referenceDays = normalizeAnalysisCacheDays(body.virtual_fill_reference_days || body.reference_days, 30);
   const limitDistancePct = Math.max(0, safeFloat(body.limit_distance_pct, 0.2));
+  const fillWindowMinutes = Math.max(1, Math.min(240, safeInt(body.virtual_fill_window_minutes || body.occurrence_window_minutes || body.holding_window_minutes, 15)));
+  const fillWindowMs = fillWindowMinutes * 60 * 1000;
   const window = analysisCacheWindow(referenceDays);
   const currentPrice = safeFloat(summary?.price_jpy, NaN);
   const currentLimitPrice = Number.isFinite(currentPrice)
@@ -2511,6 +2513,8 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
     referenced_row_count: 0,
     expected_row_count: expectedRowsForAnalysisWindow(window.start_ms, window.end_ms),
     matched_row_count: 0,
+    start_row_count: 0,
+    evaluation_window_minutes: fillWindowMinutes,
     quality_label: '未計算',
     source: 'analysis_cache',
     used_for_daily_goal: false,
@@ -2532,24 +2536,43 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
       return Number.isFinite(t) && t >= window.start_ms && t < window.end_ms
         && Number.isFinite(open) && Number.isFinite(high) && Number.isFinite(low) && open > 0;
     });
+    rows.sort((a, b) => safeFloat(a.open_time_ms, 0) - safeFloat(b.open_time_ms, 0));
     const expected = expectedRowsForAnalysisWindow(window.start_ms, window.end_ms);
     const coverage = expected > 0 ? rows.length / expected : 0;
+    const startRows = rows.filter((row) => {
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t + fillWindowMs <= window.end_ms;
+    });
     let matched = 0;
-    rows.forEach((row) => {
-      const open = safeFloat(row.open, NaN);
-      const high = safeFloat(row.high, NaN);
-      const low = safeFloat(row.low, NaN);
-      if (!Number.isFinite(open) || open <= 0) return;
+    let searchStartIndex = 0;
+    for (const startRow of startRows) {
+      const startTime = safeFloat(startRow.open_time_ms, NaN);
+      const open = safeFloat(startRow.open, NaN);
+      if (!Number.isFinite(startTime) || !Number.isFinite(open) || open <= 0) continue;
+      while (searchStartIndex < rows.length && safeFloat(rows[searchStartIndex].open_time_ms, NaN) < startTime) {
+        searchStartIndex += 1;
+      }
       const target = side === 'sell_limit'
         ? open * (1 + limitDistancePct / 100)
         : open * (1 - limitDistancePct / 100);
-      if (side === 'sell_limit') {
-        if (high >= target) matched += 1;
-      } else if (low <= target) {
-        matched += 1;
+      const endTimeExclusive = startTime + fillWindowMs;
+      let touched = false;
+      for (let i = searchStartIndex; i < rows.length; i += 1) {
+        const row = rows[i];
+        const t = safeFloat(row.open_time_ms, NaN);
+        if (!Number.isFinite(t)) continue;
+        if (t >= endTimeExclusive) break;
+        const high = safeFloat(row.high, NaN);
+        const low = safeFloat(row.low, NaN);
+        if (side === 'sell_limit') {
+          if (Number.isFinite(high) && high >= target) { touched = true; break; }
+        } else if (Number.isFinite(low) && low <= target) {
+          touched = true; break;
+        }
       }
-    });
-    const rate = rows.length ? Math.max(0, Math.min(100, (matched / rows.length) * 100)) : null;
+      if (touched) matched += 1;
+    }
+    const rate = startRows.length ? Math.max(0, Math.min(100, (matched / startRows.length) * 100)) : null;
     const qualityLabel = rows.length <= 0
       ? '不足'
       : coverage >= 0.95
@@ -2563,6 +2586,8 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
       expected_row_count: expected,
       missing_count: Math.max(0, expected - rows.length),
       matched_row_count: matched,
+      start_row_count: startRows.length,
+      evaluation_window_minutes: fillWindowMinutes,
       coverage_pct: coverage * 100,
       quality_label: qualityLabel,
       source: cache.source,
@@ -2573,17 +2598,17 @@ async function estimateVirtualFillRate(body = {}, summary = null) {
       referenced_file_count: (cache.files || []).length,
       used_for_daily_goal: Number.isFinite(rate),
     };
-    if (rows.length < 10 || !Number.isFinite(rate)) {
+    if (startRows.length < 10 || !Number.isFinite(rate)) {
       return {
         rate: null,
         meta: { ...meta, used_for_daily_goal: false },
-        note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（参照足数 ${rows.length}/${expected}本）。手入力値を代替使用します。`,
+        note: `指値到達率: ${symbol} 1分足 / 直近${referenceDays}日の分析用キャッシュが不足しています（判定起点 ${startRows.length}/${expected}本）。手入力値を代替使用します。`,
       };
     }
     return {
       rate,
       meta,
-      note: `仮想約定率: ${symbol} 1分足 / 直近${referenceDays}日 / ${virtualFillSideLabel(side)} / 指値距離 ${limitDistancePct.toFixed(3)}%。参照${rows.length}本のうち価格到達は${matched}本、${rate.toFixed(1)}%でした。これは実約定率ではなく、価格到達ベースの仮想値です。未確定足は除外しています。`,
+      note: `指値到達率: ${symbol} 1分足 / 直近${referenceDays}日 / ${virtualFillSideLabel(side)} / 指値距離 ${limitDistancePct.toFixed(3)}% / 判定窓 ${fillWindowMinutes}分以内。判定起点${startRows.length}本のうち価格到達は${matched}本、${rate.toFixed(1)}%でした。これは実約定率ではなく、過去データ上の価格到達率です。未確定足と判定窓が足りない末尾足は除外しています。`,
     };
   } catch (error) {
     return {
@@ -2611,9 +2636,8 @@ async function dailyGoal(body = {}) {
     ...body,
     virtual_fill_rate_pct: fillRateUsed,
     virtual_fill_rate_pct_used: fillRateUsed,
-    current_price_jpy: summary?.price_jpy ?? null,
-    limit_candidate_side: body.limit_candidate_side || body.virtual_fill_side || 'buy_limit',
     virtual_fill_rate_note: fillRateNote,
+    virtual_fill_evaluation_window_minutes: virtualFill?.meta?.evaluation_window_minutes || body.virtual_fill_window_minutes || body.occurrence_window_minutes || 15,
     required_move_occurrence_rate_pct: Number.isFinite(occurrence?.rate) ? occurrence.rate : null,
     required_move_occurrence_note: autoEnabled
       ? (occurrence?.note || '必要値幅の出現率: 履歴ベース確認を試しましたが、参考値は作れませんでした。')
