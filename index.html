@@ -16,19 +16,10 @@
           <div class="brand-subtitle">Electron UI / Node engine</div>
         </div>
       </div>
-      <div class="side-price-panel" aria-live="polite">
-        <div class="side-price-head">
-          <span>現在価格</span>
-          <small class="side-price-badge">local</small>
-        </div>
-        <div class="side-price-rows" id="sidePriceRows">
-          <div class="side-price-empty">価格を読み込み中...</div>
-        </div>
-        <div class="side-price-foot" id="sidePriceUpdated">最終更新: —</div>
-      </div>
       <nav class="nav">
         <button class="nav-item active" data-section="summary">サマリー</button>
         <button class="nav-item" data-section="chart">チャート</button>
+        <button class="nav-item" data-section="alerts">アラート</button>
         <button class="nav-item" data-section="impact">値動き影響</button>
         <button class="nav-item" data-section="trade">損益プレビュー</button>
         <button class="nav-item" data-section="daily">日次目標</button>
@@ -53,11 +44,12 @@
         <div class="hero-card">
           <div>
             <p class="eyebrow">Today Monitor</p>
-            <h2>価格、チャート、条件診断をローカルで確認する</h2>
-            <p>rendererは表示と入力、Electron main process は公開価格取得・Kline表示・条件診断の概算計算を担当します。</p>
+            <h2>価格、履歴、計算結果をローカルで確認する</h2>
+            <p>rendererは表示と入力、Electron main process は公開価格取得・履歴CSV・チャートデータ・概算計算を担当します。</p>
           </div>
-          <div class="hero-actions compact-hero-actions">
-            <button class="tiny-refresh" id="refreshAll" title="画面表示を再読み込み">↻ 表示を更新</button>
+          <div class="hero-actions">
+            <button class="primary" id="fetchPrices">現在価格＋履歴を現在まで更新</button>
+            <button class="secondary" id="refreshAll">表示を更新</button>
             <div class="auto-update-box">
               <label class="check-field auto-update-toggle">1分自動更新
                 <input id="autoUpdateEnabled" type="checkbox" checked />
@@ -93,11 +85,164 @@
           </div>
           <p id="summaryMemo" class="memo-text">読み込み中です。</p>
         </div>
+      </section>
+
+      <section class="section" id="chart">
+        <div class="card highlight">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Price Chart</p>
+              <h3>価格グラフ</h3>
+              <p class="card-desc">公開kline一時表示は保存せず見るための表示です。DL済み＋現在まで更新済みは、保存済みklineの不足を確認してから表示します。チャート表示・アラート評価窓・約定可能性計算は分けて扱います。</p>
+            </div>
+            <div class="inline-form wrap">
+              <label>通貨</label>
+              <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+              <label>データ</label>
+              <select id="chartSource"><option value="klines" selected>公開kline一時表示（範囲・足切替用）</option><option value="combined">DL済み＋現在まで更新済み</option><option value="downloaded">DL済みファイルのみ</option></select>
+              <label>表示範囲</label>
+              <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
+              <label>足</label>
+              <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
+              <button class="primary" id="reloadChart">グラフ更新</button>
+            </div>
+            <p class="card-desc">公開kline一時表示では保存せず更新します。DL済み＋現在まで更新済みでは、保存済みデータが十分なら確認を出さず表示し、不足時だけ追加DLを確認します。</p>
+          </div>
+          <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
+          <div class="chart-box">
+            <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+
+        <div class="card movement-card">
+          <div class="card-head compact-head">
+            <div>
+              <p class="eyebrow">Alert Windows</p>
+              <h3>短期変動チェック</h3>
+              <p class="card-desc">TradingViewの Moving up % / Moving down % のように、一定時間の中で何％上がった/下がったかを確認します。売買サインではありません。</p>
+            </div>
+            <button class="secondary" id="reloadMovementWindows">監視窓更新</button>
+          </div>
+          <p class="memo-text" id="movementWindowsMemo">まだ確認していません。</p>
+          <div class="table-wrap compact-table"><table id="movementWindowsTable"></table></div>
+          <details class="reference-panel" open>
+            <summary>参考：監視窓の考え方</summary>
+            <p>このアプリでは、チャートに表示する時間足とは別に、1分・5分・15分・30分・1時間の監視窓で価格変動を確認します。約定可能性・Daily Goal 用の分析計算も別系統です。</p>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead><tr><th>監視窓</th><th>目的</th></tr></thead>
+                <tbody>
+                  <tr><td>1分</td><td>瞬間的な急変、成行注文の滑りリスク</td></tr>
+                  <tr><td>5分</td><td>短期の勢い、急騰・急落の継続確認</td></tr>
+                  <tr><td>15分</td><td>日中の流れ、レンジブレイク確認</td></tr>
+                  <tr><td>30分</td><td>まとまった方向感</td></tr>
+                  <tr><td>1時間</td><td>大きめの地合い確認</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="small">チャートは「見る画面」、アラートは「気づく窓」、Daily Goal は「診断画面」、約定可能性は別計算として扱います。</p>
+          </details>
+        </div>
+
         <div class="card">
           <div class="card-head">
             <div>
-              <h3>上昇アラート（簡易）</h3>
-              <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。売買シグナルではありません。</p>
+              <h3>履歴データDL</h3>
+              <p class="card-desc">Binance公開klineを1時間チャンクに分けて取得し、long_dataへ保存します。通常のグラフは「DL済み＋現在まで更新済み」を使います。上部の現在更新ボタンは、現在価格保存とBTC/ETHの履歴更新をまとめて行います。</p>
+            </div>
+          </div>
+          <div class="form-grid history-form">
+            <label>通貨
+              <select id="historySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+            </label>
+            <label>間隔
+              <select id="historyInterval"><option>1m</option><option>5m</option><option>15m</option><option>1h</option></select>
+            </label>
+            <label>日付
+              <input id="historyDate" type="date" />
+            </label>
+            <label>開始時
+              <input id="historyStartHour" type="number" value="0" min="0" max="23" />
+            </label>
+            <label>終了時
+              <input id="historyEndHour" type="number" value="24" min="1" max="24" />
+            </label>
+            <label class="check-field">取得済みスキップ
+              <input id="historySkipExisting" type="checkbox" checked />
+            </label>
+          </div>
+          <button class="primary" id="downloadHistory">履歴を分割DL</button>
+          <button class="secondary" id="updateHistoryToNow">選択通貨を現在時刻まで差分DL</button>
+          <p class="memo-text" id="historyDownloadMemo">未取得です。丸1日なら開始0、終了24にします。</p>
+        </div>
+      </section>
+
+
+      <section class="section" id="alerts">
+        <div class="card highlight alert-hero-card">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Alert Center</p>
+              <h3>アラートセンター</h3>
+              <p class="card-desc">ここは「売買するための合図」ではなく、手動取引前に気づくための安全装置です。チャート表示、アラート評価窓、Daily Goal/約定可能性計算は分けて扱います。</p>
+            </div>
+            <button class="secondary" id="reloadAlertDashboard">アラート全体更新</button>
+          </div>
+          <div class="alert-level-grid">
+            <div class="alert-level-card level-info"><strong>Lv1 情報</strong><span>状況メモ・ログ中心</span></div>
+            <div class="alert-level-card level-watch"><strong>Lv2 注意</strong><span>少し気にする変化</span></div>
+            <div class="alert-level-card level-warning"><strong>Lv3 警戒</strong><span>取引前チェック推奨</span></div>
+            <div class="alert-level-card level-stop"><strong>Lv4 見送り候補</strong><span>条件が重い可能性</span></div>
+          </div>
+          <p class="memo-text compact-memo">今は土台として「監視窓・上昇判定・履歴」を先に置きます。あとで下落、スプレッド/滑り、必要値幅、データ不足、Ollama遅延などのアラートへ育てます。</p>
+        </div>
+
+        <div class="grid two alert-foundation-grid">
+          <div class="card movement-card">
+            <div class="card-head compact-head">
+              <div>
+                <p class="eyebrow">Alert Windows</p>
+                <h3>監視窓の役割</h3>
+                <p class="card-desc">TradingView の Moving up % / Moving down % 的に、一定時間の中で何％動いたかを見る考え方です。</p>
+              </div>
+            </div>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead><tr><th>監視窓</th><th>主な見る目的</th></tr></thead>
+                <tbody>
+                  <tr><td>1分</td><td>瞬間的な急変、成行注文の滑りリスク</td></tr>
+                  <tr><td>5分</td><td>短期の勢い、急騰・急落の継続確認</td></tr>
+                  <tr><td>15分</td><td>日中の流れ、レンジブレイク確認</td></tr>
+                  <tr><td>30分</td><td>まとまった方向感</td></tr>
+                  <tr><td>1時間</td><td>大きめの地合い確認</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head compact-head">
+              <div>
+                <p class="eyebrow">Next Growth</p>
+                <h3>あとで増やすアラート</h3>
+                <p class="card-desc">土台は先に作り、条件診断の進化に合わせて追加します。</p>
+              </div>
+            </div>
+            <ul class="check-list alert-next-list">
+              <li>下落・急落アラート</li>
+              <li>成行滑り/スプレッド注意</li>
+              <li>必要値幅・コスト過大アラート</li>
+              <li>指値候補の浅すぎ/深すぎ注意</li>
+              <li>価格更新停止・データ不足アラート</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card alert-settings-card">
+          <div class="card-head">
+            <div>
+              <h3>アラート判定設定（v1）</h3>
+              <p class="card-desc">直近N分でX%以上動いたかを判定します。まずは上昇系の土台から始め、あとで下落・コスト・システム系へ拡張します。売買シグナルではありません。</p>
             </div>
             <div class="inline-form wrap">
               <label>窓(分)</label>
@@ -136,42 +281,7 @@
           <p class="memo-text" id="alertHistoryMemo">まだ履歴を読み込んでいません。</p>
           <div class="table-wrap"><table id="alertHistoryTable"></table></div>
         </div>
-      </section>
 
-      <section class="section" id="chart">
-        <div class="card highlight">
-          <div class="card-head">
-            <div>
-              <p class="eyebrow">Kline Viewer</p>
-              <h3>Klineチャート</h3>
-              <p class="card-desc">Binance公開Klineを一時取得して表示します。ここでは保存・DL操作を前面に出さず、見るための軽いチャートにします。</p>
-            </div>
-            <div class="inline-form wrap">
-              <label>通貨</label>
-              <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
-              <label>表示範囲</label>
-              <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
-              <label>足</label>
-              <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
-              <button class="primary" id="reloadChart">チャートを更新</button>
-            </div>
-            <p class="card-desc">表示更新のみです。分析用1分足キャッシュは、日次目標・指値候補診断を実行する時点で必要分だけ確認・更新する方針に分けます。</p>
-          </div>
-          <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
-          <div class="chart-box">
-            <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
-        <div class="card soft-info-card">
-          <div class="card-head compact-head">
-            <div>
-              <h3>チャートと分析データの分け方</h3>
-              <p class="card-desc">このタブは閲覧用のKline表示です。指値到達率・利確到達率・損切り先行率は、日次目標側で分析用キャッシュを使って計算します。</p>
-            </div>
-            <span class="tag soft">表示専用</span>
-          </div>
-          <p class="memo-text">手動DLボタンはここでは出さず、必要になったらデータ管理・設定・デバッグ側へ移します。</p>
-        </div>
       </section>
 
       <section class="section" id="impact">
@@ -225,7 +335,7 @@
             <div>
               <p class="eyebrow">Daily Goal</p>
               <h3>日次目標の条件診断</h3>
-              <p class="card-desc">今日の目標を、指値到達率・必要値幅出現率・必要勝率に分けて確認します。これは売買指示ではなく、無理な取引を避けるための準備画面です。</p>
+              <p class="card-desc">今日の目標を、到達想定率・必要値幅出現率・必要勝率に分けて確認します。これは売買指示ではなく、無理な取引を避けるための準備画面です。</p>
             </div>
           </div>
 
@@ -236,7 +346,7 @@
                 <label class="daily-template-field">今日の見方
                   <input id="dailyTemplate" type="hidden" value="market_priority" />
                   <div class="segmented" id="dailyTemplateTabs">
-                    <button type="button" class="seg-btn active" data-template="market_priority">約定優先</button>
+                    <button type="button" class="seg-btn active" data-template="market_priority">到達優先</button>
                     <button type="button" class="seg-btn" data-template="pullback_limit">押し目待ち</button>
                     <button type="button" class="seg-btn" data-template="breakout_follow">ブレイクアウト</button>
                     <button type="button" class="seg-btn" data-template="range_reversion">レンジ逆張り</button>
@@ -247,40 +357,40 @@
                   <select id="dailySymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
                 </label>
                 <label>日次目標利益
-                  <input id="dailyTarget" type="text" inputmode="decimal" value="100" />
+                  <input id="dailyTarget" type="number" value="100" />
                 </label>
                 <label>想定成功回数（分割プラン）
-                  <input id="dailyExpectedWins" type="text" inputmode="decimal" value="3" min="1" />
+                  <input id="dailyExpectedWins" type="number" value="3" min="1" />
                 </label>
-                <label>利確幅シミュレーション %（参考）
-                  <input id="dailyTakeProfitPct" type="text" inputmode="decimal" value="0.40" min="0" step="0.01" />
+                <label>想定利確幅 %（1回で捉える値幅）
+                  <input id="dailyTakeProfitPct" type="number" value="0.40" min="0" step="0.01" />
                 </label>
                 <label>資金 / 主投入額
-                  <input id="dailyCapital" type="text" inputmode="decimal" value="2000" />
+                  <input id="dailyCapital" type="number" value="2000" />
                 </label>
-                <label>最小取引機会数
-                  <input id="dailyMinOpp" type="text" inputmode="decimal" value="5" />
+                <label>最小機会回数
+                  <input id="dailyMinOpp" type="number" value="5" />
                 </label>
-                <label>最大取引機会数
-                  <input id="dailyMaxOpp" type="text" inputmode="decimal" value="10" />
+                <label>最大機会回数
+                  <input id="dailyMaxOpp" type="number" value="10" />
                 </label>
                 <label>損切り逆行率 %
-                  <input id="dailyStopPct" type="text" inputmode="decimal" value="0.5" step="0.1" />
+                  <input id="dailyStopPct" type="number" value="0.5" step="0.1" />
                 </label>
                 <label>往復コスト %
-                  <input id="dailyCostPct" type="text" inputmode="decimal" value="0.28" step="0.01" />
+                  <input id="dailyCostPct" type="number" value="0.28" step="0.01" readonly />
                 </label>
-                <label>未約定シナリオ %
+                <label>未到達シナリオ %
                   <input id="dailyCancelRates" value="10,30,50,70" />
                 </label>
               </div>
             </div>
 
             <div class="daily-input-block">
-              <div class="daily-block-title"><span>2</span><div><h4>指値到達率（仮想）</h4><p>1分足キャッシュで、指値価格へ到達した割合を試算します。勝ち回数ではありません。</p></div></div>
+              <div class="daily-block-title"><span>2</span><div><h4>到達想定率</h4><p>1分足キャッシュで、指定した指値距離へ価格が到達した割合を試算します。実際の注文成立率ではありません。</p></div></div>
               <div class="form-grid daily-form daily-form-compact two-col">
-                <label>指値到達率（手入力/代替） %
-                  <input id="dailyFillRate" type="text" inputmode="decimal" value="70" min="0" max="100" step="1" />
+                <label>到達想定率（手入力/代替） %
+                  <input id="dailyFillRate" type="number" value="70" min="0" max="100" step="1" />
                 </label>
                 <label class="check-field">1分足で試算
                   <input id="dailyVirtualFillHistoryEnabled" type="checkbox" checked />
@@ -292,7 +402,7 @@
                   <select id="dailyVirtualFillSide"><option value="buy_limit">買い指値（下に置く）</option><option value="sell_limit">売り指値（上に置く）</option></select>
                 </label>
                 <label>指値距離 %
-                  <input id="dailyLimitDistancePct" type="text" inputmode="decimal" value="0.20" min="0" step="0.01" />
+                  <input id="dailyLimitDistancePct" type="number" value="0.20" min="0" step="0.01" />
                 </label>
               </div>
             </div>
@@ -341,44 +451,34 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>4</span><div><h3>診断カード</h3><p class="memo-text">まず主要カードで、指値到達率・必要値幅・必要利確価格・必要勝率を確認します。</p></div></div>
+          <div class="daily-result-head"><span>4</span><div><h3>条件診断サマリー</h3><p class="memo-text">到達想定率・必要勝率・値動き・必要値幅を分けて表示します。</p></div></div>
+          <p class="memo-text">これは売買指示ではありません。今日の目標に対する条件の重さを診断するための表示です。</p>
+          <p class="memo-text" id="dailyApiReadinessLine">API準備度: 確認中です。</p>
+          <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
           <p class="memo-text" id="dailyErrorMemo"></p>
+          <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
+          <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
+          <p class="memo-text" id="dailyFillRateMemo">到達想定率は、分析用1分足キャッシュから試算します。計算できない場合だけ手入力値を使います。実際の注文成立を保証しません。</p>
           <div class="grid four daily-result-cards" id="dailyReadinessCards"></div>
-          <div class="daily-summary-after-cards">
-            <h4>条件診断サマリー</h4>
-            <p class="memo-text">これは売買指示ではありません。カードの結果を文章で確認するための補足です。</p>
-            <p class="memo-text" id="dailyApiReadinessLine">API準備度: 確認中です。</p>
-            <p class="memo-text" id="dailyTemplateMemo">テンプレートは売買シグナルではなく、条件比較の補助です。</p>
-            <p class="memo-text" id="dailySuggestion">まだ計算していません。</p>
-            <p class="memo-text" id="dailyDiagnosticSummary">総合診断はまだありません。</p>
-            <p class="memo-text" id="dailyFillRateMemo">指値到達率は、分析用1分足キャッシュから試算します。勝ち回数・利益回数ではありません。計算できない場合だけ手入力値を使います。</p>
-          </div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>5</span><div><h3>必要利確価格ベースの指値候補診断</h3><p class="memo-text">固定%の指値候補ごとに、指値価格から必要利確価格までの値幅を比較します。利確幅シミュレーション%は参考で、主役は必要利確価格です。</p></div></div>
-          <div class="daily-guide-box" id="dailyLimitCandidateGuide">
-            <strong>読み方</strong>
-            <ul>
-              <li>まず「指値価格 → 必要利確価格」を見ます。</li>
-              <li>「指値後必要値幅」は、現在価格からではなく、指値で約定した後に必要な値幅です。</li>
-              <li>この表は条件診断で、買い/売りの指示ではありません。</li>
-            </ul>
-          </div>
-          <p class="memo-text" id="dailyLimitCandidateMemo">まだ計算していません。</p>
-          <div class="daily-limit-candidate-cards" id="dailyLimitCandidateCards"></div>
-          <div class="table-wrap daily-limit-table-wrap"><table id="dailyLimitCandidateTable"></table></div>
-          <ul class="daily-candidate-notes" id="dailyLimitCandidateNotes"></ul>
+          <div class="daily-result-head"><span>5</span><div><h3>条件の重さ内訳</h3><p class="memo-text">どこが重い条件になっているかを、値幅・コスト・損切り・到達想定・必要勝率に分けて読みます。</p></div></div>
+          <div class="grid three daily-plan-grid" id="dailyWeightBreakdown"></div>
+          <h4 class="subsection-title">全勝前提に近くなる理由</h4>
+          <ul class="prep-list" id="dailyWinPremiseNotes">
+            <li>まだ計算していません。</li>
+          </ul>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>6</span><div><h3>指値到達率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
+          <div class="daily-result-head"><span>6</span><div><h3>到達想定率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実際の注文成立率ではなく、価格到達ベースの参考値です。</p></div></div>
           <p class="memo-text" id="dailyVirtualFillMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyVirtualFillTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>7</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
+          <div class="daily-result-head"><span>7</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「到達想定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
           <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
         </div>
@@ -392,8 +492,8 @@
         </div>
 
         <div class="card daily-step-card">
-          <h3>指値到達率・必要勝率・値動きシナリオ比較</h3>
-          <p class="memo-text">指値到達率は「指値に価格が到達した割合」で、勝ち回数ではありません。指値到達見込みは取引機会数×指値到達率で表示します。必要勝率は「勝てる確率」ではなく、目標達成に必要な勝ち方の厳しさです。</p>
+          <h3>到達想定率・必要勝率・値動きシナリオ比較</h3>
+          <p class="memo-text">到達想定率は「指値距離に価格が届いた想定」で、勝ち回数でも実際の注文成立率でもありません。必要勝率は「勝てる確率」ではなく、目標達成に必要な成功比率の厳しさです。100%近辺は全勝前提として見ます。</p>
           <div class="table-wrap"><table id="dailyScenarioTable"></table></div>
         </div>
         <div class="card">
@@ -430,7 +530,7 @@
             <p class="memo-text" id="dbStatusMemo">DB状態を確認中です。</p>
             <div class="cache-control-panel">
               <h4>分析用1分足キャッシュ</h4>
-              <p class="card-desc">指値到達率・必要値幅出現率・日次目標診断に使う1分足データです.チャート表示用ではなく、分析用データとしてlong_data/DBへ保存します。</p>
+              <p class="card-desc">到達想定率・必要値幅出現率・日次目標診断に使う1分足データです。チャート表示用ではなく、分析用データとしてlong_data/DBへ保存します。</p>
               <div class="form-row compact-row">
                 <label>対象
                   <select id="analysisCacheSymbol"><option value="all" selected>BTCJPY / ETHJPY</option><option>BTCJPY</option><option>ETHJPY</option></select>
