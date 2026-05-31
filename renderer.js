@@ -851,11 +851,40 @@ function applyAlertPreset() {
   if (windowEl) windowEl.value = String(preset.windowMinutes);
   if (thresholdEl) thresholdEl.value = preset.thresholdPct.toFixed(2);
   if (modeEl) modeEl.value = preset.mode;
+  updateAlertModeHints();
 }
 
 function markAlertPresetCustom() {
   const presetEl = document.getElementById('alertSensitivityPreset');
   if (presetEl) presetEl.value = 'custom';
+}
+
+function updateAlertModeHints() {
+  const mode = document.getElementById('alertMode')?.value || 'simple';
+  document.querySelectorAll('[data-mode-target]').forEach((el) => {
+    const target = el.dataset.modeTarget;
+    const isActive = target === mode;
+    el.classList.toggle('is-active', isActive);
+    el.classList.toggle('is-standby', !isActive);
+    const badge = el.querySelector('.mode-badge');
+    if (!badge) return;
+    if (isActive) {
+      badge.textContent = '使用中';
+    } else if (target === 'rolling') {
+      badge.textContent = 'rolling用';
+    } else if (target === 'sustained') {
+      badge.textContent = 'sustained用';
+    }
+  });
+  const hint = document.getElementById('alertModeHint');
+  if (!hint) return;
+  if (mode === 'rolling') {
+    hint.textContent = 'rollingでは、直近窓内の連続上昇本数を重視します。上昇比率%は表示していますが、主役はrolling最小連続本数です。';
+  } else if (mode === 'sustained') {
+    hint.textContent = 'sustainedでは、直近窓内の変動率と上昇比率%を組み合わせます。rolling最小連続本数は表示したまま参考色にしています。';
+  } else {
+    hint.textContent = 'simpleでは、窓・しきい値を使って単純な変動率を見ます。rolling/sustained用の項目は隠さず、参考色で残しています。';
+  }
 }
 
 function updateAlertThresholdGuide(data = null) {
@@ -877,6 +906,7 @@ function updateAlertThresholdGuide(data = null) {
 async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
+  updateAlertModeHints();
   const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
   const risingRatio = Number(document.getElementById('alertRisingRatio').value);
   const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
@@ -1675,6 +1705,7 @@ document.addEventListener('DOMContentLoaded', () => {
   applyDailyTemplate();
   syncRoundtripCostFromTrade();
   applyAlertPreset();
+  updateAlertModeHints();
   updateAlertThresholdGuide();
   document.getElementById('alertSensitivityPreset')?.addEventListener('change', async () => {
     applyAlertPreset();
@@ -1682,7 +1713,7 @@ document.addEventListener('DOMContentLoaded', () => {
     await loadAlertPreview();
   });
   document.getElementById('alertWindowMinutes').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
-  document.getElementById('alertMode').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
+  document.getElementById('alertMode').addEventListener('change', () => { markAlertPresetCustom(); updateAlertModeHints(); loadAlertPreview(); });
   document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
   document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
