@@ -629,10 +629,9 @@ async function loadSummaryMiniCharts() {
     const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
     if (meta) meta.textContent = '読み込み中...';
     try {
-      // サマリーのミニチャートは「直近の形」を軽く見る目的なので、
-      // チャートタブの日付指定には依存させず、DL済み＋現在まで更新済みデータを優先します。
-      const today = todayJstDateText();
-      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=combined&interval=1m&date=${encodeURIComponent(today)}&start_hour=0&end_hour=24&limit=80`);
+      // サマリーのミニチャートは閲覧用の軽い表示です。
+      // 保存済み履歴やDL済みファイルには依存せず、チャートタブと同じくBinance公開Klineを一時取得して表示します。
+      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=klines&interval=1m&range=3h&limit=80`);
       renderMiniChart(symbol, data);
     } catch (e) {
       const svg = document.getElementById(`summaryMiniChart${symbol}`);
