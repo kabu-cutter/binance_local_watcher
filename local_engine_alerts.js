@@ -8,21 +8,32 @@ function safeInt(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function isBlankInput(value) {
+  return value === null || value === undefined || String(value).trim() === '';
+}
+
+function safeNonNegativeFloat(value, fallback = 0) {
+  if (isBlankInput(value)) return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
 function parseAlertOptions(params = {}, symbols = []) {
   const windowMinutes = Math.max(1, Math.min(240, safeInt(params.window_minutes, 15)));
   const modeText = String(params.alert_mode || 'simple').trim().toLowerCase();
   const alertMode = ['simple', 'rolling', 'sustained'].includes(modeText) ? modeText : 'simple';
   const rollingMinPoints = Math.max(2, Math.min(20, safeInt(params.rolling_min_points, 3)));
   const risingRatioThreshold = Math.max(1, Math.min(100, safeFloat(params.alert_rising_ratio, 60)));
-  const thresholdPct = Math.max(0, safeFloat(params.threshold_pct, 0.2));
+  const thresholdPct = safeNonNegativeFloat(params.threshold_pct, 0.2);
   const thresholdsText = String(params.thresholds || '').trim();
   const thresholdsBySymbol = {};
   if (thresholdsText) {
     thresholdsText.split(',').forEach((part) => {
       const [symbolText, thresholdText] = String(part).split(':').map((v) => String(v || '').trim());
       if (!symbols.includes(symbolText)) return;
-      const value = safeFloat(thresholdText, NaN);
-      if (!Number.isFinite(value) || value < 0) return;
+      if (isBlankInput(thresholdText)) return;
+      const value = safeNonNegativeFloat(thresholdText, NaN);
+      if (!Number.isFinite(value)) return;
       thresholdsBySymbol[symbolText] = value;
     });
   }

@@ -107,6 +107,25 @@ function safeInt(value, fallback = 0) {
   return calculations.safeInt(value, fallback);
 }
 
+function isBlankInput(value) {
+  return value === null || value === undefined || String(value).trim() === '';
+}
+
+function safeNonNegativeFloat(value, fallback = 0) {
+  if (isBlankInput(value)) return fallback;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function parseBooleanInput(value, fallback = false) {
+  if (value === true || value === false) return value;
+  if (isBlankInput(value)) return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(text)) return true;
+  if (['false', '0', 'no', 'off'].includes(text)) return false;
+  return fallback;
+}
+
 function parseTimestamp(text) {
   if (!text) return null;
   const normalized = String(text).replace(' JST', '+09:00');
@@ -2022,15 +2041,16 @@ async function alertPreview(params = {}) {
   const alertMode = ['simple', 'rolling', 'sustained'].includes(modeText) ? modeText : 'simple';
   const rollingMinPoints = Math.max(2, Math.min(20, safeInt(params.rolling_min_points, 3)));
   const risingRatioThreshold = Math.max(1, Math.min(100, safeFloat(params.alert_rising_ratio, 60)));
-  const thresholdPct = Math.max(0, safeFloat(params.threshold_pct, 0.2));
+  const thresholdPct = safeNonNegativeFloat(params.threshold_pct, 0.2);
   const thresholdsText = String(params.thresholds || '').trim();
   const thresholdsBySymbol = {};
   if (thresholdsText) {
     thresholdsText.split(',').forEach((part) => {
       const [symbolText, thresholdText] = String(part).split(':').map((v) => String(v || '').trim());
       if (!SYMBOLS.includes(symbolText)) return;
-      const value = safeFloat(thresholdText, NaN);
-      if (!Number.isFinite(value) || value < 0) return;
+      if (isBlankInput(thresholdText)) return;
+      const value = safeNonNegativeFloat(thresholdText, NaN);
+      if (!Number.isFinite(value)) return;
       thresholdsBySymbol[symbolText] = value;
     });
   }
@@ -2040,7 +2060,7 @@ async function alertPreview(params = {}) {
   const targetSymbols = selectedSymbols.length
     ? SYMBOLS.filter((symbol) => selectedSymbols.includes(symbol))
     : SYMBOLS.slice();
-  const saveHistory = params.save_history !== false;
+  const saveHistory = parseBooleanInput(params.save_history, true);
   const historyLimit = Math.max(20, Math.min(500, safeInt(params.history_limit, 200)));
   const { rows, source } = await readHistoryRows();
   if (!rows.length) {

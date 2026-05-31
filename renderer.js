@@ -1,7 +1,6 @@
 const titles = {
   summary: ['サマリー', 'Electron main process が公開データ取得・履歴・計算を担当します。'],
   chart: ['チャート', 'Binance公開Klineを一時取得して、保存せず軽く表示します。'],
-  alerts: ['アラート', '売買サインではなく、手動取引前に気づくための監視・注意表示を整理します。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
   daily: ['日次目標', '指値到達率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
@@ -825,14 +824,22 @@ async function loadImpact() {
   ], rows);
 }
 
+function optionalPercentInputValue(id) {
+  const el = document.getElementById(id);
+  const raw = String(el?.value ?? '').trim();
+  if (!raw) return null;
+  const number = Number(raw);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
 async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
   const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
   const risingRatio = Number(document.getElementById('alertRisingRatio').value);
-  const thresholdPct = Number(document.getElementById('alertThresholdPct').value);
-  const btcThreshold = Number(document.getElementById('alertThresholdBTC').value);
-  const ethThreshold = Number(document.getElementById('alertThresholdETH').value);
+  const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.2;
+  const btcThreshold = optionalPercentInputValue('alertThresholdBTC');
+  const ethThreshold = optionalPercentInputValue('alertThresholdETH');
   const saveHistory = document.getElementById('alertSaveHistory').checked;
   const selectedSymbols = Array.from(document.querySelectorAll('.alertSymbol:checked')).map((el) => el.value);
   if (!selectedSymbols.length) {
@@ -844,8 +851,8 @@ async function loadAlertPreview() {
     return;
   }
   const thresholdPairs = [];
-  if (Number.isFinite(btcThreshold) && btcThreshold >= 0) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
-  if (Number.isFinite(ethThreshold) && ethThreshold >= 0) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
+  if (btcThreshold !== null) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
+  if (ethThreshold !== null) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
   const thresholdsQuery = thresholdPairs.join(',');
   const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
   document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 上昇比率 ${pct(data.alert_rising_ratio, 1)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
@@ -1556,7 +1563,6 @@ function setupNav() {
       document.getElementById('pageSubtitle').textContent = titles[section][1];
       if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
-      if (section === 'alerts') loadAlertPreview().catch(console.error);
     });
   });
 }
@@ -1578,7 +1584,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
-  document.getElementById('reloadAlertDashboard')?.addEventListener('click', loadAlertPreview);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
