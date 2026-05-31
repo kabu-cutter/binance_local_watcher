@@ -2041,7 +2041,8 @@ async function alertPreview(params = {}) {
   const alertMode = ['simple', 'rolling', 'sustained'].includes(modeText) ? modeText : 'simple';
   const rollingMinPoints = Math.max(2, Math.min(20, safeInt(params.rolling_min_points, 3)));
   const risingRatioThreshold = Math.max(1, Math.min(100, safeFloat(params.alert_rising_ratio, 60)));
-  const thresholdPct = safeNonNegativeFloat(params.threshold_pct, 0.2);
+  const thresholdPct = safeNonNegativeFloat(params.threshold_pct, 0.3);
+  const costFloorPct = safeNonNegativeFloat(params.cost_floor_pct, 0.28);
   const thresholdsText = String(params.thresholds || '').trim();
   const thresholdsBySymbol = {};
   if (thresholdsText) {
@@ -2063,31 +2064,71 @@ async function alertPreview(params = {}) {
   const saveHistory = parseBooleanInput(params.save_history, true);
   const historyLimit = Math.max(20, Math.min(500, safeInt(params.history_limit, 200)));
   const { rows, source } = await readHistoryRows();
+  const makeLevel = (movePct, thresholdForSymbol) => {
+    if (!Number.isFinite(movePct) || !Number.isFinite(thresholdForSymbol) || thresholdForSymbol <= 0) {
+      return { level: '—', level_rank: 0, level_note: '判定不可', alert_hit: false };
+    }
+    if (movePct >= thresholdForSymbol * 2) {
+      return { level: 'Lv3 警戒', level_rank: 3, level_note: 'しきい値の2倍以上。取引前チェック推奨。', alert_hit: true };
+    }
+    if (movePct >= thresholdForSymbol) {
+      return { level: 'Lv2 注意', level_rank: 2, level_note: 'しきい値以上。注意表示と履歴保存の対象。', alert_hit: true };
+    }
+    if (movePct >= Math.max(thresholdForSymbol * 0.5, 0.03)) {
+      return { level: 'Lv1 情報', level_rank: 1, level_note: '小さめの変化。表示のみ。', alert_hit: false };
+    }
+    return { level: '通常', level_rank: 0, level_note: 'しきい値未満。', alert_hit: false };
+  };
+  const thresholdGuidance = thresholdPct < costFloorPct
+    ? `共通しきい値 ${thresholdPct.toFixed(2)}% は往復コスト目安 ${costFloorPct.toFixed(2)}% より低めです。情報表示寄りとして扱うのが安全です。`
+    : thresholdPct < costFloorPct * 1.5
+      ? `共通しきい値 ${thresholdPct.toFixed(2)}% は往復コスト目安 ${costFloorPct.toFixed(2)}% に近い水準です。注意アラートの初期値としては標準寄りです。`
+      : `共通しきい値 ${thresholdPct.toFixed(2)}% は往復コスト目安 ${costFloorPct.toFixed(2)}% より余裕を見た設定です。`;
   if (!rows.length) {
     return {
+      alert_mode: alertMode,
+      rolling_min_points: rollingMinPoints,
+      alert_rising_ratio: risingRatioThreshold,
       window_minutes: windowMinutes,
       threshold_pct: thresholdPct,
+      common_threshold_pct: thresholdPct,
+      cost_floor_pct: costFloorPct,
+      threshold_guidance: thresholdGuidance,
       source,
       symbols: targetSymbols,
       rows: targetSymbols.map((symbol) => ({
         symbol,
         status: 'データ不足',
+        level: '—',
+        level_rank: 0,
+        level_note: '履歴データ不足',
+        alert_hit: false,
         move_pct: null,
+        threshold_pct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct,
         samples: 0,
         latest_price: null,
         base_price: null,
         latest_time: '',
       })),
+      top_alert: null,
+      history_saved: 0,
+      alert_count: 0,
       message: '履歴データがないためアラート判定は未実施です。',
     };
   }
   const resultRows = targetSymbols.map((symbol) => {
     const symbolRows = rows.filter((row) => row.symbol === symbol).sort((a, b) => a.timestamp - b.timestamp);
+    const thresholdForSymbol = Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct;
     if (symbolRows.length < 2) {
       return {
         symbol,
         status: 'データ不足',
+        level: '—',
+        level_rank: 0,
+        level_note: '履歴データ不足',
+        alert_hit: false,
         move_pct: null,
+        threshold_pct: thresholdForSymbol,
         samples: symbolRows.length,
         latest_price: symbolRows[0]?.price ?? null,
         base_price: symbolRows[0]?.price ?? null,
@@ -2102,7 +2143,12 @@ async function alertPreview(params = {}) {
       return {
         symbol,
         status: 'データ不足',
+        level: '—',
+        level_rank: 0,
+        level_note: '窓内の起点価格不足',
+        alert_hit: false,
         move_pct: null,
+        threshold_pct: thresholdForSymbol,
         samples: windowRows.length,
         latest_price: latest.price,
         base_price: null,
@@ -2110,7 +2156,6 @@ async function alertPreview(params = {}) {
       };
     }
     const movePct = ((latest.price - base.price) / base.price) * 100;
-    const thresholdForSymbol = Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct;
     let streakCount = 0;
     for (let i = windowRows.length - 1; i >= 0; i -= 1) {
       const pivot = windowRows[i];
@@ -2137,11 +2182,17 @@ async function alertPreview(params = {}) {
     const rollingHit = rollingStreak >= rollingMinPoints && movePct >= Math.max(thresholdForSymbol * 0.4, 0.02);
     const sustainedHit = movePct >= thresholdForSymbol && risingRatio >= risingRatioThreshold;
     const hit = alertMode === 'rolling' ? rollingHit : alertMode === 'sustained' ? sustainedHit : simpleHit;
+    const levelInfo = makeLevel(movePct, thresholdForSymbol);
+    const alertHit = hit && levelInfo.alert_hit;
     return {
       symbol,
-      status: hit
+      status: alertHit
         ? (alertMode === 'rolling' ? 'ローリング上昇アラート' : alertMode === 'sustained' ? '持続上昇アラート' : '上昇アラート')
         : '監視中',
+      level: levelInfo.level,
+      level_rank: levelInfo.level_rank,
+      level_note: levelInfo.level_note,
+      alert_hit: alertHit,
       move_pct: movePct,
       threshold_pct: thresholdForSymbol,
       streak_count: streakCount,
@@ -2153,7 +2204,7 @@ async function alertPreview(params = {}) {
       latest_time: formatJst(latest.timestamp),
     };
   });
-  const alertCount = resultRows.filter((row) => String(row.status).includes('アラート')).length;
+  const alertCount = resultRows.filter((row) => row.alert_hit).length;
   const ranked = resultRows.filter((row) => Number.isFinite(row.move_pct)).sort((a, b) => b.move_pct - a.move_pct);
   const topAlert = ranked.length ? ranked[0] : null;
   let historySaved = 0;
@@ -2161,13 +2212,16 @@ async function alertPreview(params = {}) {
     const existing = await readAlertHistory();
     const nowText = nowJstIso();
     const appendItems = resultRows
-      .filter((row) => String(row.status).includes('アラート'))
+      .filter((row) => row.alert_hit)
       .map((row) => ({
         timestamp_jst: nowText,
         symbol: row.symbol,
+        status: row.status,
+        level: row.level,
         move_pct: row.move_pct,
         threshold_pct: row.threshold_pct,
         window_minutes: windowMinutes,
+        alert_mode: alertMode,
         streak_count: row.streak_count,
         rising_ratio: row.rising_ratio,
       }));
@@ -2181,15 +2235,19 @@ async function alertPreview(params = {}) {
     alert_rising_ratio: risingRatioThreshold,
     window_minutes: windowMinutes,
     threshold_pct: thresholdPct,
+    common_threshold_pct: thresholdPct,
+    cost_floor_pct: costFloorPct,
+    threshold_guidance: thresholdGuidance,
     thresholds_by_symbol: thresholdsBySymbol,
     source,
     symbols: targetSymbols,
     top_alert: topAlert,
     history_saved: historySaved,
+    alert_count: alertCount,
     rows: resultRows,
     message: alertCount
-      ? `${alertCount}通貨がしきい値超えです。`
-      : 'しきい値を超えた通貨はありません。',
+      ? `${alertCount}通貨が注意しきい値以上です。`
+      : '注意しきい値を超えた通貨はありません。',
   };
 }
 

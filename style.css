@@ -1160,3 +1160,46 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   border-style: dashed;
   background: rgba(255, 255, 255, 0.62);
 }
+
+.alert-default-card {
+  margin-top: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(255,246,253,0.50));
+}
+.alert-threshold-reference th,
+.alert-threshold-reference td {
+  white-space: nowrap;
+}
+.alert-threshold-reference td:last-child {
+  white-space: normal;
+  min-width: 180px;
+}
+.alert-control-bar {
+  align-items: center;
+}
+.alert-control-bar select,
+.alert-control-bar input {
+  min-width: 92px;
+}
+.alert-control-bar #alertSensitivityPreset {
+  min-width: 180px;
+}
+.alert-guidance-box {
+  margin: 12px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(232,112,173,0.20);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.70), rgba(255,240,248,0.54));
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+#alertPreviewTable td:nth-child(2),
+#alertHistoryTable td:nth-child(3) {
+  font-weight: 850;
+}
+#alertPreviewTable td:nth-child(6) {
+  min-width: 190px;
+  color: var(--muted);
+  font-size: 0.80rem;
+  line-height: 1.45;
+}

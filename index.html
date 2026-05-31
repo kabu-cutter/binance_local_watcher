@@ -194,38 +194,76 @@
           </div>
         </div>
 
+        <div class="card alert-default-card">
+          <div class="card-head compact-head">
+            <div>
+              <p class="eyebrow">Default Thresholds</p>
+              <h3>デフォルトしきい値の考え方</h3>
+              <p class="card-desc">現在の初期値は「実用アラートとしてうるさすぎない暫定値」です。0.10%前後は情報表示寄り、注意アラートは手数料・スプレッド・滑りの目安より少し上から始めます。</p>
+            </div>
+            <span class="tag soft">暫定設計</span>
+          </div>
+          <div class="table-wrap compact-table">
+            <table class="alert-threshold-reference">
+              <thead><tr><th>監視窓</th><th>Lv1 情報</th><th>Lv2 注意</th><th>Lv3 警戒</th><th>主な意味</th></tr></thead>
+              <tbody>
+                <tr><td>1分</td><td>0.05%</td><td>0.10%</td><td>0.20%</td><td>瞬間急変・成行滑り</td></tr>
+                <tr><td>5分</td><td>0.10%</td><td>0.20%</td><td>0.40%</td><td>短期の勢い</td></tr>
+                <tr><td>15分</td><td>0.15%</td><td>0.30%</td><td>0.60%</td><td>日中の流れ</td></tr>
+                <tr><td>30分</td><td>0.25%</td><td>0.50%</td><td>0.90%</td><td>まとまった方向感</td></tr>
+                <tr><td>1時間</td><td>0.35%</td><td>0.70%</td><td>1.20%</td><td>大きめの地合い</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small alert-reference-note">あとで1分足分析キャッシュからP80/P90/P95などを出し、銘柄別・相場別のおすすめしきい値に進化させます。出来高はまず表示参考から始め、主条件にはしません。</p>
+        </div>
+
         <div class="card alert-settings-card">
           <div class="card-head">
             <div>
               <h3>アラート判定設定（v1）</h3>
               <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。まずは上昇系の土台から始め、あとで下落・コスト・システム系へ拡張します。売買シグナルではありません。</p>
             </div>
-            <div class="inline-form wrap">
+            <div class="inline-form wrap alert-control-bar">
+              <label>感度</label>
+              <select id="alertSensitivityPreset">
+                <option value="standard" selected>標準：15分 0.30%</option>
+                <option value="sensitive">高め：15分 0.20%</option>
+                <option value="quiet">低め：15分 0.50%</option>
+                <option value="spike1m">急変：1分 0.10%</option>
+                <option value="momentum5m">短期：5分 0.20%</option>
+                <option value="custom">カスタム</option>
+              </select>
               <label>窓(分)</label>
               <input id="alertWindowMinutes" type="number" value="15" min="1" max="240" />
               <label>モード</label>
               <select id="alertMode"><option value="simple">simple</option><option value="rolling">rolling</option><option value="sustained">sustained</option></select>
+              <label>しきい値%</label>
+              <input id="alertThresholdPct" type="number" value="0.30" step="0.01" min="0" />
+              <label>往復コスト目安%</label>
+              <input id="alertCostFloorPct" type="number" value="0.28" step="0.01" min="0" />
               <label>rolling最小連続本数</label>
               <input id="alertRollingMinPoints" type="number" value="3" min="2" max="20" />
               <label>上昇比率%</label>
               <input id="alertRisingRatio" type="number" value="60" min="1" max="100" step="1" />
-              <label>しきい値%</label>
-              <input id="alertThresholdPct" type="number" value="0.20" step="0.01" min="0" />
               <label class="check-field">BTC
                 <input class="alertSymbol" type="checkbox" value="BTCJPY" checked />
               </label>
-              <label>BTCしきい値%</label>
+              <label>BTC個別%</label>
               <input id="alertThresholdBTC" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
               <label class="check-field">ETH
                 <input class="alertSymbol" type="checkbox" value="ETHJPY" checked />
               </label>
-              <label>ETHしきい値%</label>
+              <label>ETH個別%</label>
               <input id="alertThresholdETH" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
               <label class="check-field">履歴保存
                 <input id="alertSaveHistory" type="checkbox" checked />
               </label>
               <button class="secondary" id="reloadAlertPreview">判定更新</button>
             </div>
+          </div>
+          <div class="alert-guidance-box" id="alertThresholdGuide">
+            標準の初期値は「15分 0.30%」です。0.10%前後は情報表示寄り、履歴保存する注意アラートはコスト目安も見て少し高めから始めます。
           </div>
           <p class="memo-text" id="alertPreviewMemo">まだ判定していません。</p>
           <p class="memo-text" id="alertTopMemo">上位通知はまだありません。</p>

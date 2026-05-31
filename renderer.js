@@ -1,10 +1,19 @@
 const titles = {
   summary: ['サマリー', 'Electron main process が公開データ取得・履歴・計算を担当します。'],
   chart: ['チャート', 'Binance公開Klineを一時取得して、保存せず軽く表示します。'],
+  alerts: ['アラート', '売買サインではなく、手動取引前に気づくための監視・注意表示を整理します。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
   daily: ['日次目標', '指値到達率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
+};
+
+const ALERT_PRESETS = {
+  standard: { windowMinutes: 15, thresholdPct: 0.30, mode: 'simple', label: '標準' },
+  sensitive: { windowMinutes: 15, thresholdPct: 0.20, mode: 'simple', label: '高め' },
+  quiet: { windowMinutes: 15, thresholdPct: 0.50, mode: 'simple', label: '低め' },
+  spike1m: { windowMinutes: 1, thresholdPct: 0.10, mode: 'simple', label: '急変' },
+  momentum5m: { windowMinutes: 5, thresholdPct: 0.20, mode: 'simple', label: '短期' },
 };
 
 const DAILY_TEMPLATES = {
@@ -832,16 +841,51 @@ function optionalPercentInputValue(id) {
   return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
+function applyAlertPreset() {
+  const presetValue = document.getElementById('alertSensitivityPreset')?.value || 'standard';
+  if (presetValue === 'custom') return;
+  const preset = ALERT_PRESETS[presetValue] || ALERT_PRESETS.standard;
+  const windowEl = document.getElementById('alertWindowMinutes');
+  const thresholdEl = document.getElementById('alertThresholdPct');
+  const modeEl = document.getElementById('alertMode');
+  if (windowEl) windowEl.value = String(preset.windowMinutes);
+  if (thresholdEl) thresholdEl.value = preset.thresholdPct.toFixed(2);
+  if (modeEl) modeEl.value = preset.mode;
+}
+
+function markAlertPresetCustom() {
+  const presetEl = document.getElementById('alertSensitivityPreset');
+  if (presetEl) presetEl.value = 'custom';
+}
+
+function updateAlertThresholdGuide(data = null) {
+  const guide = document.getElementById('alertThresholdGuide');
+  if (!guide) return;
+  const thresholdPct = data?.common_threshold_pct ?? optionalPercentInputValue('alertThresholdPct') ?? 0.30;
+  const costFloorPct = data?.cost_floor_pct ?? optionalPercentInputValue('alertCostFloorPct') ?? 0.28;
+  const presetLabel = document.getElementById('alertSensitivityPreset')?.selectedOptions?.[0]?.textContent || 'カスタム';
+  const base = data?.threshold_guidance || (
+    thresholdPct < costFloorPct
+      ? `共通しきい値 ${pct(thresholdPct, 2)} は往復コスト目安 ${pct(costFloorPct, 2)} より低めです。情報表示寄りとして扱います。`
+      : thresholdPct < costFloorPct * 1.5
+        ? `共通しきい値 ${pct(thresholdPct, 2)} は往復コスト目安 ${pct(costFloorPct, 2)} に近い水準です。標準的な注意アラート向きです。`
+        : `共通しきい値 ${pct(thresholdPct, 2)} は往復コスト目安 ${pct(costFloorPct, 2)} より余裕を見た設定です。`
+  );
+  guide.textContent = `現在の感度: ${presetLabel} / ${base} 0.10%前後は履歴保存よりも監視・情報表示向けです。`;
+}
+
 async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
   const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
   const risingRatio = Number(document.getElementById('alertRisingRatio').value);
-  const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.2;
+  const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
+  const costFloorPct = optionalPercentInputValue('alertCostFloorPct') ?? 0.28;
   const btcThreshold = optionalPercentInputValue('alertThresholdBTC');
   const ethThreshold = optionalPercentInputValue('alertThresholdETH');
   const saveHistory = document.getElementById('alertSaveHistory').checked;
   const selectedSymbols = Array.from(document.querySelectorAll('.alertSymbol:checked')).map((el) => el.value);
+  updateAlertThresholdGuide();
   if (!selectedSymbols.length) {
     document.getElementById('alertPreviewMemo').textContent = '判定対象の通貨を1つ以上選んでください。';
     document.getElementById('alertTopMemo').textContent = '上位通知は表示できません。';
@@ -854,17 +898,21 @@ async function loadAlertPreview() {
   if (btcThreshold !== null) thresholdPairs.push(`BTCJPY:${btcThreshold}`);
   if (ethThreshold !== null) thresholdPairs.push(`ETHJPY:${ethThreshold}`);
   const thresholdsQuery = thresholdPairs.join(',');
-  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
-  document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / しきい値 ${pct(data.threshold_pct, 2)} / 上昇比率 ${pct(data.alert_rising_ratio, 1)} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
+  const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&cost_floor_pct=${encodeURIComponent(costFloorPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
+  updateAlertThresholdGuide(data);
+  const appliedSummary = (data.rows || []).map((row) => `${row.symbol}:${pct(row.threshold_pct, 2)}`).join(' / ');
+  document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / 共通 ${pct(data.common_threshold_pct ?? data.threshold_pct, 2)} / 適用 ${appliedSummary || '—'} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
-    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} (${top.status})`
+    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status}`
     : '上位通知はまだありません。';
   const rows = (data.rows || []).map((row) => ({
     symbol: row.symbol,
+    level: row.level || '—',
     status: row.status,
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
+    note: row.level_note || '—',
     streak: `${row.streak_count ?? 0}`,
     rolling_streak: `${row.rolling_streak ?? 0}`,
     rising_ratio: row.rising_ratio === null || row.rising_ratio === undefined ? '—' : pct(row.rising_ratio, 1),
@@ -875,9 +923,11 @@ async function loadAlertPreview() {
   }));
   renderTable(document.getElementById('alertPreviewTable'), [
     ['symbol', '通貨'],
+    ['level', 'レベル'],
     ['status', '状態'],
     ['move_pct', `変動率(${data.window_minutes}分)`],
     ['threshold', '適用しきい値'],
+    ['note', '見方'],
     ['streak', '連続回数'],
     ['rolling_streak', 'rolling連続'],
     ['rising_ratio', '上昇比率'],
@@ -891,22 +941,26 @@ async function loadAlertPreview() {
 
 async function loadAlertHistory() {
   const data = await getJson('/api/alert-history?limit=20');
-  document.getElementById('alertHistoryMemo').textContent = `保存件数: ${data.count} / 表示: ${data.rows.length} / ${data.file}`;
+  document.getElementById('alertHistoryMemo').textContent = `保存件数: ${data.count} / 表示: ${data.rows.length} / ${data.file} / 履歴は現在設定ではなく、保存済みアラートです。`;
   const rows = (data.rows || []).map((row) => ({
     timestamp: row.timestamp_jst || '—',
     symbol: row.symbol || '—',
+    level: row.level || '—',
+    status: row.status || '—',
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2),
-    streak: `${row.streak_count ?? 0}`,
     window: `${row.window_minutes ?? 0}`,
+    mode: row.alert_mode || '—',
   }));
   renderTable(document.getElementById('alertHistoryTable'), [
     ['timestamp', '時刻'],
     ['symbol', '通貨'],
+    ['level', 'レベル'],
+    ['status', '状態'],
     ['move_pct', '変動率'],
     ['threshold', 'しきい値'],
-    ['streak', '連続回数'],
     ['window', '窓(分)'],
+    ['mode', 'モード'],
   ], rows);
 }
 
@@ -1563,6 +1617,7 @@ function setupNav() {
       document.getElementById('pageSubtitle').textContent = titles[section][1];
       if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
+      if (section === 'alerts') loadAlertPreview().catch(console.error);
     });
   });
 }
@@ -1584,6 +1639,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
+  document.getElementById('reloadAlertDashboard')?.addEventListener('click', loadAlertPreview);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
@@ -1618,11 +1674,19 @@ document.addEventListener('DOMContentLoaded', () => {
   setDailyTemplateTab(document.getElementById('dailyTemplate').value || 'market_priority');
   applyDailyTemplate();
   syncRoundtripCostFromTrade();
-  document.getElementById('alertWindowMinutes').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertMode').addEventListener('change', loadAlertPreview);
+  applyAlertPreset();
+  updateAlertThresholdGuide();
+  document.getElementById('alertSensitivityPreset')?.addEventListener('change', async () => {
+    applyAlertPreset();
+    updateAlertThresholdGuide();
+    await loadAlertPreview();
+  });
+  document.getElementById('alertWindowMinutes').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
+  document.getElementById('alertMode').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
   document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
   document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertThresholdPct').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
+  document.getElementById('alertCostFloorPct')?.addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdBTC').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
   document.getElementById('alertSaveHistory').addEventListener('change', loadAlertPreview);
