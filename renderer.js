@@ -1,6 +1,7 @@
 const titles = {
   summary: ['サマリー', 'Electron main process が公開データ取得・履歴・計算を担当します。'],
   chart: ['チャート', 'Binance公開Klineを一時取得して、保存せず軽く表示します。'],
+  alerts: ['アラート', '売買サインではなく、手動取引前に気づくための監視・注意表示を整理します。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
   daily: ['日次目標', '指値到達率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
@@ -1555,6 +1556,7 @@ function setupNav() {
       document.getElementById('pageSubtitle').textContent = titles[section][1];
       if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
+      if (section === 'alerts') loadAlertPreview().catch(console.error);
     });
   });
 }
@@ -1576,6 +1578,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
+  document.getElementById('reloadAlertDashboard')?.addEventListener('click', loadAlertPreview);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);

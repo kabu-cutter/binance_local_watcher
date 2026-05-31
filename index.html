@@ -29,6 +29,7 @@
       <nav class="nav">
         <button class="nav-item active" data-section="summary">サマリー</button>
         <button class="nav-item" data-section="chart">チャート</button>
+        <button class="nav-item" data-section="alerts">アラート</button>
         <button class="nav-item" data-section="impact">値動き影響</button>
         <button class="nav-item" data-section="trade">損益プレビュー</button>
         <button class="nav-item" data-section="daily">日次目標</button>
@@ -93,11 +94,111 @@
           </div>
           <p id="summaryMemo" class="memo-text">読み込み中です。</p>
         </div>
-        <div class="card">
+      </section>
+
+      <section class="section" id="chart">
+        <div class="card highlight">
           <div class="card-head">
             <div>
-              <h3>上昇アラート（簡易）</h3>
-              <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。売買シグナルではありません。</p>
+              <p class="eyebrow">Kline Viewer</p>
+              <h3>Klineチャート</h3>
+              <p class="card-desc">Binance公開Klineを一時取得して表示します。ここでは保存・DL操作を前面に出さず、見るための軽いチャートにします。</p>
+            </div>
+            <div class="inline-form wrap">
+              <label>通貨</label>
+              <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
+              <label>表示範囲</label>
+              <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
+              <label>足</label>
+              <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
+              <button class="primary" id="reloadChart">チャートを更新</button>
+            </div>
+            <p class="card-desc">表示更新のみです。分析用1分足キャッシュは、日次目標・指値候補診断を実行する時点で必要分だけ確認・更新する方針に分けます。</p>
+          </div>
+          <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
+          <div class="chart-box">
+            <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
+          </div>
+        </div>
+        <div class="card soft-info-card">
+          <div class="card-head compact-head">
+            <div>
+              <h3>チャートと分析データの分け方</h3>
+              <p class="card-desc">このタブは閲覧用のKline表示です。指値到達率・利確到達率・損切り先行率は、日次目標側で分析用キャッシュを使って計算します。</p>
+            </div>
+            <span class="tag soft">表示専用</span>
+          </div>
+          <p class="memo-text">手動DLボタンはここでは出さず、必要になったらデータ管理・設定・デバッグ側へ移します。</p>
+        </div>
+      </section>
+
+
+      <section class="section" id="alerts">
+        <div class="card highlight alert-hero-card">
+          <div class="card-head">
+            <div>
+              <p class="eyebrow">Alert Center</p>
+              <h3>アラートセンター</h3>
+              <p class="card-desc">ここは「売買するための合図」ではなく、手動取引前に気づくための安全装置です。チャート表示、アラート評価窓、Daily Goal/約定可能性計算は分けて扱います。</p>
+            </div>
+            <button class="secondary" id="reloadAlertDashboard">アラート全体更新</button>
+          </div>
+          <div class="alert-level-grid">
+            <div class="alert-level-card level-info"><strong>Lv1 情報</strong><span>状況メモ・ログ中心</span></div>
+            <div class="alert-level-card level-watch"><strong>Lv2 注意</strong><span>少し気にする変化</span></div>
+            <div class="alert-level-card level-warning"><strong>Lv3 警戒</strong><span>取引前チェック推奨</span></div>
+            <div class="alert-level-card level-stop"><strong>Lv4 見送り候補</strong><span>条件が重い可能性</span></div>
+          </div>
+          <p class="memo-text compact-memo">今は土台として「監視窓・上昇判定・履歴」を先に置きます。あとで下落、スプレッド/滑り、必要値幅、データ不足、Ollama遅延などのアラートへ育てます。</p>
+        </div>
+
+        <div class="grid two alert-foundation-grid">
+          <div class="card movement-card">
+            <div class="card-head compact-head">
+              <div>
+                <p class="eyebrow">Alert Windows</p>
+                <h3>監視窓の役割</h3>
+                <p class="card-desc">TradingView の Moving up % / Moving down % 的に、一定時間の中で何％動いたかを見る考え方です。</p>
+              </div>
+            </div>
+            <div class="table-wrap compact-table">
+              <table>
+                <thead><tr><th>監視窓</th><th>主な見る目的</th></tr></thead>
+                <tbody>
+                  <tr><td>1分</td><td>瞬間的な急変、成行注文の滑りリスク</td></tr>
+                  <tr><td>5分</td><td>短期の勢い、急騰・急落の継続確認</td></tr>
+                  <tr><td>15分</td><td>日中の流れ、レンジブレイク確認</td></tr>
+                  <tr><td>30分</td><td>まとまった方向感</td></tr>
+                  <tr><td>1時間</td><td>大きめの地合い確認</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="small alert-reference-note">チャートは「見る画面」、アラートは「気づく窓」、Daily Goal は「診断画面」、約定可能性は別計算として扱います。</p>
+          </div>
+
+          <div class="card">
+            <div class="card-head compact-head">
+              <div>
+                <p class="eyebrow">Next Growth</p>
+                <h3>あとで増やすアラート</h3>
+                <p class="card-desc">土台は先に作り、条件診断の進化に合わせて追加します。</p>
+              </div>
+            </div>
+            <ul class="check-list alert-next-list">
+              <li>下落・急落アラート</li>
+              <li>成行滑り/スプレッド注意</li>
+              <li>必要値幅・コスト過大アラート</li>
+              <li>指値候補の浅すぎ/深すぎ注意</li>
+              <li>価格更新停止・データ不足アラート</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card alert-settings-card">
+          <div class="card-head">
+            <div>
+              <h3>アラート判定設定（v1）</h3>
+              <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。まずは上昇系の土台から始め、あとで下落・コスト・システム系へ拡張します。売買シグナルではありません。</p>
             </div>
             <div class="inline-form wrap">
               <label>窓(分)</label>
@@ -135,42 +236,6 @@
           </div>
           <p class="memo-text" id="alertHistoryMemo">まだ履歴を読み込んでいません。</p>
           <div class="table-wrap"><table id="alertHistoryTable"></table></div>
-        </div>
-      </section>
-
-      <section class="section" id="chart">
-        <div class="card highlight">
-          <div class="card-head">
-            <div>
-              <p class="eyebrow">Kline Viewer</p>
-              <h3>Klineチャート</h3>
-              <p class="card-desc">Binance公開Klineを一時取得して表示します。ここでは保存・DL操作を前面に出さず、見るための軽いチャートにします。</p>
-            </div>
-            <div class="inline-form wrap">
-              <label>通貨</label>
-              <select id="chartSymbol"><option>BTCJPY</option><option>ETHJPY</option></select>
-              <label>表示範囲</label>
-              <select id="chartRange"><option value="1h">直近1時間</option><option value="3h">直近3時間</option><option value="6h">直近6時間</option><option value="24h" selected>直近24時間</option><option value="3d">直近3日</option><option value="1w">直近1週間</option></select>
-              <label>足</label>
-              <select id="chartInterval"><option value="auto" selected>自動</option><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option>1h</option></select>
-              <button class="primary" id="reloadChart">チャートを更新</button>
-            </div>
-            <p class="card-desc">表示更新のみです。分析用1分足キャッシュは、日次目標・指値候補診断を実行する時点で必要分だけ確認・更新する方針に分けます。</p>
-          </div>
-          <div class="chart-meta" id="chartMeta">まだ読み込んでいません。</div>
-          <div class="chart-box">
-            <svg id="priceChart" viewBox="0 0 900 320" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
-        <div class="card soft-info-card">
-          <div class="card-head compact-head">
-            <div>
-              <h3>チャートと分析データの分け方</h3>
-              <p class="card-desc">このタブは閲覧用のKline表示です。指値到達率・利確到達率・損切り先行率は、日次目標側で分析用キャッシュを使って計算します。</p>
-            </div>
-            <span class="tag soft">表示専用</span>
-          </div>
-          <p class="memo-text">手動DLボタンはここでは出さず、必要になったらデータ管理・設定・デバッグ側へ移します。</p>
         </div>
       </section>
 
