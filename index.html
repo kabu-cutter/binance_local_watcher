@@ -219,92 +219,134 @@
         </div>
 
         <div class="card alert-settings-card">
-          <div class="card-head">
+          <div class="card-head compact-head">
             <div>
               <h3>アラート判定設定（v1）</h3>
               <p class="card-desc">直近N分でX%以上上昇した通貨を表示します。まずは上昇系の土台から始め、あとで下落・コスト・システム系へ拡張します。売買シグナルではありません。</p>
             </div>
-            <div class="inline-form wrap alert-control-bar" id="alertControlBar">
-              <div class="alert-setting-chip alert-setting-primary" data-alert-setting="preset">
-                <span class="setting-label">感度</span>
-                <select id="alertSensitivityPreset">
-                  <option value="standard" selected>標準：15分 0.30%</option>
-                  <option value="sensitive">高め：15分 0.20%</option>
-                  <option value="quiet">低め：15分 0.50%</option>
-                  <option value="spike1m">急変：1分 0.10%</option>
-                  <option value="momentum5m">短期：5分 0.20%</option>
-                  <option value="custom">カスタム</option>
-                </select>
-                <span class="setting-badge">基本</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-primary" data-alert-setting="window">
-                <span class="setting-label">窓(分)</span>
-                <input id="alertWindowMinutes" type="number" value="15" min="1" max="240" />
-                <span class="setting-badge">使用中</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-primary" data-alert-setting="mode">
-                <span class="setting-label">モード</span>
-                <select id="alertMode"><option value="simple">simple</option><option value="rolling">rolling</option><option value="sustained">sustained</option></select>
-                <span class="setting-badge">切替</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-primary" data-alert-setting="threshold">
-                <span class="setting-label">しきい値%</span>
-                <input id="alertThresholdPct" type="number" value="0.30" step="0.01" min="0" />
-                <span class="setting-badge">使用中</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-reference" data-alert-setting="cost">
-                <span class="setting-label">往復コスト目安%</span>
-                <input id="alertCostFloorPct" type="number" value="0.28" step="0.01" min="0" />
-                <span class="setting-badge">参考</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-mode" data-alert-setting="rolling" data-mode-target="rolling">
-                <span class="setting-label">rolling最小連続本数</span>
-                <input id="alertRollingMinPoints" type="number" value="3" min="2" max="20" />
-                <span class="setting-badge mode-badge">今は未使用</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-mode" data-alert-setting="sustained" data-mode-target="sustained">
-                <span class="setting-label">上昇比率%</span>
-                <input id="alertRisingRatio" type="number" value="60" min="1" max="100" step="1" />
-                <span class="setting-badge mode-badge">今は未使用</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-symbol">
-                <label class="check-field">BTC
-                  <input class="alertSymbol" type="checkbox" value="BTCJPY" checked />
-                </label>
-                <span class="setting-badge">対象</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-threshold">
-                <span class="setting-label">BTC個別%</span>
-                <input id="alertThresholdBTC" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
-                <span class="setting-badge">任意</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-symbol">
-                <label class="check-field">ETH
-                  <input class="alertSymbol" type="checkbox" value="ETHJPY" checked />
-                </label>
-                <span class="setting-badge">対象</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-threshold">
-                <span class="setting-label">ETH個別%</span>
-                <input id="alertThresholdETH" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
-                <span class="setting-badge">任意</span>
-              </div>
-              <div class="alert-setting-chip alert-setting-history" data-alert-setting="history">
-                <label class="check-field">履歴保存
-                  <input id="alertSaveHistory" type="checkbox" checked />
-                </label>
-                <span class="setting-badge">注意以上</span>
-              </div>
-              <button class="secondary" id="reloadAlertPreview">判定更新</button>
-            </div>
-            <div class="alert-mode-legend" id="alertModeLegend">
-              <span class="legend-pill active">使用中</span>
-              <span class="legend-pill reference">参考</span>
-              <span class="legend-pill standby">今は未使用</span>
-              <span class="legend-text">項目は隠さず、明るい色は使用中、暗めの色は今のモードでは未使用として分けます。</span>
-            </div>
-            <p class="memo-text alert-mode-hint" id="alertModeHint">simpleでは、窓・しきい値を使います。暗めの項目は今の判定では使いませんが、モード変更時に使います。</p>
           </div>
+
+          <div class="alert-settings-panel">
+            <div class="alert-settings-body" id="alertControlBar">
+              <div class="alert-setting-row">
+                <div class="alert-row-title">
+                  <strong>かんたん設定</strong>
+                  <span>普段まず見るところ</span>
+                </div>
+                <div class="alert-row-fields">
+                  <div class="alert-setting-chip alert-setting-primary" data-alert-setting="preset">
+                    <span class="setting-label">感度</span>
+                    <select id="alertSensitivityPreset">
+                      <option value="standard" selected>標準：15分 0.30%</option>
+                      <option value="sensitive">高め：15分 0.20%</option>
+                      <option value="quiet">低め：15分 0.50%</option>
+                      <option value="spike1m">急変：1分 0.10%</option>
+                      <option value="momentum5m">短期：5分 0.20%</option>
+                      <option value="custom">カスタム</option>
+                    </select>
+                    <span class="setting-badge">基本</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-primary" data-alert-setting="window">
+                    <span class="setting-label">窓(分)</span>
+                    <input id="alertWindowMinutes" type="number" value="15" min="1" max="240" />
+                    <span class="setting-badge">使用中</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-primary" data-alert-setting="mode">
+                    <span class="setting-label">モード</span>
+                    <select id="alertMode"><option value="simple">simple</option><option value="rolling">rolling</option><option value="sustained">sustained</option></select>
+                    <span class="setting-badge">切替</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-primary" data-alert-setting="threshold">
+                    <span class="setting-label">しきい値%</span>
+                    <input id="alertThresholdPct" type="number" value="0.30" step="0.01" min="0" />
+                    <span class="setting-badge">使用中</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="alert-setting-row alert-setting-row-soft">
+                <div class="alert-row-title">
+                  <strong>参考・別モード</strong>
+                  <span>隠さず、今使うかを色で表示</span>
+                </div>
+                <div class="alert-row-fields">
+                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="cost">
+                    <span class="setting-label">往復コスト目安%</span>
+                    <input id="alertCostFloorPct" type="number" value="0.28" step="0.01" min="0" />
+                    <span class="setting-badge">参考</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-mode" data-alert-setting="rolling" data-mode-target="rolling">
+                    <span class="setting-label">rolling最小連続本数</span>
+                    <input id="alertRollingMinPoints" type="number" value="3" min="2" max="20" />
+                    <span class="setting-badge mode-badge">今は未使用</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-mode" data-alert-setting="sustained" data-mode-target="sustained">
+                    <span class="setting-label">上昇比率%</span>
+                    <input id="alertRisingRatio" type="number" value="60" min="1" max="100" step="1" />
+                    <span class="setting-badge mode-badge">今は未使用</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="alert-setting-row">
+                <div class="alert-row-title">
+                  <strong>対象通貨</strong>
+                  <span>個別値は空欄なら共通値</span>
+                </div>
+                <div class="alert-row-fields">
+                  <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-symbol">
+                    <label class="check-field">BTC
+                      <input class="alertSymbol" type="checkbox" value="BTCJPY" checked />
+                    </label>
+                    <span class="setting-badge">対象</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-threshold">
+                    <span class="setting-label">BTC個別%</span>
+                    <input id="alertThresholdBTC" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
+                    <span class="setting-badge">任意</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-symbol">
+                    <label class="check-field">ETH
+                      <input class="alertSymbol" type="checkbox" value="ETHJPY" checked />
+                    </label>
+                    <span class="setting-badge">対象</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-threshold">
+                    <span class="setting-label">ETH個別%</span>
+                    <input id="alertThresholdETH" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
+                    <span class="setting-badge">任意</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="alert-setting-row alert-setting-row-action">
+                <div class="alert-row-title">
+                  <strong>保存・実行</strong>
+                  <span>履歴は注意以上だけ保存</span>
+                </div>
+                <div class="alert-row-fields action-fields">
+                  <div class="alert-setting-chip alert-setting-history" data-alert-setting="history">
+                    <label class="check-field">履歴保存
+                      <input id="alertSaveHistory" type="checkbox" checked />
+                    </label>
+                    <span class="setting-badge">注意以上</span>
+                  </div>
+                  <button class="secondary" id="reloadAlertPreview">判定更新</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="alert-settings-side">
+              <div class="alert-mode-legend" id="alertModeLegend">
+                <span class="legend-pill active">使用中</span>
+                <span class="legend-pill reference">参考</span>
+                <span class="legend-pill standby">今は未使用</span>
+              </div>
+              <p class="memo-text alert-mode-hint" id="alertModeHint">simpleでは、窓・しきい値を使います。暗めの項目は今の判定では使いませんが、モード変更時に使います。</p>
+              <p class="small alert-settings-note">全体をひとつの設定パネルにまとめ、行ごとに意味を分けています。</p>
+            </div>
+          </div>
+
           <div class="alert-guidance-box" id="alertThresholdGuide">
             標準の初期値は「15分 0.30%」です。0.10%前後は情報表示寄り、履歴保存する注意アラートはコスト目安も見て少し高めから始めます。
           </div>
