@@ -1218,8 +1218,9 @@ tr:hover td { background: rgba(255,255,255,0.34); }
 }
 .alert-setting-primary,
 .alert-setting-chip.is-active {
-  border-color: rgba(33,154,118,0.32);
-  background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(228,250,243,0.58));
+  border-color: rgba(33,154,118,0.44);
+  background: linear-gradient(180deg, rgba(255,255,255,0.94), rgba(220,250,240,0.68));
+  box-shadow: 0 10px 22px rgba(33,154,118,0.10);
 }
 .alert-setting-primary .setting-badge,
 .alert-setting-chip.is-active .setting-badge,
@@ -1239,20 +1240,24 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   border-color: rgba(147,203,255,0.38);
 }
 .alert-setting-chip.is-standby {
-  border-color: rgba(202,184,255,0.42);
-  background: linear-gradient(180deg, rgba(255,255,255,0.76), rgba(244,239,255,0.62));
+  border-color: rgba(116,91,112,0.30);
+  background: linear-gradient(180deg, rgba(244,237,243,0.92), rgba(226,216,226,0.78));
   box-shadow: none;
 }
-.alert-setting-chip.is-standby .setting-label,
+.alert-setting-chip.is-standby .setting-label {
+  color: #7a6577;
+}
 .alert-setting-chip.is-standby input,
 .alert-setting-chip.is-standby select {
-  color: var(--muted-2);
+  color: #765f73;
+  background: rgba(255,255,255,0.58);
+  border-color: rgba(116,91,112,0.20);
 }
 .alert-setting-chip.is-standby .setting-badge,
 .legend-pill.standby {
-  color: #7561ac;
-  background: rgba(202,184,255,0.24);
-  border-color: rgba(202,184,255,0.36);
+  color: #6e536a;
+  background: rgba(112,86,109,0.16);
+  border-color: rgba(112,86,109,0.24);
 }
 .alert-setting-symbol {
   border-color: rgba(232,112,173,0.24);

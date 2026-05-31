@@ -260,12 +260,12 @@
               <div class="alert-setting-chip alert-setting-mode" data-alert-setting="rolling" data-mode-target="rolling">
                 <span class="setting-label">rolling最小連続本数</span>
                 <input id="alertRollingMinPoints" type="number" value="3" min="2" max="20" />
-                <span class="setting-badge mode-badge">rolling用</span>
+                <span class="setting-badge mode-badge">今は未使用</span>
               </div>
               <div class="alert-setting-chip alert-setting-mode" data-alert-setting="sustained" data-mode-target="sustained">
                 <span class="setting-label">上昇比率%</span>
                 <input id="alertRisingRatio" type="number" value="60" min="1" max="100" step="1" />
-                <span class="setting-badge mode-badge">sustained用</span>
+                <span class="setting-badge mode-badge">今は未使用</span>
               </div>
               <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-symbol">
                 <label class="check-field">BTC
@@ -300,10 +300,10 @@
             <div class="alert-mode-legend" id="alertModeLegend">
               <span class="legend-pill active">使用中</span>
               <span class="legend-pill reference">参考</span>
-              <span class="legend-pill standby">別モード用</span>
-              <span class="legend-text">項目は隠さず、色で「今使う項目」と「別モード用」を分けます。</span>
+              <span class="legend-pill standby">今は未使用</span>
+              <span class="legend-text">項目は隠さず、明るい色は使用中、暗めの色は今のモードでは未使用として分けます。</span>
             </div>
-            <p class="memo-text alert-mode-hint" id="alertModeHint">simpleでは、窓・しきい値を使います。rolling/sustained用の項目は表示したまま参考色にしています。</p>
+            <p class="memo-text alert-mode-hint" id="alertModeHint">simpleでは、窓・しきい値を使います。暗めの項目は今の判定では使いませんが、モード変更時に使います。</p>
           </div>
           <div class="alert-guidance-box" id="alertThresholdGuide">
             標準の初期値は「15分 0.30%」です。0.10%前後は情報表示寄り、履歴保存する注意アラートはコスト目安も見て少し高めから始めます。

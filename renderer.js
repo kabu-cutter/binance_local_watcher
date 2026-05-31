@@ -870,20 +870,18 @@ function updateAlertModeHints() {
     if (!badge) return;
     if (isActive) {
       badge.textContent = '使用中';
-    } else if (target === 'rolling') {
-      badge.textContent = 'rolling用';
-    } else if (target === 'sustained') {
-      badge.textContent = 'sustained用';
+    } else {
+      badge.textContent = '今は未使用';
     }
   });
   const hint = document.getElementById('alertModeHint');
   if (!hint) return;
   if (mode === 'rolling') {
-    hint.textContent = 'rollingでは、直近窓内の連続上昇本数を重視します。上昇比率%は表示していますが、主役はrolling最小連続本数です。';
+    hint.textContent = 'rollingでは、直近窓内の連続上昇本数を重視します。暗めの項目は今のrolling判定では使わない参考項目です。';
   } else if (mode === 'sustained') {
-    hint.textContent = 'sustainedでは、直近窓内の変動率と上昇比率%を組み合わせます。rolling最小連続本数は表示したまま参考色にしています。';
+    hint.textContent = 'sustainedでは、直近窓内の変動率と上昇比率%を組み合わせます。暗めの項目は今のsustained判定では使わない参考項目です。';
   } else {
-    hint.textContent = 'simpleでは、窓・しきい値を使って単純な変動率を見ます。rolling/sustained用の項目は隠さず、参考色で残しています。';
+    hint.textContent = 'simpleでは、窓・しきい値を使って単純な変動率を見ます。暗めの項目は今のsimple判定では使いません。';
   }
 }
 
