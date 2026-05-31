@@ -1,22 +1,21 @@
 const titles = {
   summary: ['サマリー', 'Electron main process が公開データ取得・履歴・計算を担当します。'],
-  chart: ['チャート', 'Electron main process で履歴または公開klineを読み、rendererでSVGチャートを描きます。'],
-  alerts: ['アラート', '手動取引前に気づくための監視窓・判定・履歴をまとめます。売買指示ではありません。'],
+  chart: ['チャート', 'Binance公開Klineを一時取得して、保存せず軽く表示します。'],
   impact: ['値動き影響', '保有していた場合の金額感覚を確認します。'],
   trade: ['損益プレビュー', '実注文なしで投入額・コスト・Net P/Lを概算します。'],
-  daily: ['日次目標', '到達想定率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
+  daily: ['日次目標', '指値到達率・必要勝率・必要値幅から今日の条件の重さを整理します。'],
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
 const DAILY_TEMPLATES = {
   market_priority: {
-    label: '到達優先・成行寄り',
+    label: '約定優先・成行寄り',
     fillRate: 85,
     stopPct: 0.5,
     costPct: 0.34,
     cancelRates: '10,20,30',
     autoFill: false,
-    memo: '到達想定率は高めですが、往復コストは重めです。小さい値動き狙いは手数料負けを重点確認します。',
+    memo: '約定率は高めですが、往復コストは重めです。小さい値動き狙いは手数料負けを重点確認します。',
   },
   pullback_limit: {
     label: '押し目指値待ち',
@@ -25,7 +24,7 @@ const DAILY_TEMPLATES = {
     costPct: 0.24,
     cancelRates: '30,40,50',
     autoFill: false,
-    memo: '未到達が増えやすい前提です。未到達30〜50%シナリオを重点に見ます。',
+    memo: '未約定が増えやすい前提です。未約定30〜50%シナリオを重点に見ます。',
   },
   breakout_follow: {
     label: 'ブレイクアウト追随',
@@ -34,7 +33,7 @@ const DAILY_TEMPLATES = {
     costPct: 0.30,
     cancelRates: '15,25,35',
     autoFill: false,
-    memo: '到達想定率は高めですが、必要変動率と損切り幅が中〜大になりやすく、ダマシ耐性を確認します。',
+    memo: '約定率は高めですが、必要変動率と損切り幅が中〜大になりやすく、ダマシ耐性を確認します。',
   },
   range_reversion: {
     label: 'レンジ逆張り',
@@ -92,8 +91,22 @@ function elValue(id, fallback = '') {
   const el = document.getElementById(id);
   return el ? el.value : fallback;
 }
+
+function normalizeNumberText(value) {
+  return String(value ?? '')
+    .trim()
+    .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/[．。]/g, '.')
+    .replace(/[，、]/g, ',')
+    .replace(/[％%]/g, '')
+    .replace(/[−－ー―]/g, '-')
+    .replace(/[,\s]/g, '');
+}
+
 function elNumber(id, fallback = 0) {
-  const value = Number(elValue(id, fallback));
+  const normalized = normalizeNumberText(elValue(id, ''));
+  if (normalized === '') return fallback;
+  const value = Number(normalized);
   return Number.isFinite(value) ? value : fallback;
 }
 function elChecked(id, fallback = false) {
@@ -185,7 +198,6 @@ async function getJson(path) {
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
     if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
     if (url.pathname === '/api/alert-history') return window.blw.api.getAlertHistory(query);
-    if (url.pathname === '/api/movement-windows') return window.blw.api.getMovementWindows(query);
     if (url.pathname === '/api/daily-goal-reports') return window.blw.api.getDailyGoalReports(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     if (url.pathname === '/api/chart-coverage') return window.blw.api.getChartCoverage(query);
@@ -381,7 +393,7 @@ async function ensureAnalysisCache() {
   const days = elValue('analysisCacheDays', '7');
   const symbols = analysisCacheSymbolSelection();
   const label = symbols.length === CURRENT_UPDATE_SYMBOLS.length ? 'BTCJPY / ETHJPY' : symbols.join(', ');
-  const ok = window.confirm(`分析用1分足キャッシュを整備します。\n\n対象: ${label}\n参照期間: 直近${days}日\n\n不足している場合は、Binance public klineから1分足を取得してlong_dataとDBへ保存します。\nこれは表示用ではなく、到達想定率・必要値幅出現率・日次目標診断のためのデータ準備です。`);
+  const ok = window.confirm(`分析用1分足キャッシュを整備します。\n\n対象: ${label}\n参照期間: 直近${days}日\n\n不足している場合は、Binance public klineから1分足を取得してlong_dataとDBへ保存します。\nこれは表示用ではなく、指値到達率・必要値幅出現率・日次目標診断のためのデータ準備です。`);
   if (!ok) return;
   if (btn) {
     btn.disabled = true;
@@ -499,12 +511,49 @@ async function loadApiReadiness() {
   }
 }
 
+function renderSidebarPrices(data) {
+  const rowsEl = document.getElementById('sidePriceRows');
+  const updatedEl = document.getElementById('sidePriceUpdated');
+  if (!rowsEl) return;
+  const symbols = Array.isArray(data?.symbols) ? data.symbols : [];
+  if (!symbols.length) {
+    rowsEl.innerHTML = '<div class="side-price-empty">価格データなし</div>';
+    if (updatedEl) updatedEl.textContent = '最終更新: —';
+    return;
+  }
+  rowsEl.innerHTML = symbols.map((s) => {
+    const prevDiff = Number(s.prev_diff_yen);
+    const shortPct = Number(s.short_pct);
+    const isUp = Number.isFinite(prevDiff) ? prevDiff >= 0 : shortPct >= 0;
+    const directionClass = isUp ? 'up' : 'down';
+    const shortText = Number.isFinite(shortPct) ? `短期 ${pct(shortPct, 3, true)}` : (s.status || '—');
+    const prevText = Number.isFinite(prevDiff) ? `前回比 ${yen(prevDiff, 0, true)}` : `前回比 ${pct(s.prev_pct, 3, true)}`;
+    return `
+      <div class="side-price-row ${directionClass}">
+        <div class="side-price-mainline">
+          <div class="side-price-symbol">${s.symbol || '—'}</div>
+          <span class="side-price-chip">${isUp ? '上向き' : '下向き'}</span>
+        </div>
+        <div class="side-price-value">${yen(s.price_jpy)}</div>
+        <div class="side-price-meta">
+          <span>${shortText}</span>
+          <span>${prevText}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  const latest = symbols.map((s) => s.timestamp).filter(Boolean)[0];
+  if (updatedEl) updatedEl.textContent = latest ? `最終更新: ${latest}` : '最終更新: —';
+}
+
 async function loadSummary() {
   const data = await getJson('/api/summary');
+  renderSidebarPrices(data);
   const cards = data.symbols.map((s) => card({
     title: s.symbol,
     value: yen(s.price_jpy),
-    sub: `前回比 ${yen(s.prev_diff_yen, 0, true)} / ${pct(s.prev_pct, 4, true)}\n${s.note}`,
+    sub: `前回比 ${yen(s.prev_diff_yen, 0, true)} / ${pct(s.prev_pct, 4, true)}
+${s.note}`,
     tag: s.status,
     kind: s.prev_diff_yen >= 0 ? 'good' : 'bad',
   })).join('');
@@ -580,10 +629,9 @@ async function loadSummaryMiniCharts() {
     const meta = document.getElementById(`summaryMiniChart${symbol}Meta`);
     if (meta) meta.textContent = '読み込み中...';
     try {
-      // サマリーのミニチャートは「直近の形」を軽く見る目的なので、
-      // チャートタブの日付指定には依存させず、DL済み＋現在まで更新済みデータを優先します。
-      const today = todayJstDateText();
-      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=combined&interval=1m&date=${encodeURIComponent(today)}&start_hour=0&end_hour=24&limit=80`);
+      // サマリーのミニチャートは閲覧用の軽い表示です。
+      // 保存済み履歴やDL済みファイルには依存せず、チャートタブと同じくBinance公開Klineを一時取得して表示します。
+      const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=klines&interval=1m&range=3h&limit=80`);
       renderMiniChart(symbol, data);
     } catch (e) {
       const svg = document.getElementById(`summaryMiniChart${symbol}`);
@@ -648,7 +696,7 @@ function scheduleAutoCurrentUpdate(delayMs = AUTO_CURRENT_UPDATE_MS) {
   }, delayMs);
 }
 
-function setupAutoCurrentUpdate() {
+function setupAutoCurrentUpdate({ startupUpdate = true } = {}) {
   const checkbox = document.getElementById('autoUpdateEnabled');
   if (!checkbox) return;
   checkbox.addEventListener('change', () => {
@@ -658,7 +706,11 @@ function setupAutoCurrentUpdate() {
       scheduleAutoCurrentUpdate();
     }
   });
-  scheduleAutoCurrentUpdate(AUTO_CURRENT_UPDATE_MS);
+
+  // 自動更新がONなら、起動後すぐに現在価格を1回更新する。
+  // これにより、左ペインの現在価格カードが古いローカル履歴のまま残りにくくなる。
+  // 以後は通常どおり1分間隔で更新する。
+  scheduleAutoCurrentUpdate(startupUpdate ? 1000 : AUTO_CURRENT_UPDATE_MS);
 }
 
 function summarizeHistoryToNowResults(results) {
@@ -717,49 +769,36 @@ async function fetchPrices({ source = 'manual' } = {}) {
   const btn = document.getElementById('fetchPrices');
   const old = btn ? btn.textContent : '';
   const summaryMemo = document.getElementById('summaryMemo');
-  const historyMemo = document.getElementById('historyDownloadMemo');
-  const interval = elValue('historyInterval', elValue('chartInterval', '1m'));
 
   if (btn) {
-    btn.textContent = source === 'auto' ? '自動更新中...' : '現在まで更新中...';
+    btn.textContent = source === 'auto' ? '価格更新中...' : '価格更新中...';
     btn.disabled = true;
   }
-  setAutoUpdateStatus(source === 'auto' ? '自動更新中...' : '手動更新中...');
-  if (summaryMemo) summaryMemo.textContent = `現在価格を保存し、BTCJPY / ETHJPY のDL済み履歴を現在時刻まで更新しています。`;
+  setAutoUpdateStatus(source === 'auto' ? '現在価格を自動更新中...' : '現在価格を更新中...');
+  if (summaryMemo) {
+    summaryMemo.textContent = 'BTCJPY / ETHJPY の現在価格を更新しています。チャート用DLや分析キャッシュ更新はここでは行いません。';
+  }
   try {
     const priceData = await postJson('/api/fetch-prices', {});
-    const historyResults = await updateHistoryToNowBatch({
-      symbols: CURRENT_UPDATE_SYMBOLS,
-      interval,
-      memo: summaryMemo,
-      progressLabel: '現在価格保存後、チャート用DL履歴を現在時刻まで更新中',
-    });
-    const historyLines = summarizeHistoryToNowResults(historyResults);
     const priceLines = [
       priceData.message,
-      `保存先: ${priceData.history_file}`,
+      'チャートはKlineを一時表示します。分析用1分足キャッシュは日次目標・指値候補診断の実行時に確認します。',
       priceData.errors?.length ? `価格取得エラー: ${priceData.errors.join(' / ')}` : '',
     ].filter(Boolean);
 
-    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
-    if (historyMemo) historyMemo.textContent = historyLines.join('\n');
-
-    setValueIfExists('historyInterval', interval);
-    setValueIfExists('chartInterval', interval);
-    setValueIfExists('chartSource', 'combined');
     await loadStatus();
     await loadSummary();
-    if (summaryMemo) summaryMemo.textContent = [...priceLines, ...historyLines].join('\n');
+    if (summaryMemo) summaryMemo.textContent = priceLines.join('\n');
     await loadSummaryMiniCharts();
     await loadImpact();
     await loadAlertPreview();
     await loadChart();
     autoCurrentUpdateLastRunAt = new Date();
     const nextText = isAutoCurrentUpdateEnabled() ? ` / 次回 ${formatClock(new Date(Date.now() + AUTO_CURRENT_UPDATE_MS))}` : '';
-    setAutoUpdateStatus(`${source === 'auto' ? '自動更新完了' : '手動更新完了'} / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}${nextText}`);
+    setAutoUpdateStatus(`${source === 'auto' ? '自動価格更新完了' : '価格更新完了'} / 最終 ${formatClock(autoCurrentUpdateLastRunAt)}${nextText}`);
   } catch (e) {
-    if (summaryMemo) summaryMemo.textContent = `現在価格＋履歴更新に失敗しました。\n${e.message}`;
-    setAutoUpdateStatus(`${source === 'auto' ? '自動更新失敗' : '手動更新失敗'}: ${e.message}`);
+    if (summaryMemo) summaryMemo.textContent = `現在価格の更新に失敗しました。\n${e.message}`;
+    setAutoUpdateStatus(`${source === 'auto' ? '自動価格更新失敗' : '価格更新失敗'}: ${e.message}`);
   } finally {
     if (btn) {
       btn.textContent = old;
@@ -869,12 +908,6 @@ async function clearAlertHistory() {
   await loadAlertHistory();
 }
 
-async function loadAlertDashboard() {
-  await loadMovementWindows().catch(console.error);
-  await loadAlertPreview();
-  await loadAlertHistory();
-}
-
 function makeSvgPath(points, width, height, pad) {
   const prices = points.map((p) => Number(p.price)).filter((n) => Number.isFinite(n));
   if (prices.length < 2) return '';
@@ -894,67 +927,11 @@ function chartSourceLabel(source) {
     'local-history+downloaded-kline': 'DL済み＋現在まで更新済み',
     'downloaded-kline-current': 'DL済み＋現在まで更新済みkline',
     'downloaded-kline': 'DL済みファイルのみ',
-    'binance-klines': '公開kline一時表示',
+    'binance-klines': '公開Kline一時表示',
     'local-history': 'ローカル履歴フォールバック',
     mock: 'サンプル',
   };
   return labels[source] || source || '不明';
-}
-
-function movementSourceLabel(source) {
-  const labels = {
-    public_1m_kline: '公開1分足kline',
-    price_history_fallback: 'ローカル価格履歴フォールバック',
-  };
-  return labels[source] || source || '不明';
-}
-
-function renderMovementWindows(data) {
-  const memo = document.getElementById('movementWindowsMemo');
-  const table = document.getElementById('movementWindowsTable');
-  if (!memo || !table) return;
-  const rows = (data.rows || []).map((row) => ({
-    symbol: row.symbol || '—',
-    window: row.window_label || row.window || '—',
-    change: Number.isFinite(Number(row.change_pct)) ? pct(Number(row.change_pct), 3, true) : '—',
-    label: row.label || '—',
-    purpose: row.purpose || '—',
-    source: movementSourceLabel(row.source),
-  }));
-  renderTable(table, [
-    ['symbol', '通貨'],
-    ['window', '監視窓'],
-    ['change', '変動率'],
-    ['label', '状態'],
-    ['purpose', '見る目的'],
-    ['source', '参照元'],
-  ], rows);
-  const errors = Array.isArray(data.errors) && data.errors.length ? `\n取得メモ: ${data.errors.join(' / ')}` : '';
-  memo.textContent = `${data.message || '監視窓を確認しました。'}\n${data.note || '売買サインではなく、手動取引前の状況確認です。'}${errors}`;
-}
-
-async function loadMovementWindows() {
-  const memo = document.getElementById('movementWindowsMemo');
-  if (memo) memo.textContent = '監視窓を確認中です...';
-  try {
-    const data = await getJson('/api/movement-windows?symbols=BTCJPY,ETHJPY');
-    renderMovementWindows(data);
-    return data;
-  } catch (error) {
-    if (memo) memo.textContent = `監視窓の確認に失敗しました。\n${error.message}`;
-    const table = document.getElementById('movementWindowsTable');
-    if (table) {
-      renderTable(table, [
-        ['symbol', '通貨'],
-        ['window', '監視窓'],
-        ['change', '変動率'],
-        ['label', '状態'],
-        ['purpose', '見る目的'],
-        ['source', '参照元'],
-      ], []);
-    }
-    return null;
-  }
 }
 
 function renderChart(data) {
@@ -997,41 +974,22 @@ function renderChart(data) {
   const errorText = data.errors?.length ? ` / エラー: ${data.errors.join(' / ')}` : '';
   const rangeText = data.range_label ? ` / ${data.range_label}${data.range_start_jst && data.range_end_jst ? ` (${data.range_start_jst}〜${data.range_end_jst})` : ''}` : '';
   const intervalText = data.interval ? ` / ${data.interval}足${data.interval_requested === 'auto' ? '（自動）' : ''}` : '';
-  const displayRows = data.display_rows ?? data.rows ?? points.length;
-  const rawRows = data.raw_rows ?? displayRows;
-  const rowsText = rawRows && rawRows !== displayRows ? `${displayRows}点表示 / 元${rawRows}本` : `${displayRows}点`;
+  const rowsText = data.raw_rows && data.raw_rows !== data.rows ? `${data.rows}点表示 / 元${data.raw_rows}本` : `${data.rows}点`;
   document.getElementById('chartMeta').textContent = `${data.symbol} / ${rowsText} / ${chartSourceLabel(data.source)}${rangeText}${intervalText} / ${data.message} 価格範囲: ${yen(data.min_price)} - ${yen(data.max_price)}${errorText}`;
 }
 
 async function loadChart() {
-  const symbol = document.getElementById('chartSymbol').value;
-  let source = document.getElementById('chartSource').value;
-  if (source === 'local') {
-    source = 'combined';
-    setValueIfExists('chartSource', 'combined');
-  }
-  let interval = document.getElementById('chartInterval').value;
-
-  // 表示範囲・足切替は公開kline一時表示用。
-  // DL済み表示は保存ファイル確認用なので、autoのままDL表示へ入ると1mフォールバックになりやすい。
-  if (source !== 'klines' && interval === 'auto') {
-    interval = '1m';
-    setValueIfExists('chartInterval', '1m');
-  }
-
+  const symbol = elValue('chartSymbol', 'BTCJPY');
+  const interval = elValue('chartInterval', 'auto');
   const range = elValue('chartRange', '24h');
-  const date = document.getElementById('historyDate').value;
-  const startHour = document.getElementById('historyStartHour').value;
-  const endHour = document.getElementById('historyEndHour').value;
-  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=${encodeURIComponent(source)}&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&date=${encodeURIComponent(date)}&start_hour=${encodeURIComponent(startHour)}&end_hour=${encodeURIComponent(endHour)}&limit=520`);
+
+  // チャートタブは表示専用の公開Klineビューアにします。
+  // 保存・DL・分析用キャッシュ更新はここでは行いません。
+  const data = await getJson(`/api/chart?symbol=${encodeURIComponent(symbol)}&source=klines&interval=${encodeURIComponent(interval)}&range=${encodeURIComponent(range)}&limit=520`);
   renderChart(data);
-  loadMovementWindows().catch(console.error);
 }
 
 function loadChartRangeFromKlines() {
-  // 「表示範囲」と「足」はkline直取得で効かせる。
-  // DL済み＋現在データは基本1m保存なので、ここを切り替えないと5m/15m/30m/1hが同じ見た目になりやすい。
-  setValueIfExists('chartSource', 'klines');
   return loadChart();
 }
 
@@ -1127,15 +1085,8 @@ async function reloadChartWithDownloadConfirm() {
   const range = elValue('chartRange', '24h');
   const interval = selectedChartIntervalForDownload();
   const label = CHART_RANGE_LABELS_RENDERER[range] || range;
-  const source = elValue('chartSource', 'klines');
   const memo = document.getElementById('historyDownloadMemo');
   let coverage = null;
-
-  if (source === 'klines') {
-    if (memo) memo.textContent = `公開kline一時表示モードです。${symbol} / ${label} / ${interval}足を保存せずに更新します。`;
-    await loadChart();
-    return;
-  }
 
   try {
     coverage = await getSelectedChartCoverage();
@@ -1287,8 +1238,9 @@ function syncRoundtripCostFromTrade() {
 }
 
 function buildDailyPayload() {
-  syncRoundtripCostFromTrade();
-  const linkedCost = Number(document.getElementById('tradeCostPct').value);
+  // 日次目標側の往復コストは手入力できるようにします。
+  // 損益プレビューのコストは初期同期・変更時同期だけにし、計算直前に上書きしません。
+  const linkedCost = elNumber('dailyCostPct', elNumber('tradeCostPct', 0.28));
   const occurrenceReferenceDays = elNumber('dailyOccurrenceReferenceDays', elNumber('dailyVirtualFillReferenceDays', 30));
   return {
     strategy_template: elValue('dailyTemplate', 'market_priority'),
@@ -1307,7 +1259,8 @@ function buildDailyPayload() {
     virtual_fill_reference_days: elNumber('dailyVirtualFillReferenceDays', 30),
     virtual_fill_side: elValue('dailyVirtualFillSide', 'buy_limit'),
     limit_distance_pct: elNumber('dailyLimitDistancePct', 0.2),
-    // trueなら「必要値幅の出現率」を別計算します。到達想定率の履歴試算とは分離します。
+    limit_candidate_side: elValue('dailyVirtualFillSide', 'buy_limit'),
+    // trueなら「必要値幅の出現率」を別計算します。指値到達率の履歴試算とは分離します。
     virtual_fill_rate_auto: elChecked('dailyOccurrenceEnabled', true),
     occurrence_reference_days: occurrenceReferenceDays,
     occurrence_window_minutes: elNumber('dailyOccurrenceWindowMinutes', 15),
@@ -1328,11 +1281,11 @@ async function calcDaily() {
   if (!Number.isFinite(payload.capital_jpy) || payload.capital_jpy <= 0) errors.push('資金 / 主投入額は0より大きい値にしてください。');
   if (!Number.isFinite(payload.expected_success_count) || payload.expected_success_count < 1) errors.push('想定成功回数は1以上にしてください。');
   if (!Number.isFinite(payload.take_profit_pct) || payload.take_profit_pct < 0) errors.push('想定利確幅は0%以上で入力してください。');
-  if (!Number.isFinite(payload.min_opportunities) || payload.min_opportunities < 1) errors.push('最小機会回数は1以上にしてください。');
-  if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大機会回数は最小機会回数以上にしてください。');
+  if (!Number.isFinite(payload.min_opportunities) || payload.min_opportunities < 1) errors.push('最小取引機会数は1以上にしてください。');
+  if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大取引機会数は最小取引機会数以上にしてください。');
   if (!Number.isFinite(payload.stop_loss_pct) || payload.stop_loss_pct < 0) errors.push('損切り逆行率は0以上で入力してください。');
   if (!Number.isFinite(payload.roundtrip_cost_pct) || payload.roundtrip_cost_pct < 0) errors.push('往復コストは0以上で入力してください。');
-  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('到達想定率（手入力/代替）は0〜100%で入力してください。');
+  if (!Number.isFinite(payload.virtual_fill_rate_pct) || payload.virtual_fill_rate_pct < 0 || payload.virtual_fill_rate_pct > 100) errors.push('指値到達率（手入力/代替）は0〜100%で入力してください。');
   if (!Number.isFinite(payload.limit_distance_pct) || payload.limit_distance_pct < 0) errors.push('指値距離は0%以上で入力してください。');
   if (errors.length) {
     errorMemo.textContent = `入力エラー: ${errors.join(' / ')}`;
@@ -1340,15 +1293,16 @@ async function calcDaily() {
   }
   errorMemo.textContent = '';
   const data = await postJson('/api/daily-goal', payload);
-  // 到達想定率は、分析用1分足キャッシュで試算できればそれを使い、できない場合は手入力値を代替にします。
+  // 指値到達率は、分析用1分足キャッシュで試算できればそれを使い、できない場合は手入力値を代替にします。
   document.getElementById('dailyCostPct').value = Number(data.roundtrip_cost_pct || payload.roundtrip_cost_pct).toFixed(2);
   document.getElementById('dailyTemplateMemo').textContent = data.strategy_template_note
     || 'テンプレートは売買シグナルではなく、条件比較の補助です。';
   document.getElementById('dailySuggestion').textContent = data.suggestion;
   document.getElementById('dailyDiagnosticSummary').textContent = data.diagnostic_summary || '総合診断はまだありません。';
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
-    || '到達想定率は手入力値または履歴試算値です。必要値幅の履歴確認とは別扱いです。';
+    || '指値到達率は手入力値または1分足キャッシュの価格到達ベースです。勝ち回数・利益回数ではありません。';
   renderDailyVirtualFill(data);
+  renderDailyLimitCandidates(data);
   renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
     title: p.title,
@@ -1357,21 +1311,6 @@ async function calcDaily() {
     tag: p.tag,
     kind: p.kind,
   })).join('');
-  const weightEl = document.getElementById('dailyWeightBreakdown');
-  if (weightEl) {
-    weightEl.innerHTML = (data.condition_weight_breakdown || []).map((p) => card({
-      title: p.title,
-      value: p.main,
-      sub: p.sub,
-      tag: p.tag,
-      kind: p.kind,
-    })).join('') || '<p class="memo-text">条件の重さ内訳はまだありません。</p>';
-  }
-  const winNotesEl = document.getElementById('dailyWinPremiseNotes');
-  if (winNotesEl) {
-    const notes = data.win_premise_notes || [];
-    winNotesEl.innerHTML = notes.length ? notes.map((note) => `<li>${note}</li>`).join('') : '<li>まだ計算していません。</li>';
-  }
   document.getElementById('dailyPrepNotes').innerHTML = (data.prep_notes || []).map((note) => `<li>${note}</li>`).join('');
   document.getElementById('dailyPlanCards').innerHTML = data.plan_cards.map((p) => card({
     title: p.title,
@@ -1381,7 +1320,7 @@ async function calcDaily() {
     kind: p.kind,
   })).join('');
   renderTable(document.getElementById('dailyScenarioTable'), [
-    ['fill_rate', '到達想定率'], ['opportunities', '想定機会'], ['effective', '到達想定'], ['needed_net', '1回必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
+    ['fill_rate', '指値到達率'], ['opportunities', '取引機会数'], ['effective', '指値到達見込み'], ['needed_net', '到達見込みあたり必要Net'], ['needed_pct', '1回あたり必要値幅'], ['needed_win', '必要勝率'], ['win_label', '必要勝率判定'], ['movement_ratio', '値動き比'], ['reality', '現実度'], ['memo', '理由'],
   ], data.scenarios.map((r) => ({
     fill_rate: `${Number(r.fill_rate).toFixed(0)}%`,
     opportunities: `${r.opportunities}回`,
@@ -1397,14 +1336,105 @@ async function calcDaily() {
 }
 
 
+
+function renderDailyLimitCandidates(data) {
+  const memoEl = document.getElementById('dailyLimitCandidateMemo');
+  const tableEl = document.getElementById('dailyLimitCandidateTable');
+  const cardsEl = document.getElementById('dailyLimitCandidateCards');
+  const notesEl = document.getElementById('dailyLimitCandidateNotes');
+  if (!memoEl || !tableEl) return;
+  const rows = Array.isArray(data.limit_candidate_rows) ? data.limit_candidate_rows : [];
+  const meta = data.limit_candidate_meta || {};
+  memoEl.textContent = data.limit_candidate_note || '必要利確価格ベースの指値候補診断はまだ計算していません。';
+
+  if (cardsEl) {
+    if (!rows.length) {
+      cardsEl.innerHTML = '<div class="daily-limit-empty">現在価格が取得できると、指値候補カードを表示します。</div>';
+    } else {
+      cardsEl.innerHTML = rows.map((row) => {
+        const simGap = Number(row.take_profit_simulation_gap_pct);
+        const simClass = Number.isFinite(simGap) && simGap >= 0 ? 'ok' : 'warn';
+        return `
+          <div class="daily-limit-candidate-card ${simClass}">
+            <div class="candidate-card-head">
+              <strong>${row.candidate_label || '—'}</strong>
+              <span>${row.condition_label || '条件確認'}</span>
+            </div>
+            <div class="candidate-price-flow">
+              <div><small>指値価格</small><b>${yen(row.limit_price, 0)}</b></div>
+              <div class="flow-arrow">→</div>
+              <div><small>必要利確</small><b>${yen(row.required_take_profit_price, 0)}</b></div>
+            </div>
+            <div class="candidate-card-sub">
+              指値後必要値幅 ${yen(row.required_move_jpy_from_limit, 0)} / ${pct(row.required_move_pct_from_limit, 3)}<br />
+              参考利確幅: ${row.take_profit_simulation_label || '—'}（差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}）
+            </div>
+            <div class="candidate-history-metrics">
+              <div><small>指値到達</small><b>${pct(row.limit_hit_rate_pct, 1)}</b></div>
+              <div><small>利確到達</small><b>${pct(row.take_profit_after_hit_rate_pct, 1)}</b></div>
+              <div><small>損切り先行</small><b>${pct(row.stop_first_rate_pct, 1)}</b></div>
+            </div>
+            <div class="candidate-card-foot">${row.history_window_minutes ? `${row.history_window_minutes}分以内 / ${row.history_label || '履歴確認'}` : '履歴診断は未確認'}</div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  tableEl.classList.add('limit-candidate-table');
+  renderTable(tableEl, [
+    ['candidate', '候補'],
+    ['limit_to_tp', '指値 → 必要利確'],
+    ['width', '指値後必要値幅'],
+    ['width_pct', '必要変動率'],
+    ['hit', '指値到達率'],
+    ['tp', '利確到達率'],
+    ['stop', '損切り先行率'],
+    ['sim', '参考利確幅'],
+    ['distance', '現在価格から'],
+    ['qty', '数量'],
+    ['per_target', '1回目標'],
+    ['cost', '概算コスト'],
+    ['condition', '条件診断'],
+  ], rows.map((row) => ({
+    candidate: row.candidate_label || '—',
+    limit_to_tp: `${yen(row.limit_price, 0)} → ${yen(row.required_take_profit_price, 0)}`,
+    width: yen(row.required_move_jpy_from_limit, 0),
+    width_pct: pct(row.required_move_pct_from_limit, 3),
+    hit: pct(row.limit_hit_rate_pct, 1),
+    tp: pct(row.take_profit_after_hit_rate_pct, 1),
+    stop: pct(row.stop_first_rate_pct, 1),
+    sim: `${row.take_profit_simulation_label || '—'} / 差 ${pct(row.take_profit_simulation_gap_pct, 3, true)}`,
+    distance: pct(row.current_price_distance_pct, 3, true),
+    qty: qty(row.quantity),
+    per_target: yen(row.per_trade_target_jpy, 2),
+    cost: yen(row.estimated_roundtrip_cost_jpy, 2),
+    condition: row.condition_label || '—',
+  })));
+  if (notesEl) {
+    if (!rows.length) {
+      notesEl.innerHTML = '<li>現在価格が取得できると、指値価格から必要利確価格までの比較を表示します。</li>';
+      return;
+    }
+    const sideText = meta.side === 'sell_limit' ? '売り指値' : '買い指値';
+    notesEl.innerHTML = [
+      `<li>${sideText}候補の比較です。必要利確価格は、手数料・スプレッド/スリッページ見積と1回目標を含めた概算です。</li>`,
+      '<li>「参考利確幅」は、利確幅シミュレーション%が必要変動率に足りるかだけを見る補助欄です。主判断は必要利確価格と指値→利確幅です。</li>',
+      '<li>候補ごとの「指値到達率」「利確到達率」「損切り先行率」は、分析用1分足キャッシュから指定判定窓内で試算した参考値です。</li>',
+      '<li>利確到達率は「指値に届いた後、必要利確価格まで届いた割合」です。損切り先行率は利確より先に損切り幅へ触れた割合です。同じ1分足内の順序は確定できないため参考扱いです。</li>',
+    ].join('');
+  }
+}
+
+
 function renderDailyVirtualFill(data) {
   const memoEl = document.getElementById('dailyVirtualFillMemo');
   const tableEl = document.getElementById('dailyVirtualFillTable');
   if (!memoEl || !tableEl) return;
   const meta = data.virtual_fill_history_meta || {};
-  memoEl.textContent = data.virtual_fill_history_note || data.virtual_fill_rate_note || '到達想定率の履歴試算はまだ計算していません。';
+  memoEl.textContent = data.virtual_fill_history_note || data.virtual_fill_rate_note || '指値到達率の履歴試算はまだ計算していません。';
   const rows = [
-    { item: '使用した到達想定率', value: pct(data.virtual_fill_rate_pct_used, 1) },
+    { item: '使用した指値到達率', value: pct(data.virtual_fill_rate_pct_used, 1) },
     { item: '履歴試算の状態', value: meta.enabled === false ? 'OFF' : (meta.used_for_daily_goal ? '日次目標に使用' : '手入力値を代替使用') },
     { item: '通貨 / 足', value: `${meta.symbol || elValue('dailySymbol', 'BTCJPY')} / ${meta.interval || '1m'}` },
     { item: '参照期間', value: meta.reference_period_text || '—' },
@@ -1414,7 +1444,7 @@ function renderDailyVirtualFill(data) {
     { item: '現在価格ベースの仮想指値', value: meta.current_limit_price === undefined ? '—' : yen(meta.current_limit_price, 2) },
     { item: '参照足数', value: meta.referenced_row_count === undefined ? '—' : `${meta.referenced_row_count}本` },
     { item: '価格到達足数', value: meta.matched_row_count === undefined ? '—' : `${meta.matched_row_count}本` },
-    { item: '到達想定率', value: data.virtual_fill_history_rate_pct === null || data.virtual_fill_history_rate_pct === undefined ? '—' : pct(data.virtual_fill_history_rate_pct, 1) },
+    { item: '指値到達率', value: data.virtual_fill_history_rate_pct === null || data.virtual_fill_history_rate_pct === undefined ? '—' : pct(data.virtual_fill_history_rate_pct, 1) },
     { item: 'データ品質', value: meta.quality_label || '—' },
     { item: '未確定足', value: meta.include_unclosed_candle ? '含む' : '除外' },
     { item: '参照元', value: meta.source || '—' },
@@ -1474,7 +1504,7 @@ async function loadDailyReports() {
     ['target', '目標'],
     ['capital', '資金'],
     ['cost', '往復コスト'],
-    ['fill', '到達想定率'],
+    ['fill', '指値到達率'],
     ['width', '値幅出現率'],
     ['need', '1回あたり必要値幅'],
     ['win', '必要勝率'],
@@ -1501,7 +1531,7 @@ function applyDailyTemplate() {
   setValueIfExists('dailyStopPct', String(template.stopPct));
   setValueIfExists('dailyCostPct', String(template.costPct));
   setValueIfExists('dailyCancelRates', template.cancelRates);
-  // テンプレートで到達想定率は変えますが、必要値幅の履歴確認ON/OFFはユーザー設定を維持します。
+  // テンプレートで指値到達率は変えますが、必要値幅の履歴確認ON/OFFはユーザー設定を維持します。
   document.getElementById('dailyTemplateMemo').textContent = `${template.label}: ${template.memo}（売買推奨ではなく条件テンプレートです）`;
 }
 
@@ -1525,7 +1555,6 @@ function setupNav() {
       document.getElementById('pageSubtitle').textContent = titles[section][1];
       if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
-      if (section === 'alerts') loadAlertDashboard().catch(console.error);
     });
   });
 }
@@ -1536,7 +1565,6 @@ async function refreshAll() {
   await loadSummaryMiniCharts();
   await loadImpact();
   await loadAlertPreview();
-  await loadMovementWindows().catch(console.error);
   await loadApiReadiness();
   await loadDbStatus();
   await loadAnalysisCacheStatus().catch(console.error);
@@ -1544,30 +1572,22 @@ async function refreshAll() {
 
 document.addEventListener('DOMContentLoaded', () => {
   setupNav();
-  document.getElementById('refreshAll').addEventListener('click', refreshAll);
-  document.getElementById('fetchPrices').addEventListener('click', () => fetchPrices({ source: 'manual' }));
+  document.getElementById('refreshAll')?.addEventListener('click', refreshAll);
+  document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
   document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
-  document.getElementById('reloadAlertDashboard').addEventListener('click', loadAlertDashboard);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadDbStatus').addEventListener('click', loadDbStatus);
   document.getElementById('reloadAnalysisCacheStatus').addEventListener('click', loadAnalysisCacheStatus);
   document.getElementById('ensureAnalysisCache').addEventListener('click', ensureAnalysisCache);
   document.getElementById('analysisCacheDays').addEventListener('change', loadAnalysisCacheStatus);
   document.getElementById('analysisCacheSymbol').addEventListener('change', loadAnalysisCacheStatus);
-  document.getElementById('reloadChart').addEventListener('click', reloadChartWithDownloadConfirm);
-  document.getElementById('reloadMovementWindows').addEventListener('click', loadMovementWindows);
-  document.getElementById('downloadHistory').addEventListener('click', downloadHistory);
-  document.getElementById('updateHistoryToNow').addEventListener('click', updateHistoryToNow);
+  document.getElementById('reloadChart').addEventListener('click', loadChartRangeFromKlines);
   document.getElementById('chartSymbol').addEventListener('change', loadChart);
-  document.getElementById('chartSource').addEventListener('change', loadChart);
   document.getElementById('chartInterval').addEventListener('change', loadChartRangeFromKlines);
   document.getElementById('chartRange').addEventListener('change', loadChartRangeFromKlines);
-  document.getElementById('historyDate').addEventListener('change', loadChart);
-  document.getElementById('historyStartHour').addEventListener('change', loadChart);
-  document.getElementById('historyEndHour').addEventListener('change', loadChart);
   document.getElementById('calcTrade').addEventListener('click', calcTrade);
   document.getElementById('tradeCostPct').addEventListener('input', syncRoundtripCostFromTrade);
   document.getElementById('applyDailyTemplate').addEventListener('click', applyDailyTemplate);
@@ -1582,7 +1602,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('saveDailyReport').addEventListener('click', saveDailyReport);
   document.getElementById('reloadDailyReports').addEventListener('click', loadDailyReports);
   document.getElementById('clearDailyReports').addEventListener('click', clearDailyReports);
-  document.getElementById('historyDate').value = todayJstDateText();
+  setValueIfExists('historyDate', todayJstDateText());
   setValueIfExists('dailyOccurrenceStartDate', todayJstDateText());
   setValueIfExists('dailyOccurrenceEndDate', todayJstDateText());
   setCheckedIfExists('dailyOccurrenceEnabled', true);
