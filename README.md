@@ -58,15 +58,44 @@ Windows 用の起動バッチを使う場合:
 
 ## Electron 起動トラブルメモ
 
-環境によって、`npm install` 後に Electron が正しく起動しないことがあります。  
-`spawn ... electron.exe ENOENT` のようなエラーが出る場合は、`node_modules/electron/path.txt` の中身が原因になっていることがあります。
+環境によって、`npm install` や Electron のインストールスクリプトが成功したように見えても、Electron が正しく起動しないことがあります。  
+特に Windows 環境では、`node_modules/electron/dist/electron.exe` が欠けている、壊れている、または `path.txt` の内容と合わず、`npm start` で失敗するケースがあります。
 
 確認ポイント:
+
+```powershell
+Test-Path .\node_modules\electron\dist\electron.exe
+Test-Path .\node_modules\electron\path.txt
+Get-Content .\node_modules\electron\path.txt
+```
+
+確認する内容:
 
 - `node_modules/electron/dist/electron.exe` が存在する
 - `node_modules/electron/path.txt` が存在する
 - `path.txt` の中身が `electron.exe` だけになっている
-- 末尾に余計な改行や空白がない
+- `path.txt` の末尾に余計な改行や空白がない
+
+### electron.exe の手動更新で直るケース
+
+`npm install` が成功表示でも、`electron.exe` の実体が正しく入っていない場合があります。  
+この場合は、Electron パッケージを入れ直すか、Electron のバイナリを手動で更新・復元してから起動確認してください。
+
+目安:
+
+```powershell
+npm install
+Test-Path .\node_modules\electron\dist\electron.exe
+npm start
+```
+
+それでも `electron.exe` が見つからない、または `spawn ... electron.exe ENOENT` が出る場合は、`node_modules/electron` 配下の Electron 本体を手動更新します。  
+手動更新後は、次の `path.txt` 修正もあわせて確認してください。
+
+### path.txt 修正
+
+`path.txt` の中身が不正、または末尾改行が原因で起動に失敗することがあります。  
+このファイルは `electron.exe` だけを ASCII で、末尾改行なしで保存します。
 
 修正例:
 
