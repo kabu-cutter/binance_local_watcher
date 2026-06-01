@@ -2,12 +2,12 @@
 
 Binance Local Watcher は、Binance の公開マーケットデータを使って、BTC/JPY・ETH/JPY などの価格監視、チャート表示、アラート確認、損益プレビュー、日次目標の条件診断を行うローカルアプリです。
 
-このリポジトリの運用対象は **Electron 版** です。  
+このリポジトリの運用対象は **Electron 版** です。
 `app.py` の Streamlit 版は **legacy / 参照用** として残し、通常運用では起動しません。
 
 ## 重要・安全方針
 
-このアプリは、手動取引前の確認・記録・条件診断を支援するためのものです。  
+このアプリは、手動取引前の確認・記録・条件診断を支援するためのものです。
 売買シグナル、投資助言、自動売買ツールではありません。
 
 - 実注文はしません
@@ -58,7 +58,7 @@ Windows 用の起動バッチを使う場合:
 
 ## Electron 起動トラブルメモ
 
-環境によって、`npm install` や Electron のインストールスクリプトが成功したように見えても、Electron が正しく起動しないことがあります。  
+環境によって、`npm install` や Electron のインストールスクリプトが成功したように見えても、Electron が正しく起動しないことがあります。
 特に Windows 環境では、`node_modules/electron/dist/electron.exe` が欠けている、壊れている、または `path.txt` の内容と合わず、`npm start` で失敗するケースがあります。
 
 確認ポイント:
@@ -78,7 +78,7 @@ Get-Content .\node_modules\electron\path.txt
 
 ### electron.exe の手動更新で直るケース
 
-`npm install` が成功表示でも、`electron.exe` の実体が正しく入っていない場合があります。  
+`npm install` が成功表示でも、`electron.exe` の実体が正しく入っていない場合があります。
 この場合は、Electron パッケージを入れ直すか、Electron のバイナリを手動で更新・復元してから起動確認してください。
 
 目安:
@@ -89,12 +89,30 @@ Test-Path .\node_modules\electron\dist\electron.exe
 npm start
 ```
 
-それでも `electron.exe` が見つからない、または `spawn ... electron.exe ENOENT` が出る場合は、`node_modules/electron` 配下の Electron 本体を手動更新します。  
+それでも `electron.exe` が見つからない、または `spawn ... electron.exe ENOENT` が出る場合は、`node_modules/electron` 配下の Electron 本体を手動更新します。
+
+```Powershell
+$electronVersion = node -p "require('./node_modules/electron/package.json').version"
+$zipUrl = "https://github.com/electron/electron/releases/download/v$electronVersion/electron-v$electronVersion-win32-x64.zip"
+$zipPath = "$env:TEMP\electron-v$electronVersion-win32-x64.zip"
+
+Write-Host "Electron version: $electronVersion"
+Write-Host "Download: $zipUrl"
+
+Remove-Item -Recurse -Force .\node_modules\electron\dist -ErrorAction SilentlyContinue
+Remove-Item -Force .\node_modules\electron\path.txt -ErrorAction SilentlyContinue
+
+Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+
+New-Item -ItemType Directory -Force .\node_modules\electron\dist | Out-Null
+Expand-Archive -Path $zipPath -DestinationPath .\node_modules\electron\dist -Force
+
+
 手動更新後は、次の `path.txt` 修正もあわせて確認してください。
 
 ### path.txt 修正
 
-`path.txt` の中身が不正、または末尾改行が原因で起動に失敗することがあります。  
+`path.txt` の中身が不正、または末尾改行が原因で起動に失敗することがあります。
 このファイルは `electron.exe` だけを ASCII で、末尾改行なしで保存します。
 
 修正例:
@@ -140,7 +158,7 @@ npm run build
 
 ## API境界
 
-API契約は `API_CONTRACT.json` を参照してください。  
+API契約は `API_CONTRACT.json` を参照してください。
 利用可能ルートは `getCapabilities` / `getContract` でも確認できます。
 
 主なAPI:
@@ -164,7 +182,7 @@ API契約は `API_CONTRACT.json` を参照してください。
 
 ## APIキー準備（保存しない）
 
-APIキー / Secret はアプリ内保存しません。  
+APIキー / Secret はアプリ内保存しません。
 利用する場合は `環境変数` または `.env` の読み取りのみです。
 
 APIタブの「API準備度（最小）」で、公開API到達・署名API認証・手数料API取得（読み取り専用）を確認できます。
@@ -178,7 +196,7 @@ BINANCE_API_SECRET=your_secret
 
 ## ローカルデータ
 
-このアプリはローカルで履歴・診断用データを扱います。  
+このアプリはローカルで履歴・診断用データを扱います。
 CSV / JSON / SQLite などの実行時データは、必要最小限の保存・参照にとどめます。
 
 代表例:
