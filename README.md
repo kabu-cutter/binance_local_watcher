@@ -1,38 +1,81 @@
 # Binance Local Watcher (Electron mainline)
 
-このリポジトリの運用対象は **Electron版** です。  
+Binance Local Watcher は、Binance の公開マーケットデータを使って、BTC/JPY・ETH/JPY などの価格監視、チャート表示、アラート確認、損益プレビュー、日次目標の条件診断を行うローカルアプリです。
+
+このリポジトリの運用対象は **Electron 版** です。  
 `app.py` の Streamlit 版は **legacy / 参照用** として残し、通常運用では起動しません。
 
-<<<<<<< HEAD
-## 安全方針
-=======
-突貫工事でやったので、荒っぽいところなどあるかと思いますが、Crypto初心者にやさしい設計になっていて、現在、Binanceeの公開データを利用して少額取引を考えるうえでヒントになるかもしれません。アカウントお餅の方は、APIで接続テストまで可能です。詳しくは起動してみてください。
+## 重要・安全方針
 
-
-## 重要
->>>>>>> 10ff1d2271889d87c2a7632ebca79bb15dd5d9dc
+このアプリは、手動取引前の確認・記録・条件診断を支援するためのものです。  
+売買シグナル、投資助言、自動売買ツールではありません。
 
 - 実注文はしません
 - 自動売買はしません
 - 出金機能はありません
 - APIキー / Secret の保存処理は実装しません
 - 価格取得は Binance 公開マーケットデータを利用します
+- APIキーを使う場合も、まずは読み取り専用・接続確認用途に限定します
+- アラートや日次目標診断は、売買指示ではなく確認材料です
+
+## 主な機能
+
+- 現在価格の表示
+- BTCJPY / ETHJPY の監視
+- チャート表示
+- アラート判定・履歴表示
+- 値動き影響の確認
+- 損益プレビュー
+- 日次目標の条件診断
+- API準備度の最小チェック
+- ローカルデータによる履歴・診断の補助
 
 ## 起動（Electron）
 
 前提:
-- Node.js 20 以上（推奨 20 LTS）
+
+- Node.js 20 以上
+- Windows でのローカル実行を主対象
+
+初回セットアップ:
 
 ```powershell
 cd C:\Projects\binance_local_watcher
 npm install
+```
+
+起動:
+
+```powershell
 npm start
 ```
 
-Windows:
+Windows 用の起動バッチを使う場合:
 
 ```powershell
 .\start_electron_local_engine.bat
+```
+
+## Electron 起動トラブルメモ
+
+環境によって、`npm install` 後に Electron が正しく起動しないことがあります。  
+`spawn ... electron.exe ENOENT` のようなエラーが出る場合は、`node_modules/electron/path.txt` の中身が原因になっていることがあります。
+
+確認ポイント:
+
+- `node_modules/electron/dist/electron.exe` が存在する
+- `node_modules/electron/path.txt` が存在する
+- `path.txt` の中身が `electron.exe` だけになっている
+- 末尾に余計な改行や空白がない
+
+修正例:
+
+```powershell
+[System.IO.File]::WriteAllText(
+  "C:\Projects\binance_local_watcher\node_modules\electron\path.txt",
+  "electron.exe",
+  [System.Text.Encoding]::ASCII
+)
 ```
 
 ## スモークチェック
@@ -49,19 +92,22 @@ npm run smoke
 npm run build
 ```
 
-`electron-builder` を使って `dist/` に出力します。  
-Node 14 ではビルドできないため、Node 20 以上で実行してください。
+`electron-builder` を使って `dist/` に出力します。
 
 補足（Windows）:
+
 - `winCodeSign` 展開時にシンボリックリンク作成権限が必要です
 - 失敗する場合は「管理者PowerShellで実行」または「Windows開発者モードを有効化」してください
 
 ## 役割分担
 
 - `index.html` / `renderer.js`: UI表示と入力
+- `style.css`: UIスタイル
 - `preload.js`: `window.blw.api` の公開
-- `local_engine.js`: 公開API取得、CSV I/O、ルート処理
+- `local_engine.js`: 公開API取得、ローカルI/O、ルート処理
 - `local_engine_calculations.js`: 計算ロジック（副作用なし）
+- `local_engine_alerts.js`: アラート判定ロジック
+- `API_CONTRACT.json`: API契約
 
 ## API境界
 
@@ -69,14 +115,18 @@ API契約は `API_CONTRACT.json` を参照してください。
 利用可能ルートは `getCapabilities` / `getContract` でも確認できます。
 
 主なAPI:
+
 - GET: `status`, `capabilities`, `summary`, `impact`, `alert-preview`, `alert-history`, `daily-goal-reports`, `chart`, `contract`, `api-readiness`
 - POST: `fetch-prices`, `download-history`, `trade-preview`, `daily-goal`, `save-daily-goal-report`, `clear-alert-history`, `clear-daily-goal-reports`
 
 補足:
+
 - `alert-preview` は `simple / rolling / sustained` モード対応
 - `trade-preview` は概算P/Lに加えて、`exchangeInfo` ベースの最小ルール診断（`rule_check`）を返します
+- アラートは売買サインではなく、手動取引前の注意・確認用です
 
 禁止範囲:
+
 - `real_order`
 - `auto_trading`
 - `withdrawal`
@@ -85,7 +135,9 @@ API契約は `API_CONTRACT.json` を参照してください。
 
 ## APIキー準備（保存しない）
 
-APIキー/Secretはアプリ内保存しません。`環境変数` か `.env` の読み取りのみです。  
+APIキー / Secret はアプリ内保存しません。  
+利用する場合は `環境変数` または `.env` の読み取りのみです。
+
 APIタブの「API準備度（最小）」で、公開API到達・署名API認証・手数料API取得（読み取り専用）を確認できます。
 
 `.env` 例:
@@ -95,12 +147,36 @@ BINANCE_API_KEY=your_key
 BINANCE_API_SECRET=your_secret
 ```
 
+## ローカルデータ
+
+このアプリはローカルで履歴・診断用データを扱います。  
+CSV / JSON / SQLite などの実行時データは、必要最小限の保存・参照にとどめます。
+
+代表例:
+
+- `price_history.csv`
+- `alert_history.json`
+- `data/blw.sqlite`
+
+注意:
+
+- ローカル実行時データは GitHub に上げない方針です
+- `data/blw.sqlite` は `.gitignore` 対象にしてください
+- APIキーや Secret をリポジトリに含めないでください
+
 ## Legacy (Streamlit)
 
 - `app.py` は legacy / 参照専用
-- 現在のElectronポート作業では `app.py` を変更しません
+- 現在の Electron 版では `app.py` を通常運用しません
 - Python側の機能棚卸しは `ELECTRON_MIGRATION_BACKLOG.md` を参照
 
 ## 配布前チェック
 
-- `RELEASE_CHECKLIST.md` を使用してください
+配布前は `RELEASE_CHECKLIST.md` を確認してください。
+
+最低限の確認:
+
+```powershell
+npm run smoke
+npm start
+```
