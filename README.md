@@ -26,6 +26,10 @@
 ```powershell
 cd C:\Projects\binance_local_watcher
 npm install
+**Electron.exeのインストールで失敗するケースがあります。**
+**npm install は初回だけで、Electron手動インストールしてみて。**
+**notionに現在の解決策載せてます。2026/06/01現在。
+
 npm start
 ```
 
