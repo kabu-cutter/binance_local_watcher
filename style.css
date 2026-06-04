@@ -1649,3 +1649,90 @@ tr:hover td { background: rgba(255,255,255,0.34); }
 .alert-history-fold[open] .alert-fold-summary {
   padding-bottom: 10px;
 }
+
+/* Alert settings value visibility / common fallback update */
+.alert-settings-panel .alert-row-fields {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.alert-settings-panel .alert-setting-row-soft .alert-row-fields,
+.alert-settings-panel .alert-setting-row:nth-of-type(3) .alert-row-fields {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.alert-settings-panel .alert-setting-chip {
+  display: grid;
+  grid-template-columns: auto minmax(76px, 1fr) auto;
+  grid-template-areas:
+    "label control badge"
+    "fallback fallback fallback";
+  column-gap: 8px;
+  row-gap: 4px;
+  align-items: center;
+  justify-content: stretch;
+  min-width: 0;
+}
+
+.alert-settings-panel .alert-setting-chip .setting-label,
+.alert-settings-panel .alert-setting-chip .check-field {
+  grid-area: label;
+}
+
+.alert-settings-panel .alert-setting-chip .setting-badge {
+  grid-area: badge;
+}
+
+.alert-settings-panel .alert-setting-chip input,
+.alert-settings-panel .alert-setting-chip select {
+  grid-area: control;
+  width: 100%;
+  min-width: 72px;
+  justify-self: stretch;
+}
+
+.alert-settings-panel .alert-setting-chip .alert-fixed-number {
+  min-width: 84px;
+  max-width: 104px;
+  text-align: center;
+  justify-self: end;
+}
+
+.alert-settings-panel .alert-setting-chip #alertSensitivityPreset {
+  min-width: 168px;
+  max-width: none;
+}
+
+.alert-symbol-threshold-input {
+  max-width: 96px;
+  text-align: center;
+}
+
+.setting-fallback {
+  grid-area: fallback;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(203,126,170,0.18);
+  background: rgba(255,255,255,0.58);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.setting-fallback.is-custom {
+  color: #7b4f76;
+  border-color: rgba(232,112,173,0.24);
+  background: rgba(255,241,248,0.72);
+}
+
+@media (max-width: 1180px) {
+  .alert-settings-panel .alert-row-fields,
+  .alert-settings-panel .alert-setting-row-soft .alert-row-fields,
+  .alert-settings-panel .alert-setting-row:nth-of-type(3) .alert-row-fields {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}

@@ -851,6 +851,7 @@ function applyAlertPreset() {
   if (windowEl) windowEl.value = String(preset.windowMinutes);
   if (thresholdEl) thresholdEl.value = preset.thresholdPct.toFixed(2);
   if (modeEl) modeEl.value = preset.mode;
+  syncAlertThresholdFallbacks();
   updateAlertModeHints();
 }
 
@@ -885,8 +886,33 @@ function updateAlertModeHints() {
   }
 }
 
+function syncAlertThresholdFallbacks() {
+  const commonThreshold = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
+  const pairs = [
+    { inputId: 'alertThresholdBTC', fallbackId: 'alertThresholdBTCFallback', label: 'BTC' },
+    { inputId: 'alertThresholdETH', fallbackId: 'alertThresholdETHFallback', label: 'ETH' },
+  ];
+  pairs.forEach(({ inputId, fallbackId, label }) => {
+    const input = document.getElementById(inputId);
+    const fallback = document.getElementById(fallbackId);
+    if (!input || !fallback) return;
+    const raw = String(input.value ?? '').trim();
+    const customValue = optionalPercentInputValue(inputId);
+    if (!raw || customValue === null) {
+      fallback.textContent = `共通 ${pct(commonThreshold, 2)} を使用`;
+      fallback.classList.remove('is-custom');
+      input.setAttribute('aria-label', `${label}個別しきい値。空欄のため共通 ${pct(commonThreshold, 2)} を使用`);
+    } else {
+      fallback.textContent = `個別 ${pct(customValue, 2)} を使用`;
+      fallback.classList.add('is-custom');
+      input.setAttribute('aria-label', `${label}個別しきい値 ${pct(customValue, 2)} を使用`);
+    }
+  });
+}
+
 function updateAlertThresholdGuide(data = null) {
   const guide = document.getElementById('alertThresholdGuide');
+  syncAlertThresholdFallbacks();
   if (!guide) return;
   const thresholdPct = data?.common_threshold_pct ?? optionalPercentInputValue('alertThresholdPct') ?? 0.30;
   const costFloorPct = data?.cost_floor_pct ?? optionalPercentInputValue('alertCostFloorPct') ?? 0.28;
@@ -905,6 +931,7 @@ async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
   updateAlertModeHints();
+  syncAlertThresholdFallbacks();
   const rollingMinPoints = Number(document.getElementById('alertRollingMinPoints').value);
   const risingRatio = Number(document.getElementById('alertRisingRatio').value);
   const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
@@ -1704,6 +1731,7 @@ document.addEventListener('DOMContentLoaded', () => {
   syncRoundtripCostFromTrade();
   applyAlertPreset();
   updateAlertModeHints();
+  syncAlertThresholdFallbacks();
   updateAlertThresholdGuide();
   document.getElementById('alertSensitivityPreset')?.addEventListener('change', async () => {
     applyAlertPreset();
@@ -1714,10 +1742,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertMode').addEventListener('change', () => { markAlertPresetCustom(); updateAlertModeHints(); loadAlertPreview(); });
   document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
   document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
+  document.getElementById('alertThresholdPct').addEventListener('input', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); });
+  document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); loadAlertPreview(); });
   document.getElementById('alertCostFloorPct')?.addEventListener('change', loadAlertPreview);
-  document.getElementById('alertThresholdBTC').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertThresholdETH').addEventListener('change', loadAlertPreview);
+  document.getElementById('alertThresholdBTC').addEventListener('input', syncAlertThresholdFallbacks);
+  document.getElementById('alertThresholdBTC').addEventListener('change', () => { syncAlertThresholdFallbacks(); loadAlertPreview(); });
+  document.getElementById('alertThresholdETH').addEventListener('input', syncAlertThresholdFallbacks);
+  document.getElementById('alertThresholdETH').addEventListener('change', () => { syncAlertThresholdFallbacks(); loadAlertPreview(); });
   document.getElementById('alertSaveHistory').addEventListener('change', loadAlertPreview);
   document.querySelectorAll('.alertSymbol').forEach((el) => el.addEventListener('change', loadAlertPreview));
   refreshAll().then(loadChart).then(loadDailyReports).catch(console.error);

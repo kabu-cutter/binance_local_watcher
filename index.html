@@ -260,7 +260,7 @@
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="window">
                     <span class="setting-label">窓(分)</span>
-                    <input id="alertWindowMinutes" type="number" value="15" min="1" max="240" />
+                    <input id="alertWindowMinutes" class="alert-fixed-number" type="number" value="15" min="1" max="240" />
                     <span class="setting-badge">使用中</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="mode">
@@ -270,7 +270,7 @@
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="threshold">
                     <span class="setting-label">しきい値%</span>
-                    <input id="alertThresholdPct" type="number" value="0.30" step="0.01" min="0" />
+                    <input id="alertThresholdPct" class="alert-fixed-number" type="number" value="0.30" step="0.01" min="0" />
                     <span class="setting-badge">使用中</span>
                   </div>
                 </div>
@@ -284,17 +284,17 @@
                 <div class="alert-row-fields">
                   <div class="alert-setting-chip alert-setting-reference" data-alert-setting="cost">
                     <span class="setting-label">往復コスト目安%</span>
-                    <input id="alertCostFloorPct" type="number" value="0.28" step="0.01" min="0" />
+                    <input id="alertCostFloorPct" class="alert-fixed-number" type="number" value="0.28" step="0.01" min="0" />
                     <span class="setting-badge">参考</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-mode" data-alert-setting="rolling" data-mode-target="rolling">
                     <span class="setting-label">rolling最小連続本数</span>
-                    <input id="alertRollingMinPoints" type="number" value="3" min="2" max="20" />
+                    <input id="alertRollingMinPoints" class="alert-fixed-number" type="number" value="3" min="2" max="20" />
                     <span class="setting-badge mode-badge">今は未使用</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-mode" data-alert-setting="sustained" data-mode-target="sustained">
                     <span class="setting-label">上昇比率%</span>
-                    <input id="alertRisingRatio" type="number" value="60" min="1" max="100" step="1" />
+                    <input id="alertRisingRatio" class="alert-fixed-number" type="number" value="60" min="1" max="100" step="1" />
                     <span class="setting-badge mode-badge">今は未使用</span>
                   </div>
                 </div>
@@ -314,8 +314,9 @@
                   </div>
                   <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="btc-threshold">
                     <span class="setting-label">BTC個別%</span>
-                    <input id="alertThresholdBTC" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
+                    <input id="alertThresholdBTC" class="alert-symbol-threshold-input" type="number" value="" step="0.01" min="0" placeholder="任意" />
                     <span class="setting-badge">任意</span>
+                    <span class="setting-fallback" id="alertThresholdBTCFallback">共通 0.30% を使用</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-symbol">
                     <label class="check-field">ETH
@@ -325,8 +326,9 @@
                   </div>
                   <div class="alert-setting-chip alert-setting-symbol" data-alert-setting="eth-threshold">
                     <span class="setting-label">ETH個別%</span>
-                    <input id="alertThresholdETH" type="number" value="" step="0.01" min="0" placeholder="共通値を使用" />
+                    <input id="alertThresholdETH" class="alert-symbol-threshold-input" type="number" value="" step="0.01" min="0" placeholder="任意" />
                     <span class="setting-badge">任意</span>
+                    <span class="setting-fallback" id="alertThresholdETHFallback">共通 0.30% を使用</span>
                   </div>
                 </div>
               </div>
