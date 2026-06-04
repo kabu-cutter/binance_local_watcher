@@ -363,11 +363,23 @@
             </div>
           </div>
 
+          <div class="alert-summary-card is-clear" id="alertSummaryCard" aria-live="polite">
+            <div class="alert-summary-main">
+              <span class="alert-summary-kicker">現在の判定</span>
+              <strong id="alertSummaryStatus">未判定</strong>
+              <p id="alertSummaryText">判定更新を押すと、注意以上のアラートがあるかをここにまとめます。</p>
+            </div>
+            <div class="alert-summary-list" id="alertSummaryList">
+              <span class="alert-summary-empty">まだ判定していません。</span>
+            </div>
+          </div>
+
           <div class="alert-guidance-box" id="alertThresholdGuide">
             標準の初期値は「15分 0.30%」です。0.10%前後は情報表示寄り、履歴保存する注意アラートはコスト目安も見て少し高めから始めます。
           </div>
           <p class="memo-text" id="alertPreviewMemo">まだ判定していません。</p>
           <p class="memo-text" id="alertTopMemo">上位通知はまだありません。</p>
+          <div class="alert-detail-table-note">判定詳細：ここは確認用です。最初に見る情報は上の「現在の判定」にまとめます。</div>
           <div class="table-wrap"><table id="alertPreviewTable"></table></div>
 
           <details class="alert-history-fold alert-fold-card">

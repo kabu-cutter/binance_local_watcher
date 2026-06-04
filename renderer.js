@@ -927,6 +927,62 @@ function updateAlertThresholdGuide(data = null) {
   guide.textContent = `現在の感度: ${presetLabel} / ${base} 0.10%前後は履歴保存よりも監視・情報表示向けです。`;
 }
 
+function renderAlertSummary(data = null, selectedSymbols = []) {
+  const card = document.getElementById('alertSummaryCard');
+  const statusEl = document.getElementById('alertSummaryStatus');
+  const textEl = document.getElementById('alertSummaryText');
+  const listEl = document.getElementById('alertSummaryList');
+  if (!card || !statusEl || !textEl || !listEl) return;
+
+  const setState = (stateClass) => {
+    card.classList.remove('is-clear', 'is-info', 'is-watch', 'is-warning');
+    card.classList.add(stateClass);
+  };
+
+  if (!data) {
+    setState('is-clear');
+    statusEl.textContent = '未判定';
+    textEl.textContent = '判定更新を押すと、注意以上のアラートがあるかをここにまとめます。';
+    listEl.innerHTML = '<span class="alert-summary-empty">まだ判定していません。</span>';
+    return;
+  }
+
+  const rows = data.rows || [];
+  const activeRows = rows.filter((row) => row.alert_hit);
+  const windowMinutes = data.window_minutes ?? document.getElementById('alertWindowMinutes')?.value ?? '—';
+  const mode = data.alert_mode || document.getElementById('alertMode')?.value || 'simple';
+  const symbols = (data.symbols || selectedSymbols || []).join(', ') || '—';
+
+  if (!rows.length) {
+    setState('is-clear');
+    statusEl.textContent = '判定対象なし';
+    textEl.textContent = '判定対象の通貨または履歴データを確認してください。';
+    listEl.innerHTML = '<span class="alert-summary-empty">判定できるデータがありません。</span>';
+    return;
+  }
+
+  if (!activeRows.length) {
+    setState('is-clear');
+    statusEl.textContent = 'アラートなし';
+    textEl.textContent = `注意以上の上昇アラートはありません。現在は上昇アラート中心の判定です。下落・急落は後続で追加予定です。`;
+  } else {
+    const top = activeRows.slice().sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct))[0];
+    setState((top?.level_rank || 0) >= 3 ? 'is-warning' : 'is-watch');
+    statusEl.textContent = top?.level || 'Lv2 注意';
+    textEl.textContent = `${activeRows.length}件の注意以上があります。追いかける前に、手数料・必要値幅・Daily Goalを確認してください。`;
+  }
+
+  const rowHtml = rows.map((row) => {
+    const level = row.level || 'アラートなし';
+    const move = row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true);
+    const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
+    const note = row.level_note || (row.alert_hit ? '注意アラートです。' : '現在は注意アラートではありません。');
+    const itemClass = row.alert_hit ? 'is-hit' : 'is-muted';
+    return `<div class="alert-summary-item ${itemClass}"><strong>${row.symbol}</strong><span>${level}</span><span>${move} / しきい値 ${threshold}</span><small>${note}</small></div>`;
+  }).join('');
+  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${mode} / 窓 ${windowMinutes}分 / 対象 ${symbols}</div>`;
+}
+
 async function loadAlertPreview() {
   const windowMinutes = Number(document.getElementById('alertWindowMinutes').value);
   const alertMode = document.getElementById('alertMode').value;
@@ -944,6 +1000,7 @@ async function loadAlertPreview() {
   if (!selectedSymbols.length) {
     document.getElementById('alertPreviewMemo').textContent = '判定対象の通貨を1つ以上選んでください。';
     document.getElementById('alertTopMemo').textContent = '上位通知は表示できません。';
+    renderAlertSummary({ rows: [], symbols: [], window_minutes: windowMinutes, alert_mode: alertMode }, []);
     renderTable(document.getElementById('alertPreviewTable'), [
       ['symbol', '通貨'], ['status', '状態'],
     ], []);
@@ -955,15 +1012,16 @@ async function loadAlertPreview() {
   const thresholdsQuery = thresholdPairs.join(',');
   const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&cost_floor_pct=${encodeURIComponent(costFloorPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
   updateAlertThresholdGuide(data);
+  renderAlertSummary(data, selectedSymbols);
   const appliedSummary = (data.rows || []).map((row) => `${row.symbol}:${pct(row.threshold_pct, 2)}`).join(' / ');
   document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / 共通 ${pct(data.common_threshold_pct ?? data.threshold_pct, 2)} / 適用 ${appliedSummary || '—'} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
     ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status}`
-    : '上位通知はまだありません。';
+    : '注意以上の上位通知はありません。';
   const rows = (data.rows || []).map((row) => ({
     symbol: row.symbol,
-    level: row.level || '—',
+    level: row.level || 'アラートなし',
     status: row.status,
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
@@ -978,7 +1036,7 @@ async function loadAlertPreview() {
   }));
   renderTable(document.getElementById('alertPreviewTable'), [
     ['symbol', '通貨'],
-    ['level', 'レベル'],
+    ['level', '判定'],
     ['status', '状態'],
     ['move_pct', `変動率(${data.window_minutes}分)`],
     ['threshold', '適用しきい値'],

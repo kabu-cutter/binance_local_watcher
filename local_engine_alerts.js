@@ -69,7 +69,10 @@ function alertLevelForMove(movePct, thresholdForSymbol) {
   if (movePct >= Math.max(thresholdForSymbol * 0.5, 0.03)) {
     return { level: 'Lv1 情報', level_rank: 1, level_note: '小さめの変化。表示のみ。', alert_hit: false };
   }
-  return { level: '通常', level_rank: 0, level_note: 'しきい値未満。', alert_hit: false };
+  if (movePct < 0) {
+    return { level: 'アラートなし', level_rank: 0, level_note: '上昇条件なし。下落・急落アラートは今後追加予定です。', alert_hit: false };
+  }
+  return { level: 'アラートなし', level_rank: 0, level_note: '上昇しきい値未満。現在は注意アラートではありません。', alert_hit: false };
 }
 
 function evaluateAlertPreview({ rows = [], source = 'unknown', params = {}, symbols = [], formatJst }) {
@@ -186,7 +189,9 @@ function evaluateAlertPreview({ rows = [], source = 'unknown', params = {}, symb
     };
   });
   const alertCount = resultRows.filter((row) => row.alert_hit).length;
-  const ranked = resultRows.filter((row) => Number.isFinite(row.move_pct)).sort((a, b) => b.move_pct - a.move_pct);
+  const ranked = resultRows
+    .filter((row) => row.alert_hit && Number.isFinite(row.move_pct))
+    .sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct));
   return {
     ...options,
     source,
