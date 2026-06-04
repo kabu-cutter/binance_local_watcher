@@ -153,15 +153,18 @@
         </div>
 
         <div class="grid two alert-foundation-grid">
-          <div class="card movement-card">
-            <div class="card-head compact-head">
-              <div>
-                <p class="eyebrow">Alert Windows</p>
-                <h3>監視窓の役割</h3>
-                <p class="card-desc">TradingView の Moving up % / Moving down % 的に、一定時間の中で何％動いたかを見る考え方です。</p>
-              </div>
-            </div>
-            <div class="table-wrap compact-table">
+          <details class="card movement-card alert-fold-card">
+            <summary class="alert-fold-summary">
+              <span class="alert-fold-title">
+                <span class="eyebrow">Alert Windows</span>
+                <strong>監視窓の役割</strong>
+                <small>一定時間の中で何％動いたかを見る考え方</small>
+              </span>
+              <span class="alert-fold-state" aria-hidden="true"></span>
+            </summary>
+            <div class="alert-fold-body">
+              <p class="card-desc">TradingView の Moving up % / Moving down % 的に、一定時間の中で何％動いたかを見る考え方です。</p>
+              <div class="table-wrap compact-table">
               <table>
                 <thead><tr><th>監視窓</th><th>主な見る目的</th></tr></thead>
                 <tbody>
@@ -172,38 +175,46 @@
                   <tr><td>1時間</td><td>大きめの地合い確認</td></tr>
                 </tbody>
               </table>
-            </div>
-            <p class="small alert-reference-note">チャートは「見る画面」、アラートは「気づく窓」、Daily Goal は「診断画面」、約定可能性は別計算として扱います。</p>
-          </div>
-
-          <div class="card">
-            <div class="card-head compact-head">
-              <div>
-                <p class="eyebrow">Next Growth</p>
-                <h3>あとで増やすアラート</h3>
-                <p class="card-desc">土台は先に作り、条件診断の進化に合わせて追加します。</p>
               </div>
+              <p class="small alert-reference-note">チャートは「見る画面」、アラートは「気づく窓」、Daily Goal は「診断画面」、約定可能性は別計算として扱います。</p>
             </div>
-            <ul class="check-list alert-next-list">
+          </details>
+
+          <details class="card alert-fold-card">
+            <summary class="alert-fold-summary">
+              <span class="alert-fold-title">
+                <span class="eyebrow">Next Growth</span>
+                <strong>あとで増やすアラート</strong>
+                <small>条件診断の進化に合わせて追加</small>
+              </span>
+              <span class="alert-fold-state" aria-hidden="true"></span>
+            </summary>
+            <div class="alert-fold-body">
+              <p class="card-desc">土台は先に作り、条件診断の進化に合わせて追加します。</p>
+              <ul class="check-list alert-next-list">
               <li>下落・急落アラート</li>
               <li>成行滑り/スプレッド注意</li>
               <li>必要値幅・コスト過大アラート</li>
               <li>指値候補の浅すぎ/深すぎ注意</li>
               <li>価格更新停止・データ不足アラート</li>
-            </ul>
-          </div>
+              </ul>
+            </div>
+          </details>
         </div>
 
-        <div class="card alert-default-card">
-          <div class="card-head compact-head">
-            <div>
-              <p class="eyebrow">Default Thresholds</p>
-              <h3>デフォルトしきい値の考え方</h3>
-              <p class="card-desc">現在の初期値は「実用アラートとしてうるさすぎない暫定値」です。0.10%前後は情報表示寄り、注意アラートは手数料・スプレッド・滑りの目安より少し上から始めます。</p>
-            </div>
+        <details class="card alert-default-card alert-fold-card">
+          <summary class="alert-fold-summary">
+            <span class="alert-fold-title">
+              <span class="eyebrow">Default Thresholds</span>
+              <strong>デフォルトしきい値の考え方</strong>
+              <small>標準値・感度プリセットの参考</small>
+            </span>
             <span class="tag soft">暫定設計</span>
-          </div>
-          <div class="table-wrap compact-table">
+            <span class="alert-fold-state" aria-hidden="true"></span>
+          </summary>
+          <div class="alert-fold-body">
+            <p class="card-desc">現在の初期値は「実用アラートとしてうるさすぎない暫定値」です。0.10%前後は情報表示寄り、注意アラートは手数料・スプレッド・滑りの目安より少し上から始めます。</p>
+            <div class="table-wrap compact-table">
             <table class="alert-threshold-reference">
               <thead><tr><th>監視窓</th><th>Lv1 情報</th><th>Lv2 注意</th><th>Lv3 警戒</th><th>主な意味</th></tr></thead>
               <tbody>
@@ -214,9 +225,10 @@
                 <tr><td>1時間</td><td>0.35%</td><td>0.70%</td><td>1.20%</td><td>大きめの地合い</td></tr>
               </tbody>
             </table>
+            </div>
+            <p class="small alert-reference-note">あとで1分足分析キャッシュからP80/P90/P95などを出し、銘柄別・相場別のおすすめしきい値に進化させます。出来高はまず表示参考から始め、主条件にはしません。</p>
           </div>
-          <p class="small alert-reference-note">あとで1分足分析キャッシュからP80/P90/P95などを出し、銘柄別・相場別のおすすめしきい値に進化させます。出来高はまず表示参考から始め、主条件にはしません。</p>
-        </div>
+        </details>
 
         <div class="card alert-settings-card">
           <div class="card-head compact-head">
@@ -353,12 +365,27 @@
           <p class="memo-text" id="alertPreviewMemo">まだ判定していません。</p>
           <p class="memo-text" id="alertTopMemo">上位通知はまだありません。</p>
           <div class="table-wrap"><table id="alertPreviewTable"></table></div>
-          <div class="card-head">
-            <h3>アラート履歴（直近）</h3>
-            <button class="secondary" id="clearAlertHistory">履歴クリア</button>
-          </div>
-          <p class="memo-text" id="alertHistoryMemo">まだ履歴を読み込んでいません。</p>
-          <div class="table-wrap"><table id="alertHistoryTable"></table></div>
+
+          <details class="alert-history-fold alert-fold-card">
+            <summary class="alert-fold-summary">
+              <span class="alert-fold-title">
+                <strong>アラート履歴（直近）</strong>
+                <small>保存済み履歴。必要なときだけ開きます。</small>
+              </span>
+              <span class="alert-fold-state" aria-hidden="true"></span>
+            </summary>
+            <div class="alert-fold-body">
+              <div class="card-head compact-head">
+                <div>
+                  <h3>アラート履歴（直近）</h3>
+                  <p class="card-desc">現在設定ではなく、保存済みアラートの履歴です。</p>
+                </div>
+                <button class="secondary" id="clearAlertHistory">履歴クリア</button>
+              </div>
+              <p class="memo-text" id="alertHistoryMemo">まだ履歴を読み込んでいません。</p>
+              <div class="table-wrap"><table id="alertHistoryTable"></table></div>
+            </div>
+          </details>
         </div>
       </section>
 
