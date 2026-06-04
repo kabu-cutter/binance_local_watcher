@@ -190,14 +190,16 @@
               <span class="alert-fold-state" aria-hidden="true"></span>
             </summary>
             <div class="alert-fold-body">
-              <p class="card-desc">土台は先に作り、条件診断の進化に合わせて追加します。</p>
+              <p class="card-desc">TODOのアラート進化ロードマップに合わせて、次の6系統を段階的に追加します。まずは表示・注意喚起から始め、売買指示にはしません。</p>
               <ul class="check-list alert-next-list">
-              <li>下落・急落アラート</li>
-              <li>成行滑り/スプレッド注意</li>
-              <li>必要値幅・コスト過大アラート</li>
-              <li>指値候補の浅すぎ/深すぎ注意</li>
-              <li>価格更新停止・データ不足アラート</li>
+              <li><strong>価格到達・相対価格</strong><span>固定価格だけでなく、前回高値/安値、日中始値からの変動率、30分レンジ突破を見ます。</span></li>
+              <li><strong>急騰・急落</strong><span>1分/5分/15分/30分/1時間の監視窓で Moving up/down % 的に確認します。</span></li>
+              <li><strong>継続・矛盾チェック</strong><span>短期上昇が15分でも続くか、短期だけ荒くて1時間では逆向きかを見ます。</span></li>
+              <li><strong>軽量テクニカル</strong><span>移動平均の向き、レンジ突破、RSI過熱感、出来高/値幅増加を後続で扱います。</span></li>
+              <li><strong>成行・コスト注意</strong><span>1分値幅、スプレッド/滑り見積、必要利益幅に対するコストの重さを見ます。</span></li>
+              <li><strong>時間帯注意</strong><span>JST 21:30/22:30/23:00、米国市場開始前後、深夜、週末の流動性注意を扱います。</span></li>
               </ul>
+              <p class="small alert-reference-note">アラートは焦らせる通知ではなく、手数料・必要値幅・Daily Goal・注文条件を落ち着いて確認するための材料です。</p>
             </div>
           </details>
         </div>
