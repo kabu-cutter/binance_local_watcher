@@ -245,36 +245,56 @@
               <div class="alert-setting-row">
                 <div class="alert-row-title">
                   <strong>かんたん設定</strong>
-                  <span>普段まず見るところ</span>
+                  <span>まずは選ぶだけで調整</span>
                 </div>
-                <div class="alert-row-fields">
+                <div class="alert-row-fields alert-easy-fields">
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="preset">
                     <span class="setting-label">感度</span>
-                    <select id="alertSensitivityPreset">
-                      <option value="standard" selected>標準：15分 0.30%</option>
-                      <option value="sensitive">高め：15分 0.20%</option>
-                      <option value="quiet">低め：15分 0.50%</option>
-                      <option value="spike1m">急変：1分 0.10%</option>
-                      <option value="momentum5m">短期：5分 0.20%</option>
+                    <select id="alertSensitivityPreset" class="alert-simple-select">
+                      <option value="standard" selected>標準：15分 / 0.30%</option>
+                      <option value="sensitive">高め：15分 / 0.20%</option>
+                      <option value="quiet">低め：15分 / 0.50%</option>
+                      <option value="spike1m">急変：1分 / 0.10%</option>
+                      <option value="momentum5m">短期：5分 / 0.20%</option>
                       <option value="custom">カスタム</option>
                     </select>
                     <span class="setting-badge">基本</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="window">
-                    <span class="setting-label">窓(分)</span>
-                    <input id="alertWindowMinutes" class="alert-fixed-number" type="number" value="15" min="1" max="240" />
+                    <span class="setting-label">監視窓</span>
+                    <select id="alertWindowMinutes" class="alert-simple-select">
+                      <option value="1">1分：瞬間急変</option>
+                      <option value="5">5分：短期勢い</option>
+                      <option value="15" selected>15分：日中の流れ</option>
+                      <option value="30">30分：方向感</option>
+                      <option value="60">1時間：地合い</option>
+                    </select>
                     <span class="setting-badge">使用中</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="mode">
-                    <span class="setting-label">モード</span>
-                    <select id="alertMode"><option value="simple">simple</option><option value="rolling">rolling</option><option value="sustained">sustained</option></select>
+                    <span class="setting-label">判定モード</span>
+                    <select id="alertMode" class="alert-simple-select">
+                      <option value="simple">simple：単純変動</option>
+                      <option value="rolling">rolling：連続上昇</option>
+                      <option value="sustained">sustained：上昇比率</option>
+                    </select>
                     <span class="setting-badge">切替</span>
                   </div>
                   <div class="alert-setting-chip alert-setting-primary" data-alert-setting="threshold">
-                    <span class="setting-label">しきい値%</span>
-                    <input id="alertThresholdPct" class="alert-fixed-number" type="number" value="0.30" step="0.01" min="0" />
+                    <span class="setting-label">共通しきい値</span>
+                    <select id="alertThresholdPct" class="alert-simple-select">
+                      <option value="0.05">0.05%：かなり細かい</option>
+                      <option value="0.10">0.10%：情報寄り</option>
+                      <option value="0.20">0.20%：高め感度</option>
+                      <option value="0.30" selected>0.30%：標準</option>
+                      <option value="0.40">0.40%：やや重め</option>
+                      <option value="0.50">0.50%：低め感度</option>
+                      <option value="0.70">0.70%：大きめ</option>
+                      <option value="1.00">1.00%：かなり大きい</option>
+                    </select>
                     <span class="setting-badge">使用中</span>
                   </div>
+                  <p class="alert-easy-note">かんたん設定はプルダウンで選べます。細かい個別調整は下の「対象通貨」「参考・別モード」で確認します。</p>
                 </div>
               </div>
 
