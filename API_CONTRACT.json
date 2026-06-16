@@ -60,6 +60,7 @@
           "rolling_min_points",
           "alert_rising_ratio",
           "threshold_pct",
+          "cost_floor_pct",
           "symbols",
           "thresholds",
           "save_history",
@@ -77,7 +78,10 @@
           "top_alert",
           "history_saved",
           "rows",
-          "message"
+          "message",
+          "common_threshold_pct",
+          "cost_floor_pct",
+          "threshold_guidance"
         ]
       },
       "alert-history": {
@@ -217,6 +221,35 @@
           "message"
         ],
         "notes": "仮想約定率・必要値幅出現率・日次目標診断用の1分足分析キャッシュ状態を返す。チャート表示設定とは分離。"
+      },
+      "cost-estimate": {
+        "query": [
+          "symbols",
+          "amount_jpy",
+          "order_assumption",
+          "estimate_style",
+          "safety_buffer_pct",
+          "threshold_pct"
+        ],
+        "response": [
+          "ok",
+          "symbols",
+          "amount_jpy",
+          "order_assumption",
+          "order_label",
+          "estimate_style",
+          "estimate_label",
+          "safety_buffer_pct",
+          "fee_api_ok",
+          "fee_api_error",
+          "recommended_cost_pct",
+          "threshold_pct",
+          "threshold_gap_pct",
+          "rows",
+          "source",
+          "message",
+          "note"
+        ]
       }
     },
     "POST": {

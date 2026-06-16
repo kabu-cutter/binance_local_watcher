@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('blw', {
     getImpact: (query) => invokeEngine('impact', { query }),
     getAlertPreview: (query) => invokeEngine('alert-preview', { query }),
     getAlertHistory: (query) => invokeEngine('alert-history', { query }),
+    getCostEstimate: (query) => invokeEngine('cost-estimate', { query }),
     getDailyGoalReports: (query) => invokeEngine('daily-goal-reports', { query }),
     getChart: (query) => invokeEngine('chart', { query }),
     getChartCoverage: (query) => invokeEngine('chart-coverage', { query }),

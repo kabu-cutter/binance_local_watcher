@@ -207,6 +207,7 @@ async function getJson(path) {
     if (url.pathname === '/api/impact') return window.blw.api.getImpact(query);
     if (url.pathname === '/api/alert-preview') return window.blw.api.getAlertPreview(query);
     if (url.pathname === '/api/alert-history') return window.blw.api.getAlertHistory(query);
+    if (url.pathname === '/api/cost-estimate') return window.blw.api.getCostEstimate(query);
     if (url.pathname === '/api/daily-goal-reports') return window.blw.api.getDailyGoalReports(query);
     if (url.pathname === '/api/chart') return window.blw.api.getChart(query);
     if (url.pathname === '/api/chart-coverage') return window.blw.api.getChartCoverage(query);
@@ -925,6 +926,104 @@ function updateAlertThresholdGuide(data = null) {
         : `共通しきい値 ${pct(thresholdPct, 2)} は往復コスト目安 ${pct(costFloorPct, 2)} より余裕を見た設定です。`
   );
   guide.textContent = `現在の感度: ${presetLabel} / ${base} 0.10%前後は履歴保存よりも監視・情報表示向けです。`;
+}
+
+
+function getSelectedAlertSymbols() {
+  return Array.from(document.querySelectorAll('.alertSymbol:checked')).map((el) => el.value);
+}
+
+function getAlertOrderAmountJpy() {
+  const preset = document.getElementById('alertOrderAmountPreset')?.value || '10000';
+  if (preset === 'custom') {
+    const value = Number(document.getElementById('alertOrderAmountCustom')?.value || 0);
+    return Number.isFinite(value) && value > 0 ? value : 10000;
+  }
+  const value = Number(preset);
+  return Number.isFinite(value) && value > 0 ? value : 10000;
+}
+
+function syncAlertOrderAmountInput() {
+  const preset = document.getElementById('alertOrderAmountPreset')?.value || '10000';
+  const input = document.getElementById('alertOrderAmountCustom');
+  if (!input) return;
+  if (preset === 'custom') {
+    input.disabled = false;
+    input.classList.add('is-editing');
+    if (!Number(input.value)) input.value = '10000';
+  } else {
+    input.disabled = true;
+    input.classList.remove('is-editing');
+    input.value = preset;
+  }
+}
+
+function renderAlertOrderCostEstimate(data = null) {
+  const box = document.getElementById('alertOrderCostOutput');
+  if (!box) return;
+  if (!data) {
+    box.innerHTML = '<strong>まだ実コストを更新していません。</strong><span>注文想定・想定額を選び、実コスト更新を押すと、手数料・スプレッド・板滑り・安全余白を分けて表示します。</span>';
+    return;
+  }
+  const threshold = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
+  const total = Number(data.recommended_cost_pct);
+  const gap = Number.isFinite(total) ? threshold - total : null;
+  const gapText = Number.isFinite(gap) ? pct(gap, 3, true) : '—';
+  const totalText = Number.isFinite(total) ? pct(total, 3) : '—';
+  const message = data.message || '実取引寄りコストを更新しました。';
+  const rows = (data.rows || []).map((row) => {
+    const rowTotal = Number.isFinite(Number(row.estimated_cost_pct)) ? pct(row.estimated_cost_pct, 3) : '—';
+    const fee = Number.isFinite(Number(row.fee_roundtrip_pct)) ? pct(row.fee_roundtrip_pct, 3) : '—';
+    const spread = Number.isFinite(Number(row.spread_used_pct)) ? pct(row.spread_used_pct, 3) : '—';
+    const depth = Number.isFinite(Number(row.depth_slippage_used_pct)) ? pct(row.depth_slippage_used_pct, 3) : '—';
+    const buffer = Number.isFinite(Number(row.safety_buffer_pct)) ? pct(row.safety_buffer_pct, 3) : '—';
+    const risk = row.risk_note || row.order_note || '';
+    return `<div class="cost-detail-card"><strong>${row.symbol}</strong><span>合計 ${rowTotal}</span><small>手数料 ${fee} / スプレッド ${spread} / 板滑り ${depth} / 余白 ${buffer}</small><small>${risk}</small></div>`;
+  }).join('');
+  const className = Number.isFinite(gap) && gap < 0 ? 'is-cost-heavy' : 'is-cost-ok';
+  box.classList.remove('is-cost-heavy', 'is-cost-ok');
+  box.classList.add(className);
+  box.innerHTML = `<strong>${message}</strong><span>推奨コスト目安 ${totalText} / 共通しきい値との差 ${gapText}</span><div class="cost-detail-grid">${rows || '<span>内訳なし</span>'}</div><small>${data.note || '実注文は行いません。APIキー/Secretは保存しません。'}</small>`;
+}
+
+async function loadAlertOrderCostEstimate() {
+  const memo = document.getElementById('alertCostEstimateMemo');
+  const input = document.getElementById('alertCostFloorPct');
+  const selectedSymbols = getSelectedAlertSymbols();
+  if (!selectedSymbols.length) {
+    if (memo) memo.textContent = '対象通貨を選ぶと、注文想定に基づくコスト確認ができます。';
+    renderAlertOrderCostEstimate(null);
+    return;
+  }
+  syncAlertOrderAmountInput();
+  const amountJpy = getAlertOrderAmountJpy();
+  const orderAssumption = document.getElementById('alertOrderAssumption')?.value || 'market';
+  const estimateStyle = document.getElementById('alertEstimateStyle')?.value || 'standard';
+  const safetyBufferPct = optionalPercentInputValue('alertSafetyBufferPct');
+  const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
+  if (memo) memo.textContent = '手数料・板スプレッド・板滑りを取得中です。APIキーは保存しません。';
+  renderAlertOrderCostEstimate({ message: '取得中です。', recommended_cost_pct: null, rows: [] });
+  try {
+    const params = new URLSearchParams({
+      symbols: selectedSymbols.join(','),
+      amount_jpy: String(amountJpy),
+      order_assumption: orderAssumption,
+      estimate_style: estimateStyle,
+      threshold_pct: String(thresholdPct),
+    });
+    if (safetyBufferPct !== null) params.set('safety_buffer_pct', String(safetyBufferPct));
+    const data = await getJson(`/api/cost-estimate?${params.toString()}`);
+    const value = Number(data.recommended_cost_pct);
+    if (input && Number.isFinite(value)) input.value = value.toFixed(3);
+    const total = Number.isFinite(value) ? pct(value, 3) : '—';
+    if (memo) memo.textContent = `${data.order_label || '注文想定'} / ${data.estimate_label || '見積'} / ${yen(data.amount_jpy || amountJpy)} / コスト目安 ${total}`;
+    renderAlertOrderCostEstimate(data);
+    updateAlertThresholdGuide();
+    await loadAlertPreview();
+  } catch (error) {
+    if (memo) memo.textContent = `実コスト取得に失敗しました。手入力値を使います。${error.message || error}`;
+    renderAlertOrderCostEstimate({ message: '実コスト取得に失敗しました。', recommended_cost_pct: optionalPercentInputValue('alertCostFloorPct') ?? 0.28, rows: [], note: String(error.message || error) });
+  }
 }
 
 function renderAlertSummary(data = null, selectedSymbols = []) {
@@ -1790,6 +1889,8 @@ document.addEventListener('DOMContentLoaded', () => {
   applyAlertPreset();
   updateAlertModeHints();
   syncAlertThresholdFallbacks();
+  syncAlertOrderAmountInput();
+  renderAlertOrderCostEstimate(null);
   updateAlertThresholdGuide();
   document.getElementById('alertSensitivityPreset')?.addEventListener('change', async () => {
     applyAlertPreset();
@@ -1802,7 +1903,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
   document.getElementById('alertThresholdPct').addEventListener('input', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); });
   document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); loadAlertPreview(); });
-  document.getElementById('alertCostFloorPct')?.addEventListener('change', loadAlertPreview);
+  document.getElementById('alertCostFloorPct')?.addEventListener('change', () => {
+    const memo = document.getElementById('alertCostEstimateMemo');
+    if (memo) memo.textContent = '手入力値を使用中です。実コスト更新で再計算できます。';
+    loadAlertPreview();
+  });
+  document.getElementById('loadActualAlertCost')?.addEventListener('click', loadAlertOrderCostEstimate);
+  document.getElementById('alertOrderAmountPreset')?.addEventListener('change', () => { syncAlertOrderAmountInput(); renderAlertOrderCostEstimate(null); });
+  document.getElementById('alertOrderAmountCustom')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
+  document.getElementById('alertOrderAssumption')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
+  document.getElementById('alertEstimateStyle')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
+  document.getElementById('alertSafetyBufferPct')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
   document.getElementById('alertThresholdBTC').addEventListener('input', syncAlertThresholdFallbacks);
   document.getElementById('alertThresholdBTC').addEventListener('change', () => { syncAlertThresholdFallbacks(); loadAlertPreview(); });
   document.getElementById('alertThresholdETH').addEventListener('input', syncAlertThresholdFallbacks);

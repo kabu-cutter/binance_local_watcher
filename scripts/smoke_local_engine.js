@@ -47,6 +47,19 @@ async function run() {
   assert(Array.isArray(alertPreview.rows), 'alert-preview.rows missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
 
+  const costEstimate = await call('cost-estimate', {
+    query: {
+      symbols: 'BTCJPY,ETHJPY',
+      amount_jpy: 10000,
+      order_assumption: 'market',
+      estimate_style: 'standard',
+      threshold_pct: 0.3,
+    },
+  });
+  assert(Array.isArray(costEstimate.rows), 'cost-estimate.rows missing');
+  assert(Number.isFinite(Number(costEstimate.recommended_cost_pct)), 'cost-estimate.recommended_cost_pct missing');
+  checks.push(`cost-estimate ok (${costEstimate.rows.length} rows)`);
+
   const chart = await call('chart', {
     query: {
       symbol: 'BTCJPY',

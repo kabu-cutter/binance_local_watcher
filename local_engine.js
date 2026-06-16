@@ -1926,7 +1926,7 @@ async function capabilities() {
     version: VERSION,
     symbols: SYMBOLS,
     routes: {
-      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'analysis-cache-status', 'contract', 'api-readiness', 'db-status'],
+      GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'analysis-cache-status', 'contract', 'api-readiness', 'cost-estimate', 'db-status'],
       POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'ensure-analysis-cache', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
     },
     api_boundary: API_BOUNDARY,
@@ -1946,7 +1946,7 @@ async function contract() {
       mode: 'electron-ui + electron-main-node-engine',
       forbidden: API_BOUNDARY.forbidden,
       routes: {
-        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'api-readiness', 'db-status'],
+        GET: ['status', 'capabilities', 'summary', 'impact', 'alert-preview', 'alert-history', 'daily-goal-reports', 'chart', 'chart-coverage', 'api-readiness', 'cost-estimate', 'db-status'],
         POST: ['fetch-prices', 'download-history', 'update-history-to-now', 'ensure-analysis-cache', 'trade-preview', 'daily-goal', 'save-daily-goal-report', 'clear-alert-history', 'clear-daily-goal-reports'],
       },
       note: 'API_CONTRACT.json が未配置のため簡易情報を返しています。',
@@ -2027,6 +2027,354 @@ async function apiReadiness() {
     fee_sample: feeSample,
     fee_fetch_ready: Boolean(publicApiOk && hasApiKey && hasApiSecret && authApiOk),
     note: '読み取り専用チェックです。APIキー/Secretの保存処理は行いません。',
+  };
+}
+
+
+function commissionRateToPct(value, fallbackPct = 0.1) {
+  const n = safeFloat(value, NaN);
+  if (!Number.isFinite(n) || n < 0) return fallbackPct;
+  return n <= 1 ? n * 100 : n;
+}
+
+async function fetchTradeFeeMap(targetSymbols = []) {
+  const { apiKey, apiSecret } = credentialsFromEnv();
+  const fallbackRows = Object.fromEntries(targetSymbols.map((symbol) => [symbol, {
+    symbol,
+    maker_fee_pct: 0.1,
+    taker_fee_pct: 0.1,
+    source: 'fallback_default_fee',
+  }]));
+  if (!apiKey || !apiSecret) {
+    return {
+      ok: false,
+      source: 'fallback_default_fee',
+      error: 'APIキー/Secret未設定のため、手数料は仮値0.10%を使用します。',
+      rows: fallbackRows,
+    };
+  }
+  try {
+    const fees = await fetchSignedJson('/sapi/v1/asset/tradeFee', {}, 10000);
+    const list = Array.isArray(fees) ? fees : [];
+    const rows = { ...fallbackRows };
+    targetSymbols.forEach((symbol) => {
+      const row = list.find((item) => String(item.symbol || '') === symbol);
+      if (!row) return;
+      rows[symbol] = {
+        symbol,
+        maker_fee_pct: commissionRateToPct(row.makerCommission, 0.1),
+        taker_fee_pct: commissionRateToPct(row.takerCommission, 0.1),
+        source: 'tradeFee_api',
+      };
+    });
+    return { ok: true, source: 'tradeFee_api', error: '', rows };
+  } catch (error) {
+    return {
+      ok: false,
+      source: 'fallback_default_fee',
+      error: error.body ? `${error.message} ${error.body}` : error.message,
+      rows: fallbackRows,
+    };
+  }
+}
+
+function normalizeOrderAssumption(value) {
+  const text = String(value || 'market').trim().toLowerCase();
+  return ['market', 'limit', 'limit_fill_priority', 'limit_price_priority', 'manual'].includes(text) ? text : 'market';
+}
+
+function normalizeEstimateStyle(value) {
+  const text = String(value || 'standard').trim().toLowerCase();
+  return ['standard', 'strict', 'manual'].includes(text) ? text : 'standard';
+}
+
+function orderAssumptionMeta(orderAssumption) {
+  const map = {
+    market: {
+      label: '成行想定',
+      fee_mode: 'taker',
+      note: 'taker手数料・スプレッド・板滑りを反映します。急変時や成行寄りの確認用です。',
+      risk: '約定しやすい一方、価格ズレと滑りが重くなりやすい想定です。',
+    },
+    limit: {
+      label: '指値想定',
+      fee_mode: 'maker',
+      note: 'maker手数料を中心に見ます。ただし未約定リスクは別途確認が必要です。',
+      risk: 'コストは軽めに見えますが、指値に届かない可能性があります。',
+    },
+    limit_fill_priority: {
+      label: '約定優先の指値',
+      fee_mode: 'maker',
+      note: '現在価格に近い指値を想定します。約定しやすさを優先する代わりに価格の有利さは小さめです。',
+      risk: '約定しやすい一方、値幅とコストの余裕は小さくなりやすい想定です。',
+    },
+    limit_price_priority: {
+      label: '価格優先の指値',
+      fee_mode: 'maker',
+      note: '深めの指値を想定します。価格は有利でも約定しにくく、下落中に刺さる可能性があります。',
+      risk: '価格は有利ですが、未約定や刺さった後の逆行リスクを強めに確認します。',
+    },
+    manual: {
+      label: '手動補正',
+      fee_mode: 'taker',
+      note: '手入力のコスト目安を優先して確認します。',
+      risk: '手動補正値の妥当性を別途確認してください。',
+    },
+  };
+  return map[orderAssumption] || map.market;
+}
+
+function estimateStyleMeta(estimateStyle, safetyBufferInput) {
+  const manual = Number.isFinite(safetyBufferInput) ? safetyBufferInput : 0.05;
+  const map = {
+    standard: { label: '標準', safety_buffer_pct: 0.05, depth_multiplier: 1.0, spread_multiplier: 1.0 },
+    strict: { label: '厳しめ', safety_buffer_pct: 0.08, depth_multiplier: 1.5, spread_multiplier: 1.15 },
+    manual: { label: '手動', safety_buffer_pct: manual, depth_multiplier: 1.0, spread_multiplier: 1.0 },
+  };
+  return map[estimateStyle] || map.standard;
+}
+
+function parseDepthLevels(levels = []) {
+  return (Array.isArray(levels) ? levels : [])
+    .map((level) => ({ price: safeFloat(level[0], NaN), qty: safeFloat(level[1], NaN) }))
+    .filter((level) => Number.isFinite(level.price) && Number.isFinite(level.qty) && level.price > 0 && level.qty > 0);
+}
+
+function consumeQuote(levels, quoteAmount) {
+  let remaining = quoteAmount;
+  let baseQty = 0;
+  let quoteUsed = 0;
+  for (const level of levels) {
+    if (remaining <= 0) break;
+    const levelQuote = level.price * level.qty;
+    const useQuote = Math.min(remaining, levelQuote);
+    const useQty = useQuote / level.price;
+    quoteUsed += useQuote;
+    baseQty += useQty;
+    remaining -= useQuote;
+  }
+  return {
+    base_qty: baseQty,
+    quote_used: quoteUsed,
+    avg_price: baseQty > 0 ? quoteUsed / baseQty : null,
+    enough_depth: quoteUsed >= quoteAmount * 0.999,
+    coverage_pct: quoteAmount > 0 ? (quoteUsed / quoteAmount) * 100 : null,
+  };
+}
+
+function consumeBase(levels, baseAmount) {
+  let remaining = baseAmount;
+  let baseUsed = 0;
+  let quoteReceived = 0;
+  for (const level of levels) {
+    if (remaining <= 0) break;
+    const useQty = Math.min(remaining, level.qty);
+    baseUsed += useQty;
+    quoteReceived += useQty * level.price;
+    remaining -= useQty;
+  }
+  return {
+    base_qty: baseUsed,
+    quote_received: quoteReceived,
+    avg_price: baseUsed > 0 ? quoteReceived / baseUsed : null,
+    enough_depth: baseUsed >= baseAmount * 0.999,
+    coverage_pct: baseAmount > 0 ? (baseUsed / baseAmount) * 100 : null,
+  };
+}
+
+async function fetchDepthCostRow(symbol, amountJpy) {
+  try {
+    const data = await fetchJson('/api/v3/depth', { symbol, limit: 100 }, 10000);
+    const bids = parseDepthLevels(data.bids);
+    const asks = parseDepthLevels(data.asks);
+    const bestBid = bids[0]?.price ?? null;
+    const bestAsk = asks[0]?.price ?? null;
+    const mid = Number.isFinite(bestBid) && Number.isFinite(bestAsk) ? (bestBid + bestAsk) / 2 : null;
+    const spreadPct = Number.isFinite(bestBid) && Number.isFinite(bestAsk) && mid > 0 && bestAsk >= bestBid
+      ? ((bestAsk - bestBid) / mid) * 100
+      : null;
+    const buy = Number.isFinite(amountJpy) && amountJpy > 0 ? consumeQuote(asks, amountJpy) : null;
+    const sell = buy && Number.isFinite(buy.base_qty) && buy.base_qty > 0 ? consumeBase(bids, buy.base_qty) : null;
+    const buySlippagePct = buy && Number.isFinite(buy.avg_price) && Number.isFinite(bestAsk) && Number.isFinite(mid) && mid > 0
+      ? Math.max(0, ((buy.avg_price - bestAsk) / mid) * 100)
+      : null;
+    const sellSlippagePct = sell && Number.isFinite(sell.avg_price) && Number.isFinite(bestBid) && Number.isFinite(mid) && mid > 0
+      ? Math.max(0, ((bestBid - sell.avg_price) / mid) * 100)
+      : null;
+    const depthSlippagePct = Number.isFinite(buySlippagePct) || Number.isFinite(sellSlippagePct)
+      ? (Number.isFinite(buySlippagePct) ? buySlippagePct : 0) + (Number.isFinite(sellSlippagePct) ? sellSlippagePct : 0)
+      : null;
+    return {
+      ok: Number.isFinite(spreadPct),
+      bid_price: bestBid,
+      ask_price: bestAsk,
+      mid_price: mid,
+      spread_pct: Number.isFinite(spreadPct) ? spreadPct : null,
+      buy_avg_price: buy?.avg_price ?? null,
+      sell_avg_price: sell?.avg_price ?? null,
+      buy_slippage_pct: Number.isFinite(buySlippagePct) ? buySlippagePct : null,
+      sell_slippage_pct: Number.isFinite(sellSlippagePct) ? sellSlippagePct : null,
+      depth_slippage_pct: Number.isFinite(depthSlippagePct) ? depthSlippagePct : null,
+      depth_buy_coverage_pct: buy?.coverage_pct ?? null,
+      depth_sell_coverage_pct: sell?.coverage_pct ?? null,
+      enough_depth: Boolean((buy?.enough_depth ?? false) && (sell?.enough_depth ?? false)),
+      source: 'depth',
+      error: '',
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      bid_price: null,
+      ask_price: null,
+      mid_price: null,
+      spread_pct: null,
+      buy_avg_price: null,
+      sell_avg_price: null,
+      buy_slippage_pct: null,
+      sell_slippage_pct: null,
+      depth_slippage_pct: null,
+      depth_buy_coverage_pct: null,
+      depth_sell_coverage_pct: null,
+      enough_depth: false,
+      source: 'unavailable',
+      error: error.message || String(error),
+    };
+  }
+}
+
+function costComponentForOrder({ orderAssumption, fee, depth, estimateStyle, safetyBufferInput }) {
+  const order = orderAssumptionMeta(orderAssumption);
+  const style = estimateStyleMeta(estimateStyle, safetyBufferInput);
+  const makerRoundtripPct = safeNonNegativeFloat(fee.maker_fee_pct, 0.1) * 2;
+  const takerRoundtripPct = safeNonNegativeFloat(fee.taker_fee_pct, 0.1) * 2;
+  const spreadPct = Number.isFinite(depth.spread_pct) ? depth.spread_pct : 0;
+  const depthSlippagePct = Number.isFinite(depth.depth_slippage_pct) ? depth.depth_slippage_pct : 0;
+  let feeRoundtripPct = order.fee_mode === 'maker' ? makerRoundtripPct : takerRoundtripPct;
+  let spreadUsedPct = 0;
+  let depthSlippageUsedPct = 0;
+  let safetyBufferPct = style.safety_buffer_pct;
+  if (orderAssumption === 'market') {
+    spreadUsedPct = spreadPct * style.spread_multiplier;
+    depthSlippageUsedPct = depthSlippagePct * style.depth_multiplier;
+  } else if (orderAssumption === 'limit_fill_priority') {
+    spreadUsedPct = spreadPct * 0.35 * style.spread_multiplier;
+    depthSlippageUsedPct = depthSlippagePct * 0.15 * style.depth_multiplier;
+  } else if (orderAssumption === 'limit_price_priority') {
+    spreadUsedPct = 0;
+    depthSlippageUsedPct = 0;
+    safetyBufferPct *= 0.8;
+  } else if (orderAssumption === 'limit') {
+    spreadUsedPct = 0;
+    depthSlippageUsedPct = 0;
+  } else if (orderAssumption === 'manual') {
+    spreadUsedPct = spreadPct * 0.5;
+    depthSlippageUsedPct = depthSlippagePct * 0.5;
+  }
+  const estimatedCostPct = feeRoundtripPct + spreadUsedPct + depthSlippageUsedPct + safetyBufferPct;
+  return {
+    order,
+    style,
+    maker_roundtrip_pct: makerRoundtripPct,
+    taker_roundtrip_pct: takerRoundtripPct,
+    fee_roundtrip_pct: feeRoundtripPct,
+    spread_used_pct: spreadUsedPct,
+    depth_slippage_used_pct: depthSlippageUsedPct,
+    safety_buffer_pct: safetyBufferPct,
+    estimated_cost_pct: estimatedCostPct,
+  };
+}
+
+async function costEstimate(params = {}) {
+  const selectedSymbols = Array.isArray(params.symbols)
+    ? params.symbols
+    : String(params.symbols || '').split(',').map((v) => String(v).trim()).filter(Boolean);
+  const targetSymbols = selectedSymbols.length
+    ? SYMBOLS.filter((symbol) => selectedSymbols.includes(symbol))
+    : SYMBOLS.slice();
+  const amountJpy = Math.max(100, safeNonNegativeFloat(params.amount_jpy, 10000));
+  const orderAssumption = normalizeOrderAssumption(params.order_assumption);
+  const estimateStyle = normalizeEstimateStyle(params.estimate_style);
+  const safetyBufferInput = isBlankInput(params.safety_buffer_pct) ? NaN : safeNonNegativeFloat(params.safety_buffer_pct, NaN);
+  const thresholdPct = isBlankInput(params.threshold_pct) ? null : safeNonNegativeFloat(params.threshold_pct, NaN);
+  const feeMap = await fetchTradeFeeMap(targetSymbols);
+  const rows = [];
+  for (const symbol of targetSymbols) {
+    const fee = feeMap.rows[symbol] || { maker_fee_pct: 0.1, taker_fee_pct: 0.1, source: 'fallback_default_fee' };
+    const depth = await fetchDepthCostRow(symbol, amountJpy);
+    const component = costComponentForOrder({ orderAssumption, fee, depth, estimateStyle, safetyBufferInput });
+    const gap = Number.isFinite(thresholdPct) ? thresholdPct - component.estimated_cost_pct : null;
+    rows.push({
+      symbol,
+      amount_jpy: amountJpy,
+      order_assumption: orderAssumption,
+      order_label: component.order.label,
+      estimate_style: estimateStyle,
+      estimate_label: component.style.label,
+      fee_source: fee.source || feeMap.source,
+      fee_mode: component.order.fee_mode,
+      maker_fee_pct: safeNonNegativeFloat(fee.maker_fee_pct, 0.1),
+      taker_fee_pct: safeNonNegativeFloat(fee.taker_fee_pct, 0.1),
+      maker_roundtrip_pct: component.maker_roundtrip_pct,
+      taker_roundtrip_pct: component.taker_roundtrip_pct,
+      fee_roundtrip_pct: component.fee_roundtrip_pct,
+      bid_price: depth.bid_price,
+      ask_price: depth.ask_price,
+      mid_price: depth.mid_price,
+      spread_pct: depth.spread_pct,
+      spread_used_pct: component.spread_used_pct,
+      buy_avg_price: depth.buy_avg_price,
+      sell_avg_price: depth.sell_avg_price,
+      buy_slippage_pct: depth.buy_slippage_pct,
+      sell_slippage_pct: depth.sell_slippage_pct,
+      depth_slippage_pct: depth.depth_slippage_pct,
+      depth_slippage_used_pct: component.depth_slippage_used_pct,
+      depth_buy_coverage_pct: depth.depth_buy_coverage_pct,
+      depth_sell_coverage_pct: depth.depth_sell_coverage_pct,
+      enough_depth: depth.enough_depth,
+      depth_source: depth.source,
+      depth_error: depth.error,
+      safety_buffer_pct: component.safety_buffer_pct,
+      estimated_cost_pct: component.estimated_cost_pct,
+      threshold_pct: thresholdPct,
+      threshold_gap_pct: Number.isFinite(gap) ? gap : null,
+      order_note: component.order.note,
+      risk_note: component.order.risk,
+    });
+  }
+  const finiteCosts = rows.map((row) => row.estimated_cost_pct).filter((value) => Number.isFinite(value));
+  const recommendedCostPct = finiteCosts.length ? Math.max(...finiteCosts) : 0.28;
+  const orderMeta = orderAssumptionMeta(orderAssumption);
+  const styleMeta = estimateStyleMeta(estimateStyle, safetyBufferInput);
+  const usedFallbackFee = rows.some((row) => row.fee_source !== 'tradeFee_api');
+  const usedDepthFallback = rows.some((row) => row.depth_source !== 'depth');
+  const costVsThreshold = Number.isFinite(thresholdPct)
+    ? thresholdPct - recommendedCostPct
+    : null;
+  const message = Number.isFinite(costVsThreshold)
+    ? costVsThreshold >= 0
+      ? `実取引寄りコストを更新しました。しきい値はコスト目安を ${costVsThreshold.toFixed(3)}% 上回っています。`
+      : `実取引寄りコストを更新しました。しきい値はコスト目安を ${Math.abs(costVsThreshold).toFixed(3)}% 下回っています。小さな値動きは利益として残りにくい可能性があります。`
+    : '実取引寄りコストを更新しました。';
+  return {
+    ok: true,
+    symbols: targetSymbols,
+    amount_jpy: amountJpy,
+    order_assumption: orderAssumption,
+    order_label: orderMeta.label,
+    estimate_style: estimateStyle,
+    estimate_label: styleMeta.label,
+    safety_buffer_pct: styleMeta.safety_buffer_pct,
+    fee_api_ok: feeMap.ok,
+    fee_api_error: feeMap.error || '',
+    used_fallback_fee: usedFallbackFee,
+    used_depth_fallback: usedDepthFallback,
+    threshold_pct: thresholdPct,
+    recommended_cost_pct: recommendedCostPct,
+    threshold_gap_pct: Number.isFinite(costVsThreshold) ? costVsThreshold : null,
+    rows,
+    source: `${feeMap.ok ? '手数料API' : '手数料仮値'} + ${usedDepthFallback ? '板一部未取得' : 'depth板'} + ${orderMeta.label} + ${styleMeta.label}`,
+    message,
+    note: '実注文はしません。APIキー/Secretは保存せず、読み取り用に一時参照するだけです。数値は注文想定ごとの確認材料であり、売買指示ではありません。',
   };
 }
 
@@ -2989,6 +3337,7 @@ async function invoke(route, payload = {}) {
     case 'analysis-cache-status': return analysisCacheStatus(query);
     case 'contract': return contract();
     case 'api-readiness': return apiReadiness();
+    case 'cost-estimate': return costEstimate(query);
     case 'db-status': return dbStatus();
     case 'fetch-prices': return fetchPrices();
     case 'download-history': return downloadHistoricalKlines(body);

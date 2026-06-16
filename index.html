@@ -298,17 +298,70 @@
                 </div>
               </div>
 
+              <div class="alert-setting-row alert-setting-row-soft alert-order-cost-row">
+                <div class="alert-row-title">
+                  <strong>注文想定とコスト確認</strong>
+                  <span>買い方を反映した厳しめ材料</span>
+                </div>
+                <div class="alert-row-fields alert-order-cost-fields">
+                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="order-amount">
+                    <span class="setting-label">想定取引額</span>
+                    <select id="alertOrderAmountPreset" class="alert-simple-select">
+                      <option value="5000">5,000円</option>
+                      <option value="10000" selected>10,000円</option>
+                      <option value="30000">30,000円</option>
+                      <option value="custom">手動</option>
+                    </select>
+                    <span class="setting-badge">参考</span>
+                    <input id="alertOrderAmountCustom" class="alert-fixed-number alert-order-custom-input" type="number" value="10000" min="100" step="100" aria-label="手動の想定取引額" />
+                  </div>
+                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="order-assumption">
+                    <span class="setting-label">注文想定</span>
+                    <select id="alertOrderAssumption" class="alert-simple-select">
+                      <option value="market" selected>成行想定</option>
+                      <option value="limit">指値想定</option>
+                      <option value="limit_fill_priority">約定優先の指値</option>
+                      <option value="limit_price_priority">価格優先の指値</option>
+                      <option value="manual">手動補正</option>
+                    </select>
+                    <span class="setting-badge">注文想定</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="estimate-style">
+                    <span class="setting-label">見積補正</span>
+                    <select id="alertEstimateStyle" class="alert-simple-select">
+                      <option value="standard" selected>標準</option>
+                      <option value="strict">厳しめ</option>
+                      <option value="manual">手動</option>
+                    </select>
+                    <span class="setting-badge">補正</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="safety-buffer">
+                    <span class="setting-label">安全余白%</span>
+                    <input id="alertSafetyBufferPct" class="alert-fixed-number" type="number" value="0.05" step="0.01" min="0" />
+                    <span class="setting-badge">余白</span>
+                  </div>
+                  <div class="alert-setting-chip alert-setting-reference alert-cost-chip" data-alert-setting="cost">
+                    <span class="setting-label">コスト目安%</span>
+                    <div class="alert-cost-controls">
+                      <input id="alertCostFloorPct" class="alert-fixed-number" type="number" value="0.28" step="0.01" min="0" />
+                      <button class="tiny-secondary" id="loadActualAlertCost" type="button">実コスト更新</button>
+                    </div>
+                    <span class="setting-badge">反映</span>
+                    <span class="setting-fallback" id="alertCostEstimateMemo">手入力中。注文想定・想定額・板スプレッド・滑りを使って更新できます。</span>
+                  </div>
+                  <div class="alert-order-cost-output" id="alertOrderCostOutput">
+                    <strong>まだ実コストを更新していません。</strong>
+                    <span>成行/指値などの注文想定を選び、実コスト更新を押すと、手数料・スプレッド・板滑り・安全余白を分けて表示します。</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="alert-setting-row alert-setting-row-soft">
                 <div class="alert-row-title">
                   <strong>参考・別モード</strong>
                   <span>隠さず、今使うかを色で表示</span>
                 </div>
                 <div class="alert-row-fields">
-                  <div class="alert-setting-chip alert-setting-reference" data-alert-setting="cost">
-                    <span class="setting-label">往復コスト目安%</span>
-                    <input id="alertCostFloorPct" class="alert-fixed-number" type="number" value="0.28" step="0.01" min="0" />
-                    <span class="setting-badge">参考</span>
-                  </div>
                   <div class="alert-setting-chip alert-setting-mode" data-alert-setting="rolling" data-mode-target="rolling">
                     <span class="setting-label">rolling最小連続本数</span>
                     <input id="alertRollingMinPoints" class="alert-fixed-number" type="number" value="3" min="2" max="20" />
@@ -379,7 +432,7 @@
                 <span class="legend-pill standby">今は未使用</span>
               </div>
               <p class="memo-text alert-mode-hint" id="alertModeHint">simpleでは、窓・しきい値を使います。暗めの項目は今の判定では使いませんが、モード変更時に使います。</p>
-              <p class="small alert-settings-note">全体をひとつの設定パネルにまとめ、行ごとに意味を分けています。</p>
+              <p class="small alert-settings-note">安全側は注文タイプではなく見積補正です。成行・指値などの注文想定ごとに、現実寄りのコスト材料を確認します。</p>
             </div>
           </div>
 
