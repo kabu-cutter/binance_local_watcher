@@ -958,11 +958,24 @@ function syncAlertOrderAmountInput() {
   }
 }
 
+function costFeeSourceLabel(row) {
+  return row?.fee_source === 'tradeFee_api' ? '手数料API取得' : '仮手数料';
+}
+
+function costComponentDisplay({ usedPct, rawPct, applicationLabel }) {
+  const rawText = Number.isFinite(Number(rawPct)) ? pct(rawPct, 3) : '未取得';
+  const usedValue = Number(usedPct);
+  if (Number.isFinite(usedValue) && usedValue > 0) {
+    return `反映 ${pct(usedValue, 3)} / 市場値 ${rawText} / ${applicationLabel || '反映'}`;
+  }
+  return `${applicationLabel || '直接反映なし'} / 市場値 ${rawText}`;
+}
+
 function renderAlertOrderCostEstimate(data = null) {
   const box = document.getElementById('alertOrderCostOutput');
   if (!box) return;
   if (!data) {
-    box.innerHTML = '<strong>まだ実コストを更新していません。</strong><span>注文想定・想定額を選び、実コスト更新を押すと、手数料・スプレッド・板滑り・安全余白を分けて表示します。</span>';
+    box.innerHTML = '<strong>まだ実コストを更新していません。</strong><span>注文想定・想定額を選び、実コスト更新を押すと、手数料、スプレッド反映、板滑り反映、安全余白を分けて表示します。</span>';
     return;
   }
   const threshold = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
@@ -974,11 +987,28 @@ function renderAlertOrderCostEstimate(data = null) {
   const rows = (data.rows || []).map((row) => {
     const rowTotal = Number.isFinite(Number(row.estimated_cost_pct)) ? pct(row.estimated_cost_pct, 3) : '—';
     const fee = Number.isFinite(Number(row.fee_roundtrip_pct)) ? pct(row.fee_roundtrip_pct, 3) : '—';
-    const spread = Number.isFinite(Number(row.spread_used_pct)) ? pct(row.spread_used_pct, 3) : '—';
-    const depth = Number.isFinite(Number(row.depth_slippage_used_pct)) ? pct(row.depth_slippage_used_pct, 3) : '—';
     const buffer = Number.isFinite(Number(row.safety_buffer_pct)) ? pct(row.safety_buffer_pct, 3) : '—';
+    const spreadLine = costComponentDisplay({
+      usedPct: row.spread_used_pct,
+      rawPct: row.spread_pct,
+      applicationLabel: row.spread_application_label,
+    });
+    const depthLine = costComponentDisplay({
+      usedPct: row.depth_slippage_used_pct,
+      rawPct: row.depth_slippage_pct,
+      applicationLabel: row.depth_application_label,
+    });
+    const feeMode = row.fee_mode === 'maker' ? 'maker想定' : 'taker想定';
     const risk = row.risk_note || row.order_note || '';
-    return `<div class="cost-detail-card"><strong>${row.symbol}</strong><span>合計 ${rowTotal}</span><small>手数料 ${fee} / スプレッド ${spread} / 板滑り ${depth} / 余白 ${buffer}</small><small>${risk}</small></div>`;
+    return `<div class="cost-detail-card">
+      <strong>${row.symbol}</strong>
+      <span>合計 ${rowTotal}</span>
+      <small>手数料（往復） ${fee}（${costFeeSourceLabel(row)} / ${feeMode}）</small>
+      <small>スプレッド反映：${spreadLine}</small>
+      <small>板滑り反映：${depthLine}</small>
+      <small>安全余白 ${buffer}</small>
+      <small>${risk}</small>
+    </div>`;
   }).join('');
   const className = Number.isFinite(gap) && gap < 0 ? 'is-cost-heavy' : 'is-cost-ok';
   box.classList.remove('is-cost-heavy', 'is-cost-ok');
@@ -1001,7 +1031,7 @@ async function loadAlertOrderCostEstimate() {
   const estimateStyle = document.getElementById('alertEstimateStyle')?.value || 'standard';
   const safetyBufferPct = optionalPercentInputValue('alertSafetyBufferPct');
   const thresholdPct = optionalPercentInputValue('alertThresholdPct') ?? 0.30;
-  if (memo) memo.textContent = '手数料・板スプレッド・板滑りを取得中です。APIキーは保存しません。';
+  if (memo) memo.textContent = '手数料・市場スプレッド・板滑りを取得中です。APIキーは保存しません。';
   renderAlertOrderCostEstimate({ message: '取得中です。', recommended_cost_pct: null, rows: [] });
   try {
     const params = new URLSearchParams({

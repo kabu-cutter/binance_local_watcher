@@ -246,6 +246,12 @@
           "threshold_pct",
           "threshold_gap_pct",
           "rows",
+          "rows[].spread_pct",
+          "rows[].spread_used_pct",
+          "rows[].spread_application_label",
+          "rows[].depth_slippage_pct",
+          "rows[].depth_slippage_used_pct",
+          "rows[].depth_application_label",
           "source",
           "message",
           "note"

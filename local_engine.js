@@ -2253,22 +2253,43 @@ function costComponentForOrder({ orderAssumption, fee, depth, estimateStyle, saf
   let spreadUsedPct = 0;
   let depthSlippageUsedPct = 0;
   let safetyBufferPct = style.safety_buffer_pct;
+  let spreadApplication = 'not_applied';
+  let depthApplication = 'not_applied';
+  let spreadApplicationLabel = '直接反映なし';
+  let depthApplicationLabel = '直接反映なし';
+
   if (orderAssumption === 'market') {
     spreadUsedPct = spreadPct * style.spread_multiplier;
     depthSlippageUsedPct = depthSlippagePct * style.depth_multiplier;
+    spreadApplication = 'applied';
+    depthApplication = 'applied';
+    spreadApplicationLabel = '成行想定として反映';
+    depthApplicationLabel = '板消費を反映';
   } else if (orderAssumption === 'limit_fill_priority') {
     spreadUsedPct = spreadPct * 0.35 * style.spread_multiplier;
     depthSlippageUsedPct = depthSlippagePct * 0.15 * style.depth_multiplier;
+    spreadApplication = 'partial';
+    depthApplication = 'partial';
+    spreadApplicationLabel = '約定優先の指値として一部反映';
+    depthApplicationLabel = '約定優先の指値として一部反映';
   } else if (orderAssumption === 'limit_price_priority') {
     spreadUsedPct = 0;
     depthSlippageUsedPct = 0;
     safetyBufferPct *= 0.8;
+    spreadApplicationLabel = '価格優先の指値では直接反映なし';
+    depthApplicationLabel = '価格優先の指値では直接反映なし';
   } else if (orderAssumption === 'limit') {
     spreadUsedPct = 0;
     depthSlippageUsedPct = 0;
+    spreadApplicationLabel = '指値想定では直接反映なし';
+    depthApplicationLabel = '指値想定では直接反映なし';
   } else if (orderAssumption === 'manual') {
     spreadUsedPct = spreadPct * 0.5;
     depthSlippageUsedPct = depthSlippagePct * 0.5;
+    spreadApplication = 'partial';
+    depthApplication = 'partial';
+    spreadApplicationLabel = '手動補正として一部反映';
+    depthApplicationLabel = '手動補正として一部反映';
   }
   const estimatedCostPct = feeRoundtripPct + spreadUsedPct + depthSlippageUsedPct + safetyBufferPct;
   return {
@@ -2278,7 +2299,11 @@ function costComponentForOrder({ orderAssumption, fee, depth, estimateStyle, saf
     taker_roundtrip_pct: takerRoundtripPct,
     fee_roundtrip_pct: feeRoundtripPct,
     spread_used_pct: spreadUsedPct,
+    spread_application: spreadApplication,
+    spread_application_label: spreadApplicationLabel,
     depth_slippage_used_pct: depthSlippageUsedPct,
+    depth_application: depthApplication,
+    depth_application_label: depthApplicationLabel,
     safety_buffer_pct: safetyBufferPct,
     estimated_cost_pct: estimatedCostPct,
   };
@@ -2322,12 +2347,16 @@ async function costEstimate(params = {}) {
       mid_price: depth.mid_price,
       spread_pct: depth.spread_pct,
       spread_used_pct: component.spread_used_pct,
+      spread_application: component.spread_application,
+      spread_application_label: component.spread_application_label,
       buy_avg_price: depth.buy_avg_price,
       sell_avg_price: depth.sell_avg_price,
       buy_slippage_pct: depth.buy_slippage_pct,
       sell_slippage_pct: depth.sell_slippage_pct,
       depth_slippage_pct: depth.depth_slippage_pct,
       depth_slippage_used_pct: component.depth_slippage_used_pct,
+      depth_application: component.depth_application,
+      depth_application_label: component.depth_application_label,
       depth_buy_coverage_pct: depth.depth_buy_coverage_pct,
       depth_sell_coverage_pct: depth.depth_sell_coverage_pct,
       enough_depth: depth.enough_depth,
