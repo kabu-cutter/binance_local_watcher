@@ -1553,6 +1553,8 @@ function buildDailyPayload() {
     expected_success_count: elNumber('dailyExpectedWins', 1),
     take_profit_pct: elNumber('dailyTakeProfitPct', 0.4),
     capital_jpy: elNumber('dailyCapital', 1),
+    cycle_capital_jpy: elNumber('dailyCycleCapital', elNumber('dailyCapital', 1)),
+    max_concurrent_orders: elNumber('dailyConcurrentOrders', 3),
     min_opportunities: elNumber('dailyMinOpp', 1),
     max_opportunities: elNumber('dailyMaxOpp', 1),
     stop_loss_pct: elNumber('dailyStopPct', 0),
@@ -1584,6 +1586,8 @@ async function calcDaily() {
   if (!Number.isFinite(payload.target_profit_jpy) || payload.target_profit_jpy < 0) errors.push('日次目標利益は0以上で入力してください。');
   if (!Number.isFinite(payload.capital_jpy) || payload.capital_jpy <= 0) errors.push('資金 / 主投入額は0より大きい値にしてください。');
   if (!Number.isFinite(payload.expected_success_count) || payload.expected_success_count < 1) errors.push('想定成功回数は1以上にしてください。');
+  if (!Number.isFinite(payload.cycle_capital_jpy) || payload.cycle_capital_jpy <= 0 || payload.cycle_capital_jpy > payload.capital_jpy) errors.push('1サイクル投入額は0より大きく、資金/主投入額以下にしてください。');
+  if (!Number.isFinite(payload.max_concurrent_orders) || payload.max_concurrent_orders < 1 || payload.max_concurrent_orders > 20) errors.push('最大同時注文数は1〜20で入力してください。');
   if (!Number.isFinite(payload.take_profit_pct) || payload.take_profit_pct < 0) errors.push('想定利確幅は0%以上で入力してください。');
   if (!Number.isFinite(payload.min_opportunities) || payload.min_opportunities < 1) errors.push('最小取引機会数は1以上にしてください。');
   if (!Number.isFinite(payload.max_opportunities) || payload.max_opportunities < payload.min_opportunities) errors.push('最大取引機会数は最小取引機会数以上にしてください。');
@@ -1606,6 +1610,7 @@ async function calcDaily() {
   document.getElementById('dailyFillRateMemo').textContent = data.virtual_fill_rate_note
     || '指値到達率は手入力値または1分足キャッシュの価格到達ベースです。勝ち回数・利益回数ではありません。';
   renderDailyVirtualFill(data);
+  renderDailyTradeMethods(data);
   renderDailyLimitCandidates(data);
   renderDailyOccurrence(data);
   document.getElementById('dailyReadinessCards').innerHTML = (data.readiness_cards || []).map((p) => card({
@@ -1640,6 +1645,43 @@ async function calcDaily() {
 }
 
 
+
+
+function renderDailyTradeMethods(data) {
+  const memoEl = document.getElementById('dailyTradeMethodMemo');
+  const cardsEl = document.getElementById('dailyTradeMethodCards');
+  const tableEl = document.getElementById('dailyTradeMethodTable');
+  if (!memoEl || !cardsEl || !tableEl) return;
+  const rows = Array.isArray(data.trade_method_rows) ? data.trade_method_rows : [];
+  memoEl.textContent = data.trade_method_note || '取引方法の比較はまだ計算していません。';
+  if (!rows.length) {
+    cardsEl.innerHTML = '<div class="daily-limit-empty">計算後に取引方法の比較を表示します。</div>';
+    renderTable(tableEl, [], []);
+    return;
+  }
+  cardsEl.innerHTML = rows.map((row) => `
+    <div class="daily-trade-method-card ${row.condition_kind || 'warn'}">
+      <div class="candidate-card-head"><strong>${row.label}</strong><span>${row.condition_label}</span></div>
+      <div class="trade-method-main"><small>1サイクルNet</small><b>${yen(row.net_win_per_cycle_jpy, 2)}</b></div>
+      <div class="trade-method-metrics">
+        <div><small>必要完了</small><b>${row.required_completed_cycles === null ? '計算不可' : `${row.required_completed_cycles}回`}</b></div>
+        <div><small>完了見込み</small><b>${row.expected_completed_cycles === null ? '—' : `${Number(row.expected_completed_cycles).toFixed(2)}回相当`}</b></div>
+        <div><small>参考Net</small><b>${row.expected_daily_net_jpy === null ? '—' : yen(row.expected_daily_net_jpy, 2)}</b></div>
+      </div>
+      <p>${row.execution}<br>${row.note}</p>
+    </div>`).join('');
+  renderTable(tableEl, [
+    ['method', '方式'], ['capital', '1サイクル投入額'], ['orders', '同時注文'], ['net', '1サイクルNet'],
+    ['required', '必要完了回数'], ['hit', '到達参考'], ['tp', '利確参考'], ['stop', '損切り参考'],
+    ['complete', '完了見込み'], ['expected', '参考日次Net'], ['condition', '条件診断'],
+  ], rows.map((row) => ({
+    method: row.label, capital: yen(row.cycle_capital_jpy, 0), orders: `${row.concurrent_orders}件`,
+    net: yen(row.net_win_per_cycle_jpy, 2), required: row.required_completed_cycles === null ? '計算不可' : `${row.required_completed_cycles}回`,
+    hit: pct(row.reference_hit_rate_pct, 1), tp: pct(row.reference_take_profit_rate_pct, 1), stop: pct(row.reference_stop_first_rate_pct, 1),
+    complete: row.expected_completed_cycles === null ? '—' : `${Number(row.expected_completed_cycles).toFixed(2)}回相当`,
+    expected: row.expected_daily_net_jpy === null ? '—' : yen(row.expected_daily_net_jpy, 2), condition: row.condition_label,
+  })));
+}
 
 function renderDailyLimitCandidates(data) {
   const memoEl = document.getElementById('dailyLimitCandidateMemo');

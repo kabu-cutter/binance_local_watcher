@@ -3337,8 +3337,19 @@ async function dailyGoal(body = {}) {
     limit_candidate_side: body.limit_candidate_side || body.virtual_fill_side || 'buy_limit',
   }, summary, result.limit_candidate_rows);
   const mergedLimitCandidateRows = mergeLimitCandidateHistoryRows(result.limit_candidate_rows, limitCandidateHistory);
+  const tradeMethodComparison = calculations.calculateTradeMethodComparison({
+    ...body,
+    target_profit_jpy: result.target_profit_jpy,
+    capital_jpy: body.capital_jpy,
+    take_profit_pct: result.take_profit_pct,
+    roundtrip_cost_pct: result.roundtrip_cost_pct,
+    required_move_occurrence_rate_pct: result.required_move_occurrence_rate_pct,
+  }, mergedLimitCandidateRows);
   return {
     ...result,
+    trade_method_rows: tradeMethodComparison.rows,
+    trade_method_meta: tradeMethodComparison.meta,
+    trade_method_note: tradeMethodComparison.note,
     limit_candidate_rows: mergedLimitCandidateRows,
     limit_candidate_note: `${String(result.limit_candidate_note || '').replace('指値到達率・約定後利確到達率・損切り先行率は次段階で追加します。', '指値到達率・約定後利確到達率・損切り先行率を分析用1分足キャッシュから参考表示します。')} ${limitCandidateHistory?.note || ''}`.trim(),
     limit_candidate_history_note: limitCandidateHistory?.note || '',

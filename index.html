@@ -562,6 +562,12 @@
                 <label>資金 / 主投入額
                   <input id="dailyCapital" type="text" inputmode="decimal" value="2000" />
                 </label>
+                <label>1サイクル投入額
+                  <input id="dailyCycleCapital" type="text" inputmode="decimal" value="2000" />
+                </label>
+                <label>最大同時注文数
+                  <input id="dailyConcurrentOrders" type="text" inputmode="numeric" value="3" />
+                </label>
                 <label>最小取引機会数
                   <input id="dailyMinOpp" type="text" inputmode="decimal" value="5" />
                 </label>
@@ -645,7 +651,22 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>4</span><div><h3>診断カード</h3><p class="memo-text">まず主要カードで、指値到達率・必要値幅・必要利確価格・必要勝率を確認します。</p></div></div>
+          <div class="daily-result-head"><span>4</span><div><h3>取引方法の比較オプション</h3><p class="memo-text">APIでの小刻みな取引を将来検討できるよう、まずは注文を送らずに、1サイクル投入額・コスト・履歴到達率から方式を比較します。</p></div></div>
+          <div class="daily-guide-box">
+            <strong>現在は診断・注文プレビューのみ</strong>
+            <ul>
+              <li>小刻み指値型：浅めの指値を1件ずつ回す想定です。</li>
+              <li>分割指値型：浅め・標準・深めへ資金を分ける想定です。</li>
+              <li>成行短期型：即時参加を想定し、未約定よりコスト負けを重点確認します。</li>
+            </ul>
+          </div>
+          <p class="memo-text" id="dailyTradeMethodMemo">まだ比較していません。</p>
+          <div class="daily-trade-method-cards" id="dailyTradeMethodCards"></div>
+          <div class="table-wrap"><table id="dailyTradeMethodTable"></table></div>
+        </div>
+
+        <div class="card daily-step-card">
+          <div class="daily-result-head"><span>5</span><div><h3>診断カード</h3><p class="memo-text">まず主要カードで、指値到達率・必要値幅・必要利確価格・必要勝率を確認します。</p></div></div>
           <p class="memo-text" id="dailyErrorMemo"></p>
           <div class="grid four daily-result-cards" id="dailyReadinessCards"></div>
           <div class="daily-summary-after-cards">
@@ -660,7 +681,7 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>5</span><div><h3>必要利確価格ベースの指値候補診断</h3><p class="memo-text">固定%の指値候補ごとに、指値価格から必要利確価格までの値幅を比較します。利確幅シミュレーション%は参考で、主役は必要利確価格です。</p></div></div>
+          <div class="daily-result-head"><span>6</span><div><h3>必要利確価格ベースの指値候補診断</h3><p class="memo-text">固定%の指値候補ごとに、指値価格から必要利確価格までの値幅を比較します。利確幅シミュレーション%は参考で、主役は必要利確価格です。</p></div></div>
           <div class="daily-guide-box" id="dailyLimitCandidateGuide">
             <strong>読み方</strong>
             <ul>
@@ -676,19 +697,19 @@
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>6</span><div><h3>指値到達率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
+          <div class="daily-result-head"><span>7</span><div><h3>指値到達率の履歴試算</h3><p class="memo-text">分析用1分足キャッシュを使い、指定した指値距離に価格が到達した割合を見ます。実約定率ではなく、価格到達ベースの仮想値です。</p></div></div>
           <p class="memo-text" id="dailyVirtualFillMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyVirtualFillTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>7</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
+          <div class="daily-result-head"><span>8</span><div><h3>1回あたり必要値幅の履歴参照</h3><p class="memo-text">ここは「約定率」ではなく、分析用1分足キャッシュを使い、指定した判定窓の中で1回あたり必要値幅が出た頻度だけを見ます。チャートタブの表示日や最新DLファイルとは分離します。</p></div></div>
           <p class="memo-text" id="dailyOccurrenceMemo">まだ計算していません。</p>
           <div class="table-wrap"><table id="dailyOccurrenceTable"></table></div>
         </div>
 
         <div class="card daily-step-card">
-          <div class="daily-result-head"><span>8</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
+          <div class="daily-result-head"><span>9</span><div><h3>準備コメントと分割プラン</h3><p class="memo-text">分割した場合に、1回あたり何%の値幅を最低限捉える必要があるかを並べます。</p></div></div>
           <ul class="prep-list" id="dailyPrepNotes">
             <li>まだ計算していません。</li>
           </ul>

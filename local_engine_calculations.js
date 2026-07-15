@@ -762,6 +762,88 @@ function calculateDailyGoal(body = {}) {
   };
 }
 
+
+function calculateTradeMethodComparison(body = {}, candidateRows = []) {
+  const target = Math.max(0, safeFloat(body.target_profit_jpy));
+  const totalCapital = Math.max(1, safeFloat(body.capital_jpy, 1));
+  const cycleCapital = Math.max(1, Math.min(totalCapital, safeFloat(body.cycle_capital_jpy, totalCapital)));
+  const concurrentOrders = Math.max(1, Math.min(20, safeInt(body.max_concurrent_orders, 3)));
+  const opportunities = Math.max(1, safeInt(body.max_opportunities, 10));
+  const takeProfitPct = Math.max(0, safeFloat(body.take_profit_pct, 0.4));
+  const stopPct = Math.max(0, safeFloat(body.stop_loss_pct, 0.5));
+  const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
+  const occurrenceRate = Number.isFinite(Number(body.required_move_occurrence_rate_pct))
+    ? Math.max(0, Math.min(100, safeFloat(body.required_move_occurrence_rate_pct)))
+    : null;
+
+  const byKey = Object.fromEntries((candidateRows || []).map((row) => [row.key, row]));
+  const valid = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  const avg = (values) => {
+    const nums = values.map(valid).filter((v) => v !== null);
+    return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+  };
+  const netWin = cycleCapital * Math.max(takeProfitPct - costPct, 0) / 100;
+  const stopLoss = cycleCapital * (stopPct + costPct) / 100;
+  const requiredCycles = netWin > 0 ? Math.ceil(target / netWin) : null;
+
+  const build = ({ key, label, execution, hitRate, tpRate, stopRate, slots, note }) => {
+    const hit = valid(hitRate);
+    const tp = valid(tpRate);
+    const stop = valid(stopRate);
+    const effectiveAttempts = opportunities * Math.max(1, slots);
+    const completed = hit === null || tp === null ? null : effectiveAttempts * hit / 100 * tp / 100;
+    const stops = hit === null || stop === null ? null : effectiveAttempts * hit / 100 * stop / 100;
+    const expectedNet = completed === null || stops === null ? null : completed * netWin - stops * stopLoss;
+    let labelText = '履歴不足';
+    let kind = 'warn';
+    if (netWin <= 0) { labelText = 'コスト超過'; kind = 'bad'; }
+    else if (completed !== null && requiredCycles !== null && completed >= requiredCycles) { labelText = '回数条件内'; kind = 'good'; }
+    else if (completed !== null && completed >= 1) { labelText = '回数不足'; kind = 'warn'; }
+    else if (completed !== null) { labelText = '機会不足'; kind = 'bad'; }
+    return {
+      key, label, execution, cycle_capital_jpy: cycleCapital, concurrent_orders: slots,
+      take_profit_pct: takeProfitPct, roundtrip_cost_pct: costPct,
+      net_win_per_cycle_jpy: netWin, stop_loss_per_cycle_jpy: stopLoss,
+      required_completed_cycles: requiredCycles,
+      reference_hit_rate_pct: hit, reference_take_profit_rate_pct: tp, reference_stop_first_rate_pct: stop,
+      expected_completed_cycles: completed, expected_stop_cycles: stops, expected_daily_net_jpy: expectedNet,
+      condition_label: labelText, condition_kind: kind, note,
+    };
+  };
+
+  const shallow = byKey.shallow || byKey.standard || {};
+  const splitRows = [byKey.shallow, byKey.standard, byKey.deep].filter(Boolean);
+  const rows = [
+    build({
+      key: 'micro_limit', label: '小刻み指値型', execution: '浅め指値を順番に回す',
+      hitRate: shallow.limit_hit_rate_pct, tpRate: shallow.take_profit_after_hit_rate_pct,
+      stopRate: shallow.stop_first_rate_pct, slots: 1,
+      note: '未約定を抑えつつ、1件ずつ完了させる想定です。部分約定・取消・注文上限はまだ含みません。',
+    }),
+    build({
+      key: 'split_limit', label: '分割指値型', execution: '浅め・標準・深めへ分割',
+      hitRate: avg(splitRows.map((r) => r.limit_hit_rate_pct)),
+      tpRate: avg(splitRows.map((r) => r.take_profit_after_hit_rate_pct)),
+      stopRate: avg(splitRows.map((r) => r.stop_first_rate_pct)),
+      slots: Math.min(concurrentOrders, Math.max(1, splitRows.length)),
+      note: '資金を複数候補へ均等に分ける簡易比較です。実注文時は総投入額と同時注文の拘束資金を別管理します。',
+    }),
+    build({
+      key: 'market_short', label: '成行短期型', execution: '即時参加・短期利確',
+      hitRate: 100,
+      tpRate: occurrenceRate,
+      stopRate: occurrenceRate === null ? null : Math.max(0, Math.min(100, 100 - occurrenceRate)),
+      slots: 1,
+      note: '指値未約定は見ません。必要値幅出現率を利確到達の代替参考にした粗い比較で、板・実スプレッド・滑りは今後追加します。',
+    }),
+  ];
+  return {
+    rows,
+    meta: { target_profit_jpy: target, total_capital_jpy: totalCapital, cycle_capital_jpy: cycleCapital, max_concurrent_orders: concurrentOrders, opportunities, simulation_only: true },
+    note: `注文は送信していません。1サイクル投入額${cycleCapital.toLocaleString('ja-JP')}円、参考利確幅${takeProfitPct.toFixed(3)}%、往復コスト${costPct.toFixed(3)}%で比較しています。期待回数・期待Netは過去到達率を機械的に掛けた参考値で、将来利益を保証しません。`,
+  };
+}
+
 function summarizeChartPoints(points) {
   const prices = points.map((point) => safeFloat(point.price, NaN)).filter(Number.isFinite);
   return {
@@ -782,6 +864,7 @@ module.exports = {
   calculateImpactRows,
   calculateTradePreview,
   calculateLimitCandidateDiagnostics,
+  calculateTradeMethodComparison,
   calculateDailyGoal,
   summarizeChartPoints,
 };
