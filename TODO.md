@@ -27,7 +27,7 @@ Electron + Node local engine版を中心に進行中。
 - AIやアラートは売買判断を代行しない
 - `.csv` は最低限利用に留め、分析・診断の本体はSQLite/分析キャッシュへ寄せる
 - `data/blw.sqlite` などローカル実行データはGitHubに上げない
-
+- 更新ファイルは必要分だけ渡す。`index.html` のプレビューリンクは出さない
 
 ---
 
