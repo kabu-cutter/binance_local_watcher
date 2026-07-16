@@ -763,7 +763,7 @@ function calculateDailyGoal(body = {}) {
 }
 
 
-function calculateTradeMethodComparison(body = {}, candidateRows = []) {
+function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHistory = null) {
   const target = Math.max(0, safeFloat(body.target_profit_jpy));
   const totalCapital = Math.max(1, safeFloat(body.capital_jpy, 1));
   const cycleCapital = Math.max(1, Math.min(totalCapital, safeFloat(body.cycle_capital_jpy, totalCapital)));
@@ -771,76 +771,179 @@ function calculateTradeMethodComparison(body = {}, candidateRows = []) {
   const opportunities = Math.max(1, safeInt(body.max_opportunities, 10));
   const takeProfitPct = Math.max(0, safeFloat(body.take_profit_pct, 0.4));
   const stopPct = Math.max(0, safeFloat(body.stop_loss_pct, 0.5));
-  const costPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
-  const occurrenceRate = Number.isFinite(Number(body.required_move_occurrence_rate_pct))
-    ? Math.max(0, Math.min(100, safeFloat(body.required_move_occurrence_rate_pct)))
-    : null;
+  const limitCostPct = Math.max(0, safeFloat(body.roundtrip_cost_pct, DEFAULT_ROUNDTRIP_COST_PCT));
+  // 成行はテイカー手数料・スプレッド・滑りを見込んで、指値想定より追加コストを置く。
+  // UI入力を追加するまでは保守的な既定値 0.12% を使い、結果に明示する。
+  const marketExtraCostPct = Math.max(0, safeFloat(body.market_extra_cost_pct, 0.12));
+  const marketCostPct = limitCostPct + marketExtraCostPct;
 
   const byKey = Object.fromEntries((candidateRows || []).map((row) => [row.key, row]));
   const valid = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
-  const avg = (values) => {
-    const nums = values.map(valid).filter((v) => v !== null);
-    return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+  const clampRate = (value) => {
+    const n = valid(value);
+    return n === null ? null : Math.max(0, Math.min(100, n));
   };
-  const netWin = cycleCapital * Math.max(takeProfitPct - costPct, 0) / 100;
-  const stopLoss = cycleCapital * (stopPct + costPct) / 100;
-  const requiredCycles = netWin > 0 ? Math.ceil(target / netWin) : null;
+  const probability = (value) => {
+    const rate = clampRate(value);
+    return rate === null ? null : rate / 100;
+  };
+  const successfulNet = (capital, costPct) => capital * (takeProfitPct - costPct) / 100;
+  const stoppedLoss = (capital, costPct) => capital * (stopPct + costPct) / 100;
 
-  const build = ({ key, label, execution, hitRate, tpRate, stopRate, slots, note }) => {
-    const hit = valid(hitRate);
-    const tp = valid(tpRate);
-    const stop = valid(stopRate);
-    const effectiveAttempts = opportunities * Math.max(1, slots);
-    const completed = hit === null || tp === null ? null : effectiveAttempts * hit / 100 * tp / 100;
-    const stops = hit === null || stop === null ? null : effectiveAttempts * hit / 100 * stop / 100;
-    const expectedNet = completed === null || stops === null ? null : completed * netWin - stops * stopLoss;
-    let labelText = '履歴不足';
-    let kind = 'warn';
-    if (netWin <= 0) { labelText = 'コスト超過'; kind = 'bad'; }
-    else if (completed !== null && requiredCycles !== null && completed >= requiredCycles) { labelText = '回数条件内'; kind = 'good'; }
-    else if (completed !== null && completed >= 1) { labelText = '回数不足'; kind = 'warn'; }
-    else if (completed !== null) { labelText = '機会不足'; kind = 'bad'; }
+  function classify(expectedDailyNet, requiredWins, expectedWins, historyReady, positiveWinNet) {
+    if (!positiveWinNet) return { label: 'コスト超過', kind: 'bad' };
+    if (!historyReady) return { label: '履歴未計算', kind: 'warn' };
+    if (expectedDailyNet > 0 && expectedWins >= requiredWins) return { label: '目標回数圏内', kind: 'good' };
+    if (expectedDailyNet > 0 && expectedWins >= 1) return { label: '回数不足', kind: 'warn' };
+    if (expectedDailyNet > 0) return { label: '機会不足', kind: 'bad' };
+    return { label: '期待値マイナス', kind: 'bad' };
+  }
+
+  function limitLeg(candidate, capital) {
+    if (!candidate || capital <= 0) return null;
+    const hit = probability(candidate.limit_hit_rate_pct);
+    const tp = probability(candidate.take_profit_after_hit_rate_pct);
+    const stop = probability(candidate.stop_first_rate_pct);
+    const winNet = successfulNet(capital, limitCostPct);
+    const loss = stoppedLoss(capital, limitCostPct);
+    const historyReady = hit !== null && tp !== null && stop !== null;
     return {
-      key, label, execution, cycle_capital_jpy: cycleCapital, concurrent_orders: slots,
-      take_profit_pct: takeProfitPct, roundtrip_cost_pct: costPct,
-      net_win_per_cycle_jpy: netWin, stop_loss_per_cycle_jpy: stopLoss,
-      required_completed_cycles: requiredCycles,
-      reference_hit_rate_pct: hit, reference_take_profit_rate_pct: tp, reference_stop_first_rate_pct: stop,
-      expected_completed_cycles: completed, expected_stop_cycles: stops, expected_daily_net_jpy: expectedNet,
-      condition_label: labelText, condition_kind: kind, note,
+      key: candidate.key,
+      label: candidate.candidate_label || candidate.key,
+      capital_jpy: capital,
+      hit_rate_pct: clampRate(candidate.limit_hit_rate_pct),
+      take_profit_rate_pct: clampRate(candidate.take_profit_after_hit_rate_pct),
+      stop_first_rate_pct: clampRate(candidate.stop_first_rate_pct),
+      win_probability: historyReady ? hit * tp : null,
+      loss_probability: historyReady ? hit * stop : null,
+      win_net_jpy: winNet,
+      stop_loss_jpy: loss,
+      expected_net_per_opportunity_jpy: historyReady ? hit * tp * winNet - hit * stop * loss : null,
     };
-  };
+  }
 
-  const shallow = byKey.shallow || byKey.standard || {};
-  const splitRows = [byKey.shallow, byKey.standard, byKey.deep].filter(Boolean);
-  const rows = [
-    build({
-      key: 'micro_limit', label: '小刻み指値型', execution: '浅め指値を順番に回す',
-      hitRate: shallow.limit_hit_rate_pct, tpRate: shallow.take_profit_after_hit_rate_pct,
-      stopRate: shallow.stop_first_rate_pct, slots: 1,
-      note: '未約定を抑えつつ、1件ずつ完了させる想定です。部分約定・取消・注文上限はまだ含みません。',
-    }),
-    build({
-      key: 'split_limit', label: '分割指値型', execution: '浅め・標準・深めへ分割',
-      hitRate: avg(splitRows.map((r) => r.limit_hit_rate_pct)),
-      tpRate: avg(splitRows.map((r) => r.take_profit_after_hit_rate_pct)),
-      stopRate: avg(splitRows.map((r) => r.stop_first_rate_pct)),
-      slots: Math.min(concurrentOrders, Math.max(1, splitRows.length)),
-      note: '資金を複数候補へ均等に分ける簡易比較です。実注文時は総投入額と同時注文の拘束資金を別管理します。',
-    }),
-    build({
+  function buildLimitMethod({ key, label, execution, candidates, orderCount, note }) {
+    const usable = candidates.filter(Boolean).slice(0, Math.max(1, orderCount));
+    const legCapital = usable.length ? cycleCapital / usable.length : cycleCapital;
+    const legs = usable.map((candidate) => limitLeg(candidate, legCapital)).filter(Boolean);
+    const historyReady = legs.length > 0 && legs.every((leg) => leg.expected_net_per_opportunity_jpy !== null);
+    const expectedNetPerOpportunity = historyReady
+      ? legs.reduce((sum, leg) => sum + leg.expected_net_per_opportunity_jpy, 0)
+      : null;
+    const expectedWinsPerOpportunity = historyReady
+      ? legs.reduce((sum, leg) => sum + leg.win_probability, 0)
+      : null;
+    const expectedStopsPerOpportunity = historyReady
+      ? legs.reduce((sum, leg) => sum + leg.loss_probability, 0)
+      : null;
+    const expectedWins = expectedWinsPerOpportunity === null ? null : expectedWinsPerOpportunity * opportunities;
+    const expectedStops = expectedStopsPerOpportunity === null ? null : expectedStopsPerOpportunity * opportunities;
+    const expectedDailyNet = expectedNetPerOpportunity === null ? null : expectedNetPerOpportunity * opportunities;
+    const winNetPerLeg = successfulNet(legCapital, limitCostPct);
+    const requiredWins = winNetPerLeg > 0 ? Math.ceil(target / winNetPerLeg) : null;
+    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyReady, winNetPerLeg > 0);
+    const weightedHit = historyReady ? legs.reduce((sum, leg) => sum + leg.hit_rate_pct, 0) / legs.length : null;
+    const weightedTp = historyReady ? legs.reduce((sum, leg) => sum + leg.take_profit_rate_pct, 0) / legs.length : null;
+    const weightedStop = historyReady ? legs.reduce((sum, leg) => sum + leg.stop_first_rate_pct, 0) / legs.length : null;
+    return {
+      key, label, execution,
+      cycle_capital_jpy: cycleCapital,
+      capital_per_order_jpy: legCapital,
+      concurrent_orders: legs.length || 1,
+      take_profit_pct: takeProfitPct,
+      roundtrip_cost_pct: limitCostPct,
+      market_extra_cost_pct: 0,
+      net_win_per_cycle_jpy: winNetPerLeg,
+      max_net_if_all_orders_win_jpy: winNetPerLeg * Math.max(1, legs.length),
+      stop_loss_per_cycle_jpy: stoppedLoss(legCapital, limitCostPct),
+      required_completed_cycles: requiredWins,
+      reference_hit_rate_pct: weightedHit,
+      reference_take_profit_rate_pct: weightedTp,
+      reference_stop_first_rate_pct: weightedStop,
+      expected_net_per_opportunity_jpy: expectedNetPerOpportunity,
+      expected_completed_cycles: expectedWins,
+      expected_stop_cycles: expectedStops,
+      expected_daily_net_jpy: expectedDailyNet,
+      condition_label: condition.label,
+      condition_kind: condition.kind,
+      history_ready: historyReady,
+      legs,
+      note,
+    };
+  }
+
+  function buildMarketMethod() {
+    const winRate = probability(marketHistory?.take_profit_first_rate_pct);
+    const stopRate = probability(marketHistory?.stop_first_rate_pct);
+    const historyReady = winRate !== null && stopRate !== null;
+    const winNet = successfulNet(cycleCapital, marketCostPct);
+    const loss = stoppedLoss(cycleCapital, marketCostPct);
+    const expectedNetPerOpportunity = historyReady ? winRate * winNet - stopRate * loss : null;
+    const expectedWins = historyReady ? opportunities * winRate : null;
+    const expectedStops = historyReady ? opportunities * stopRate : null;
+    const expectedDailyNet = expectedNetPerOpportunity === null ? null : expectedNetPerOpportunity * opportunities;
+    const requiredWins = winNet > 0 ? Math.ceil(target / winNet) : null;
+    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyReady, winNet > 0);
+    return {
       key: 'market_short', label: '成行短期型', execution: '即時参加・短期利確',
-      hitRate: 100,
-      tpRate: occurrenceRate,
-      stopRate: occurrenceRate === null ? null : Math.max(0, Math.min(100, 100 - occurrenceRate)),
-      slots: 1,
-      note: '指値未約定は見ません。必要値幅出現率を利確到達の代替参考にした粗い比較で、板・実スプレッド・滑りは今後追加します。',
+      cycle_capital_jpy: cycleCapital,
+      capital_per_order_jpy: cycleCapital,
+      concurrent_orders: 1,
+      take_profit_pct: takeProfitPct,
+      roundtrip_cost_pct: marketCostPct,
+      market_extra_cost_pct: marketExtraCostPct,
+      net_win_per_cycle_jpy: winNet,
+      max_net_if_all_orders_win_jpy: winNet,
+      stop_loss_per_cycle_jpy: loss,
+      required_completed_cycles: requiredWins,
+      reference_hit_rate_pct: 100,
+      reference_take_profit_rate_pct: clampRate(marketHistory?.take_profit_first_rate_pct),
+      reference_stop_first_rate_pct: clampRate(marketHistory?.stop_first_rate_pct),
+      expected_net_per_opportunity_jpy: expectedNetPerOpportunity,
+      expected_completed_cycles: expectedWins,
+      expected_stop_cycles: expectedStops,
+      expected_daily_net_jpy: expectedDailyNet,
+      condition_label: condition.label,
+      condition_kind: condition.kind,
+      history_ready: historyReady,
+      legs: [],
+      note: `指値到達率は使いません。成行追加コスト${marketExtraCostPct.toFixed(3)}%を加え、判定窓内の利確先行・損切り先行を直接比較します。`,
+    };
+  }
+
+  const shallow = byKey.shallow || byKey.standard || null;
+  const splitCandidates = [byKey.shallow, byKey.standard, byKey.deep].filter(Boolean);
+  const splitCount = Math.min(concurrentOrders, splitCandidates.length || 1);
+  const rows = [
+    buildLimitMethod({
+      key: 'micro_limit', label: '小刻み指値型', execution: '浅め指値を1件ずつ順番に回す',
+      candidates: [shallow], orderCount: 1,
+      note: '浅め候補1件の到達率・利確先行率・損切り先行率から、1機会あたりの期待Netを計算します。',
     }),
+    buildLimitMethod({
+      key: 'split_limit', label: '分割指値型', execution: '浅め・標準・深めへ資金を分割',
+      candidates: splitCandidates, orderCount: splitCount,
+      note: `1サイクル投入額を${splitCount}分割し、各候補の履歴率と損益を個別計算して合算します。`,
+    }),
+    buildMarketMethod(),
   ];
+
   return {
     rows,
-    meta: { target_profit_jpy: target, total_capital_jpy: totalCapital, cycle_capital_jpy: cycleCapital, max_concurrent_orders: concurrentOrders, opportunities, simulation_only: true },
-    note: `注文は送信していません。1サイクル投入額${cycleCapital.toLocaleString('ja-JP')}円、参考利確幅${takeProfitPct.toFixed(3)}%、往復コスト${costPct.toFixed(3)}%で比較しています。期待回数・期待Netは過去到達率を機械的に掛けた参考値で、将来利益を保証しません。`,
+    meta: {
+      target_profit_jpy: target,
+      total_capital_jpy: totalCapital,
+      cycle_capital_jpy: cycleCapital,
+      max_concurrent_orders: concurrentOrders,
+      opportunities,
+      take_profit_pct: takeProfitPct,
+      stop_loss_pct: stopPct,
+      limit_roundtrip_cost_pct: limitCostPct,
+      market_roundtrip_cost_pct: marketCostPct,
+      market_extra_cost_pct: marketExtraCostPct,
+      simulation_only: true,
+    },
+    note: `注文は送信していません。小刻み指値は浅め候補1件、分割指値は候補別に資金分割、成行短期は指値到達率を使わず直接の利確/損切り先行率で比較します。指値往復コスト${limitCostPct.toFixed(3)}%、成行想定コスト${marketCostPct.toFixed(3)}%（追加${marketExtraCostPct.toFixed(3)}%）です。主指標は「1機会期待Net」で、将来利益を保証しません。`,
   };
 }
 

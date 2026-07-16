@@ -2994,6 +2994,82 @@ function firstLimitOutcomeWithinWindow({ rows, startIndex, endTimeExclusive, sid
   return { hit: true, outcome: 'no_exit' };
 }
 
+async function estimateMarketShortOutcomeRates(body = {}) {
+  const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
+  const referenceDays = normalizeOccurrenceReferenceDays(body);
+  const windowMinutes = normalizeOccurrenceWindowMinutes(body.occurrence_window_minutes || body.virtual_fill_window_minutes || 15);
+  const windowMs = windowMinutes * 60 * 1000;
+  const takeProfitPct = Math.max(0, safeFloat(body.take_profit_pct, 0.4));
+  const stopPct = Math.max(0, safeFloat(body.stop_loss_pct, 0.5));
+  const side = normalizeVirtualFillSide(body.limit_candidate_side || body.virtual_fill_side);
+  const window = analysisCacheWindow(referenceDays);
+  const base = {
+    symbol,
+    interval: '1m',
+    reference_days: referenceDays,
+    evaluation_window_minutes: windowMinutes,
+    take_profit_pct: takeProfitPct,
+    stop_loss_pct: stopPct,
+    side,
+    start_count: 0,
+    take_profit_first_count: 0,
+    stop_first_count: 0,
+    ambiguous_count: 0,
+    no_exit_count: 0,
+    take_profit_first_rate_pct: null,
+    stop_first_rate_pct: null,
+    ambiguous_rate_pct: null,
+    no_exit_rate_pct: null,
+    quality_label: '未計算',
+  };
+  try {
+    const cache = await analysisRowsForWindow({ symbol, start_ms: window.start_ms, end_ms: window.end_ms });
+    const rows = (cache.rows || []).filter((row) => {
+      const open = safeFloat(row.open, NaN);
+      const high = safeFloat(row.high, NaN);
+      const low = safeFloat(row.low, NaN);
+      const t = safeFloat(row.open_time_ms, NaN);
+      return Number.isFinite(t) && t >= window.start_ms && t < window.end_ms
+        && Number.isFinite(open) && open > 0 && Number.isFinite(high) && Number.isFinite(low);
+    }).sort((a, b) => safeFloat(a.open_time_ms, 0) - safeFloat(b.open_time_ms, 0));
+    const startRows = rows.filter((row) => safeFloat(row.open_time_ms, 0) + windowMs <= window.end_ms);
+    if (startRows.length < 10) {
+      return { ...base, start_count: startRows.length, quality_label: '不足', note: '成行短期型の履歴判定に必要な1分足が不足しています。' };
+    }
+    let searchStartIndex = 0;
+    const result = { ...base, start_count: startRows.length };
+    for (const startRow of startRows) {
+      const startTime = safeFloat(startRow.open_time_ms, NaN);
+      const open = safeFloat(startRow.open, NaN);
+      while (searchStartIndex < rows.length && safeFloat(rows[searchStartIndex].open_time_ms, NaN) < startTime) searchStartIndex += 1;
+      const takeProfitPrice = side === 'sell_limit' ? open * (1 - takeProfitPct / 100) : open * (1 + takeProfitPct / 100);
+      const stopLossPrice = side === 'sell_limit' ? open * (1 + stopPct / 100) : open * (1 - stopPct / 100);
+      const outcome = firstLimitOutcomeWithinWindow({
+        rows,
+        startIndex: searchStartIndex,
+        endTimeExclusive: startTime + windowMs,
+        side,
+        limitPrice: open,
+        takeProfitPrice,
+        stopLossPrice,
+      });
+      if (outcome.outcome === 'take_profit_first') result.take_profit_first_count += 1;
+      else if (outcome.outcome === 'stop_first') result.stop_first_count += 1;
+      else if (outcome.outcome === 'ambiguous') result.ambiguous_count += 1;
+      else result.no_exit_count += 1;
+    }
+    result.take_profit_first_rate_pct = result.take_profit_first_count / result.start_count * 100;
+    result.stop_first_rate_pct = result.stop_first_count / result.start_count * 100;
+    result.ambiguous_rate_pct = result.ambiguous_count / result.start_count * 100;
+    result.no_exit_rate_pct = result.no_exit_count / result.start_count * 100;
+    result.quality_label = '計算済み';
+    result.note = `成行短期型: ${symbol} 1分足 / 直近${referenceDays}日 / ${windowMinutes}分以内。即時参加後、利確${takeProfitPct.toFixed(3)}%と損切り${stopPct.toFixed(3)}%のどちらへ先に触れたかを比較しました。`;
+    return result;
+  } catch (error) {
+    return { ...base, quality_label: 'エラー', error: error.message, note: `成行短期型の履歴判定: ${error.message}` };
+  }
+}
+
 async function estimateLimitCandidateOutcomeRates(body = {}, summary = null, candidateRows = []) {
   const symbol = SYMBOLS.includes(body.symbol) ? body.symbol : SYMBOLS[0];
   const side = normalizeVirtualFillSide(body.limit_candidate_side || body.virtual_fill_side);
@@ -3337,19 +3413,26 @@ async function dailyGoal(body = {}) {
     limit_candidate_side: body.limit_candidate_side || body.virtual_fill_side || 'buy_limit',
   }, summary, result.limit_candidate_rows);
   const mergedLimitCandidateRows = mergeLimitCandidateHistoryRows(result.limit_candidate_rows, limitCandidateHistory);
+  const marketShortHistory = await estimateMarketShortOutcomeRates({
+    ...body,
+    take_profit_pct: result.take_profit_pct,
+    stop_loss_pct: result.stop_loss_pct,
+  });
   const tradeMethodComparison = calculations.calculateTradeMethodComparison({
     ...body,
     target_profit_jpy: result.target_profit_jpy,
     capital_jpy: body.capital_jpy,
     take_profit_pct: result.take_profit_pct,
+    stop_loss_pct: result.stop_loss_pct,
     roundtrip_cost_pct: result.roundtrip_cost_pct,
     required_move_occurrence_rate_pct: result.required_move_occurrence_rate_pct,
-  }, mergedLimitCandidateRows);
+  }, mergedLimitCandidateRows, marketShortHistory);
   return {
     ...result,
     trade_method_rows: tradeMethodComparison.rows,
     trade_method_meta: tradeMethodComparison.meta,
     trade_method_note: tradeMethodComparison.note,
+    trade_method_market_history: marketShortHistory,
     limit_candidate_rows: mergedLimitCandidateRows,
     limit_candidate_note: `${String(result.limit_candidate_note || '').replace('指値到達率・約定後利確到達率・損切り先行率は次段階で追加します。', '指値到達率・約定後利確到達率・損切り先行率を分析用1分足キャッシュから参考表示します。')} ${limitCandidateHistory?.note || ''}`.trim(),
     limit_candidate_history_note: limitCandidateHistory?.note || '',
