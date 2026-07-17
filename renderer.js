@@ -1652,10 +1652,21 @@ function renderDailyTradeMethods(data) {
   const cardsEl = document.getElementById('dailyTradeMethodCards');
   const tableEl = document.getElementById('dailyTradeMethodTable');
   if (!memoEl || !cardsEl || !tableEl) return;
+  tableEl.classList.add('daily-trade-method-table');
   const rows = Array.isArray(data.trade_method_rows) ? data.trade_method_rows : [];
   memoEl.textContent = data.trade_method_note || '取引方法の比較はまだ計算していません。';
-  const rateText = (value) => Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : '未計算';
+  const rateText = (value, fallback = '未計算') => Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}%` : fallback;
   const moneyText = (value, digits = 2) => Number.isFinite(Number(value)) ? yen(value, digits) : '未計算';
+  const completeText = (row) => row.expected_completed_cycles === null || row.expected_completed_cycles === undefined
+    ? '未計算'
+    : `${Number(row.expected_completed_cycles).toFixed(2)}回相当`;
+  const historyStatusText = (row) => row.history_status_label || (row.history_ready ? '計算済み' : '履歴未計算');
+  const exitRateText = (row, value) => {
+    if (Number.isFinite(Number(value))) return `${Number(value).toFixed(1)}%`;
+    if (row.history_status_label === '指値未到達') return '到達なし';
+    if (row.history_status_label === '出口未確認') return '未完了';
+    return '未計算';
+  };
   if (!rows.length) {
     cardsEl.innerHTML = '<div class="daily-limit-empty">計算後に取引方法の比較を表示します。</div>';
     renderTable(tableEl, [], []);
@@ -1667,16 +1678,17 @@ function renderDailyTradeMethods(data) {
       <div class="trade-method-main"><small>1機会期待Net</small><b>${moneyText(row.expected_net_per_opportunity_jpy, 2)}</b></div>
       <div class="trade-method-metrics">
         <div><small>利確時Net</small><b>${moneyText(row.net_win_per_cycle_jpy, 2)}</b></div>
-        <div><small>完了見込み</small><b>${row.expected_completed_cycles === null ? '未計算' : `${Number(row.expected_completed_cycles).toFixed(2)}回相当`}</b></div>
+        <div><small>完了見込み</small><b>${completeText(row)}</b></div>
         <div><small>参考日次Net</small><b>${moneyText(row.expected_daily_net_jpy, 2)}</b></div>
       </div>
+      <div class="trade-method-status"><small>履歴状態</small><b>${historyStatusText(row)}</b></div>
       <p>${row.execution}<br>${row.note}</p>
     </div>`).join('');
   renderTable(tableEl, [
     ['method', '方式'], ['capital', '総投入額'], ['per_order', '1注文額'], ['orders', '同時注文'],
     ['win_net', '利確時Net'], ['expected_one', '1機会期待Net'], ['required', '必要利確回数'],
-    ['hit', '指値到達'], ['tp', '利確先行'], ['stop', '損切り先行'],
-    ['complete', '完了見込み'], ['expected', '参考日次Net'], ['cost', '想定往復コスト'], ['condition', '条件診断'],
+    ['hit', '指値到達'], ['tp', '利確先行'], ['stop', '損切り先行'], ['noexit', '未完了'],
+    ['complete', '完了見込み'], ['expected', '参考日次Net'], ['cost', '想定往復コスト'], ['history', '履歴状態'], ['condition', '条件診断'],
   ], rows.map((row) => ({
     method: row.label,
     capital: yen(row.cycle_capital_jpy, 0),
@@ -1686,11 +1698,13 @@ function renderDailyTradeMethods(data) {
     expected_one: moneyText(row.expected_net_per_opportunity_jpy, 2),
     required: row.required_completed_cycles === null ? '計算不可' : `${row.required_completed_cycles}回`,
     hit: row.key === 'market_short' ? '即時参加' : rateText(row.reference_hit_rate_pct),
-    tp: rateText(row.reference_take_profit_rate_pct),
-    stop: rateText(row.reference_stop_first_rate_pct),
-    complete: row.expected_completed_cycles === null ? '未計算' : `${Number(row.expected_completed_cycles).toFixed(2)}回相当`,
+    tp: exitRateText(row, row.reference_take_profit_rate_pct),
+    stop: exitRateText(row, row.reference_stop_first_rate_pct),
+    noexit: rateText(row.reference_no_exit_rate_pct, '—'),
+    complete: completeText(row),
     expected: moneyText(row.expected_daily_net_jpy, 2),
     cost: pct(row.roundtrip_cost_pct, 3),
+    history: historyStatusText(row),
     condition: row.condition_label,
   })));
 }

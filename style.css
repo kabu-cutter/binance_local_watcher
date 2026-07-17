@@ -1982,3 +1982,38 @@ tr:hover td { background: rgba(255,255,255,0.34); }
 .trade-method-metrics > div { padding:8px; border-radius:12px; background:rgba(255,255,255,.58); }
 .daily-trade-method-card p { margin:10px 0 0; color:var(--muted); font-size:.8rem; line-height:1.55; }
 @media (max-width: 980px) { .daily-trade-method-cards { grid-template-columns:1fr; } }
+
+/* Daily Goal: trade-method comparison table readability and history status */
+.daily-trade-method-table {
+  min-width: 1180px;
+  table-layout: auto;
+}
+.daily-trade-method-table th,
+.daily-trade-method-table td {
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.daily-trade-method-table th:first-child,
+.daily-trade-method-table td:first-child {
+  min-width: 120px;
+  font-weight: 850;
+}
+.daily-trade-method-table th:last-child,
+.daily-trade-method-table td:last-child {
+  min-width: 120px;
+}
+.trade-method-status {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.58);
+}
+.trade-method-status small {
+  display: block;
+  color: var(--muted);
+  font-size: .75rem;
+}
+.trade-method-status b {
+  color: #813d67;
+  font-size: .92rem;
+}

@@ -778,7 +778,11 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
   const marketCostPct = limitCostPct + marketExtraCostPct;
 
   const byKey = Object.fromEntries((candidateRows || []).map((row) => [row.key, row]));
-  const valid = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
+  const valid = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
   const clampRate = (value) => {
     const n = valid(value);
     return n === null ? null : Math.max(0, Math.min(100, n));
@@ -789,62 +793,137 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
   };
   const successfulNet = (capital, costPct) => capital * (takeProfitPct - costPct) / 100;
   const stoppedLoss = (capital, costPct) => capital * (stopPct + costPct) / 100;
+  const countValue = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, n) : null;
+  };
+  const finishedOutcomeCount = (counts = {}) => {
+    const tp = countValue(counts.take_profit_first_count) || 0;
+    const stop = countValue(counts.stop_first_count) || 0;
+    const ambiguous = countValue(counts.ambiguous_count) || 0;
+    return tp + stop + ambiguous;
+  };
 
-  function classify(expectedDailyNet, requiredWins, expectedWins, historyReady, positiveWinNet) {
+  function classify(expectedDailyNet, requiredWins, expectedWins, historyStatus, positiveWinNet) {
+    const status = historyStatus || { ready: false, label: '履歴未計算', kind: 'warn' };
     if (!positiveWinNet) return { label: 'コスト超過', kind: 'bad' };
-    if (!historyReady) return { label: '履歴未計算', kind: 'warn' };
+    if (!status.ready) return { label: status.label || '履歴未計算', kind: status.kind || 'warn' };
     if (expectedDailyNet > 0 && expectedWins >= requiredWins) return { label: '目標回数圏内', kind: 'good' };
     if (expectedDailyNet > 0 && expectedWins >= 1) return { label: '回数不足', kind: 'warn' };
     if (expectedDailyNet > 0) return { label: '機会不足', kind: 'bad' };
+    if (expectedDailyNet === 0 && (!Number.isFinite(expectedWins) || expectedWins <= 0)) {
+      return { label: '機会不足', kind: 'bad' };
+    }
+    if (expectedDailyNet === 0) return { label: '利益根拠なし', kind: 'bad' };
     return { label: '期待値マイナス', kind: 'bad' };
   }
 
   function limitLeg(candidate, capital) {
     if (!candidate || capital <= 0) return null;
     const hit = probability(candidate.limit_hit_rate_pct);
-    const tp = probability(candidate.take_profit_after_hit_rate_pct);
-    const stop = probability(candidate.stop_first_rate_pct);
+    const rawTp = probability(candidate.take_profit_after_hit_rate_pct);
+    const rawStop = probability(candidate.stop_first_rate_pct);
     const winNet = successfulNet(capital, limitCostPct);
     const loss = stoppedLoss(capital, limitCostPct);
-    const historyReady = hit !== null && tp !== null && stop !== null;
+    const startCount = countValue(candidate.history_start_count ?? candidate.start_count);
+    const hitCount = countValue(candidate.limit_hit_count ?? candidate.hit_count);
+    const noExitCount = countValue(candidate.no_exit_count);
+    const finishedCount = finishedOutcomeCount(candidate);
+    const noExitRate = clampRate(candidate.no_exit_rate_pct);
+    const ambiguousRate = clampRate(candidate.ambiguous_rate_pct);
+    const rateReady = hit !== null && (hit <= 0 || (rawTp !== null && rawStop !== null));
+    let historyStatus = { ready: false, label: '履歴未計算', kind: 'warn', note: '候補別の履歴率がまだ計算されていません。' };
+    if (startCount !== null && startCount < 10) {
+      historyStatus = { ready: false, label: '履歴不足', kind: 'warn', note: `判定起点が${startCount}本のため、期待Netには使いません。` };
+    } else if (!rateReady) {
+      historyStatus = { ready: false, label: '履歴未計算', kind: 'warn', note: '指値到達率・利確先行率・損切り先行率のいずれかが未計算です。' };
+    } else if (hit <= 0 || hitCount === 0) {
+      historyStatus = { ready: true, label: '指値未到達', kind: 'bad', note: '履歴上は指値価格に届いた起点がありません。期待Netは0円として扱います。' };
+    } else if (finishedCount <= 0 && (noExitCount || 0) > 0) {
+      historyStatus = { ready: false, label: '出口未確認', kind: 'warn', note: '指値到達後、判定窓内で利確/損切りまで完了した例がありません。0円ではなく未計算として扱います。' };
+    } else {
+      historyStatus = { ready: true, label: '計算済み', kind: 'good', note: '指値到達後の利確先行・損切り先行まで計算済みです。' };
+    }
+    const tp = hit <= 0 ? 0 : rawTp;
+    const stop = hit <= 0 ? 0 : rawStop;
     return {
       key: candidate.key,
       label: candidate.candidate_label || candidate.key,
       capital_jpy: capital,
       hit_rate_pct: clampRate(candidate.limit_hit_rate_pct),
-      take_profit_rate_pct: clampRate(candidate.take_profit_after_hit_rate_pct),
-      stop_first_rate_pct: clampRate(candidate.stop_first_rate_pct),
-      win_probability: historyReady ? hit * tp : null,
-      loss_probability: historyReady ? hit * stop : null,
+      take_profit_rate_pct: hit <= 0 ? null : clampRate(candidate.take_profit_after_hit_rate_pct),
+      stop_first_rate_pct: hit <= 0 ? null : clampRate(candidate.stop_first_rate_pct),
+      no_exit_rate_pct: noExitRate,
+      ambiguous_rate_pct: ambiguousRate,
+      start_count: startCount,
+      hit_count: hitCount,
+      no_exit_count: noExitCount,
+      finished_outcome_count: finishedCount,
+      win_probability: historyStatus.ready ? hit * tp : null,
+      loss_probability: historyStatus.ready ? hit * stop : null,
       win_net_jpy: winNet,
       stop_loss_jpy: loss,
-      expected_net_per_opportunity_jpy: historyReady ? hit * tp * winNet - hit * stop * loss : null,
+      expected_net_per_opportunity_jpy: historyStatus.ready ? hit * tp * winNet - hit * stop * loss : null,
+      history_ready: historyStatus.ready,
+      history_status_label: historyStatus.label,
+      history_status_kind: historyStatus.kind,
+      history_status_note: historyStatus.note,
     };
+  }
+
+  function mergeHistoryStatus(legs) {
+    if (!legs.length) return { ready: false, label: '候補なし', kind: 'warn', note: '比較に使える指値候補がありません。' };
+    const blocked = legs.find((leg) => !leg.history_ready);
+    if (blocked) {
+      return {
+        ready: false,
+        label: blocked.history_status_label || '履歴未計算',
+        kind: blocked.history_status_kind || 'warn',
+        note: blocked.history_status_note || '履歴試算が完了していません。',
+      };
+    }
+    if (legs.every((leg) => leg.hit_rate_pct === 0)) {
+      return { ready: true, label: '指値未到達', kind: 'bad', note: '履歴上は対象指値に届いていません。期待Netは0円として扱います。' };
+    }
+    return { ready: true, label: '計算済み', kind: 'good', note: '履歴率を期待Net計算に使っています。' };
+  }
+
+  function averageRate(legs, key) {
+    const values = legs
+      .map((leg) => leg[key])
+      .filter((value) => value !== null && value !== undefined)
+      .map((value) => Number(value))
+      .filter(Number.isFinite);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
   }
 
   function buildLimitMethod({ key, label, execution, candidates, orderCount, note }) {
     const usable = candidates.filter(Boolean).slice(0, Math.max(1, orderCount));
     const legCapital = usable.length ? cycleCapital / usable.length : cycleCapital;
     const legs = usable.map((candidate) => limitLeg(candidate, legCapital)).filter(Boolean);
-    const historyReady = legs.length > 0 && legs.every((leg) => leg.expected_net_per_opportunity_jpy !== null);
+    const historyStatus = mergeHistoryStatus(legs);
+    const historyReady = historyStatus.ready;
     const expectedNetPerOpportunity = historyReady
-      ? legs.reduce((sum, leg) => sum + leg.expected_net_per_opportunity_jpy, 0)
+      ? legs.reduce((sum, leg) => sum + (leg.expected_net_per_opportunity_jpy || 0), 0)
       : null;
     const expectedWinsPerOpportunity = historyReady
-      ? legs.reduce((sum, leg) => sum + leg.win_probability, 0)
+      ? legs.reduce((sum, leg) => sum + (leg.win_probability || 0), 0)
       : null;
     const expectedStopsPerOpportunity = historyReady
-      ? legs.reduce((sum, leg) => sum + leg.loss_probability, 0)
+      ? legs.reduce((sum, leg) => sum + (leg.loss_probability || 0), 0)
       : null;
     const expectedWins = expectedWinsPerOpportunity === null ? null : expectedWinsPerOpportunity * opportunities;
     const expectedStops = expectedStopsPerOpportunity === null ? null : expectedStopsPerOpportunity * opportunities;
     const expectedDailyNet = expectedNetPerOpportunity === null ? null : expectedNetPerOpportunity * opportunities;
     const winNetPerLeg = successfulNet(legCapital, limitCostPct);
     const requiredWins = winNetPerLeg > 0 ? Math.ceil(target / winNetPerLeg) : null;
-    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyReady, winNetPerLeg > 0);
-    const weightedHit = historyReady ? legs.reduce((sum, leg) => sum + leg.hit_rate_pct, 0) / legs.length : null;
-    const weightedTp = historyReady ? legs.reduce((sum, leg) => sum + leg.take_profit_rate_pct, 0) / legs.length : null;
-    const weightedStop = historyReady ? legs.reduce((sum, leg) => sum + leg.stop_first_rate_pct, 0) / legs.length : null;
+    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyStatus, winNetPerLeg > 0);
+    const weightedHit = averageRate(legs, 'hit_rate_pct');
+    const weightedTp = averageRate(legs, 'take_profit_rate_pct');
+    const weightedStop = averageRate(legs, 'stop_first_rate_pct');
+    const weightedNoExit = averageRate(legs, 'no_exit_rate_pct');
+    const weightedAmbiguous = averageRate(legs, 'ambiguous_rate_pct');
     return {
       key, label, execution,
       cycle_capital_jpy: cycleCapital,
@@ -860,6 +939,8 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
       reference_hit_rate_pct: weightedHit,
       reference_take_profit_rate_pct: weightedTp,
       reference_stop_first_rate_pct: weightedStop,
+      reference_no_exit_rate_pct: weightedNoExit,
+      reference_ambiguous_rate_pct: weightedAmbiguous,
       expected_net_per_opportunity_jpy: expectedNetPerOpportunity,
       expected_completed_cycles: expectedWins,
       expected_stop_cycles: expectedStops,
@@ -867,15 +948,32 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
       condition_label: condition.label,
       condition_kind: condition.kind,
       history_ready: historyReady,
+      history_status_label: historyStatus.label,
+      history_status_kind: historyStatus.kind,
+      history_status_note: historyStatus.note,
       legs,
-      note,
+      note: `${note} 履歴判定: ${historyStatus.note}`,
     };
   }
 
   function buildMarketMethod() {
     const winRate = probability(marketHistory?.take_profit_first_rate_pct);
     const stopRate = probability(marketHistory?.stop_first_rate_pct);
-    const historyReady = winRate !== null && stopRate !== null;
+    const startCount = countValue(marketHistory?.start_count);
+    const noExitCount = countValue(marketHistory?.no_exit_count);
+    const finishedCount = finishedOutcomeCount(marketHistory || {});
+    const noExitRate = clampRate(marketHistory?.no_exit_rate_pct);
+    let historyStatus = { ready: false, label: '履歴未計算', kind: 'warn', note: '成行短期型の履歴率がまだ計算されていません。' };
+    if (startCount !== null && startCount < 10) {
+      historyStatus = { ready: false, label: '履歴不足', kind: 'warn', note: `判定起点が${startCount}本のため、期待Netには使いません。` };
+    } else if (winRate === null || stopRate === null) {
+      historyStatus = { ready: false, label: '履歴未計算', kind: 'warn', note: '利確先行率・損切り先行率のどちらかが未計算です。' };
+    } else if (finishedCount <= 0 && (noExitCount || 0) > 0) {
+      historyStatus = { ready: false, label: '出口未確認', kind: 'warn', note: '判定窓内で利確/損切りまで完了した例がありません。0円ではなく未計算として扱います。' };
+    } else {
+      historyStatus = { ready: true, label: '計算済み', kind: 'good', note: '成行参加後の利確先行・損切り先行を計算済みです。' };
+    }
+    const historyReady = historyStatus.ready;
     const winNet = successfulNet(cycleCapital, marketCostPct);
     const loss = stoppedLoss(cycleCapital, marketCostPct);
     const expectedNetPerOpportunity = historyReady ? winRate * winNet - stopRate * loss : null;
@@ -883,7 +981,7 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
     const expectedStops = historyReady ? opportunities * stopRate : null;
     const expectedDailyNet = expectedNetPerOpportunity === null ? null : expectedNetPerOpportunity * opportunities;
     const requiredWins = winNet > 0 ? Math.ceil(target / winNet) : null;
-    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyReady, winNet > 0);
+    const condition = classify(expectedDailyNet, requiredWins, expectedWins, historyStatus, winNet > 0);
     return {
       key: 'market_short', label: '成行短期型', execution: '即時参加・短期利確',
       cycle_capital_jpy: cycleCapital,
@@ -897,8 +995,10 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
       stop_loss_per_cycle_jpy: loss,
       required_completed_cycles: requiredWins,
       reference_hit_rate_pct: 100,
-      reference_take_profit_rate_pct: clampRate(marketHistory?.take_profit_first_rate_pct),
-      reference_stop_first_rate_pct: clampRate(marketHistory?.stop_first_rate_pct),
+      reference_take_profit_rate_pct: historyReady ? clampRate(marketHistory?.take_profit_first_rate_pct) : null,
+      reference_stop_first_rate_pct: historyReady ? clampRate(marketHistory?.stop_first_rate_pct) : null,
+      reference_no_exit_rate_pct: noExitRate,
+      reference_ambiguous_rate_pct: clampRate(marketHistory?.ambiguous_rate_pct),
       expected_net_per_opportunity_jpy: expectedNetPerOpportunity,
       expected_completed_cycles: expectedWins,
       expected_stop_cycles: expectedStops,
@@ -906,8 +1006,11 @@ function calculateTradeMethodComparison(body = {}, candidateRows = [], marketHis
       condition_label: condition.label,
       condition_kind: condition.kind,
       history_ready: historyReady,
+      history_status_label: historyStatus.label,
+      history_status_kind: historyStatus.kind,
+      history_status_note: historyStatus.note,
       legs: [],
-      note: `指値到達率は使いません。成行追加コスト${marketExtraCostPct.toFixed(3)}%を加え、判定窓内の利確先行・損切り先行を直接比較します。`,
+      note: `指値到達率は使いません。成行追加コスト${marketExtraCostPct.toFixed(3)}%を加え、判定窓内の利確先行・損切り先行を直接比較します。履歴判定: ${historyStatus.note}`,
     };
   }
 
