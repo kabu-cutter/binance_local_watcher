@@ -4661,10 +4661,10 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
       note: '継続・矛盾、出来高裏付け、価格位置、コスト超過を組み合わせ、候補を残す/除外する判断に接続します。',
     },
     {
-      family: '次工程：アラートセンター集約',
-      status: '次に着手',
+      family: 'アラートセンター集約表示',
+      status: '更新7 実装済み・継続調整',
       priority: 'A',
-      note: '個別アラートを並べるだけでなく、主判断・残す候補・除外候補・外れ条件を上部に集約して見やすくします。',
+      note: '主判断・残す候補・除外候補・外れ条件・重要指標メーターを上部に集約し、詳細表は確認用にします。',
     },
     {
       family: '次フェーズ：時間帯・外部要因',
@@ -4673,8 +4673,8 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
       note: 'JST時間帯、米国市場開始、ニュース、Binanceメンテナンスなどは外部データや誤検知対策が必要なため後回しです。',
     },
     {
-      family: '売買シミュレーター連携口',
-      status: '最後の工程',
+      family: '次工程：売買シミュレーター連携口',
+      status: '次に着手候補',
       priority: 'A',
       note: 'シミュレーター本体は未実装。decision_contextを紙トレード/バックテストへ渡せる形式に整えます。実注文はまだ行いません。',
     },

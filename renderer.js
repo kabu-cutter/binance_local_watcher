@@ -262,6 +262,209 @@ function costAlertText(row) {
   const gap = ctx.threshold_gap_pct === null || ctx.threshold_gap_pct === undefined ? '—' : pct(ctx.threshold_gap_pct, 3, true);
   return `${ctx.cost_label || 'コスト'} ${cost} / 差 ${gap}`;
 }
+
+
+function clampUiPercent(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, n));
+}
+
+function shortAlertText(value, fallback = '—', maxLen = 96) {
+  const text = String(value ?? '').trim() || fallback;
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
+
+function alertToneFromLevel(row = {}) {
+  const rank = Number(row.level_rank || row.decision_context?.market_state?.level_rank || 0);
+  if (rank >= 4) return 'danger';
+  if (rank >= 3) return 'warning';
+  if (rank >= 2) return 'watch';
+  if (rank >= 1) return 'info';
+  return 'clear';
+}
+
+function alertToneFromSigned(value, threshold = 0.001) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || Math.abs(n) <= threshold) return 'flat';
+  return n > 0 ? 'up' : 'down';
+}
+
+function candidateLabel(row) {
+  return row?.decision_context?.preferred_candidate?.label
+    || row?.preferred_candidate?.label
+    || row?.order_adjustment
+    || '候補なし';
+}
+
+function excludedLabel(row, limit = 2) {
+  const list = row?.decision_context?.excluded_candidates || row?.excluded_candidates || [];
+  if (!Array.isArray(list) || !list.length) return '除外候補なし';
+  return list.slice(0, limit).map((item) => item.label || item.key || String(item)).join(' / ');
+}
+
+function invalidationLabel(row, limit = 2) {
+  const list = row?.decision_context?.invalidation_conditions || row?.invalidation_conditions || [];
+  if (!Array.isArray(list) || !list.length) return '外れ条件なし';
+  return list.slice(0, limit).join(' / ');
+}
+
+function confidenceLabel(row) {
+  const ctx = row?.decision_context || {};
+  const label = ctx.confidence_level || row?.confidence_level || '—';
+  const reason = ctx.confidence_reason || row?.confidence_reason || '';
+  return reason ? `${label}：${reason}` : label;
+}
+
+function metricRail(label, valueText, fillPct, tone = 'neutral', note = '') {
+  const fill = clampUiPercent(fillPct);
+  return `<div class="alert-metric-rail is-${escapeHtml(tone)}" style="--fill:${fill}%"><div class="alert-metric-head"><small>${escapeHtml(label)}</small><b>${escapeHtml(valueText || '—')}</b></div><div class="alert-meter-track"><span></span></div>${note ? `<em>${escapeHtml(note)}</em>` : ''}</div>`;
+}
+
+function directionWindowBadges(row) {
+  const ctx = row?.decision_context || {};
+  const moves = ctx.market_state?.direction_window_moves || row?.direction_alerts || [];
+  if (!Array.isArray(moves) || !moves.length) return '<span class="alert-window-badge is-flat">窓別方向なし</span>';
+  return moves.slice(0, 5).map((item) => {
+    const move = Number(item.move_pct);
+    const tone = alertToneFromSigned(move, 0.01);
+    const sign = tone === 'up' ? '↑' : tone === 'down' ? '↓' : '→';
+    const hit = (item.level_rank || 0) >= 2 ? ' is-hit' : '';
+    const minutes = item.window_minutes ?? item.window ?? '—';
+    return `<span class="alert-window-badge is-${tone}${hit}">${escapeHtml(minutes)}分 ${sign} ${escapeHtml(pct(move, 3, true))}</span>`;
+  }).join('');
+}
+
+function priceRangeMetric(row) {
+  const ctx = row?.price_position_context || row?.decision_context?.price_position || {};
+  const ratio = Number(ctx.range_position_ratio);
+  if (!ctx.ok || !Number.isFinite(ratio)) return metricRail('価格位置', ctx.label || '判定不可', 50, 'neutral', ctx.note || '');
+  const pctText = `${Math.round(clampUiPercent(ratio * 100))}%位置`;
+  const tone = ratio >= 0.78 ? 'warning' : ratio <= 0.22 ? 'info' : 'neutral';
+  return metricRail('価格位置', pctText, ratio * 100, tone, ctx.label || 'レンジ内');
+}
+
+function volumeMetric(row) {
+  const ctx = row?.volume_context || row?.decision_context?.volume_context || row?.decision_context?.volume_cost_context?.volume_context || {};
+  const ratioValue = Number(ctx.volume_ratio ?? row?.decision_context?.market_state?.volume_ratio);
+  const label = ctx.volume_label || row?.decision_context?.market_state?.volume_cost_label || '出来高';
+  const tone = ratioValue >= 2.5 ? 'warning' : ratioValue >= 1.5 ? 'info' : ratioValue < 0.8 ? 'muted' : 'neutral';
+  const fill = Number.isFinite(ratioValue) ? (ratioValue / 3) * 100 : 0;
+  return metricRail('出来高', Number.isFinite(ratioValue) ? ratio(ratioValue, 2) : '—', fill, tone, label);
+}
+
+function takerBuyMetric(row) {
+  const ctx = row?.volume_context || row?.decision_context?.volume_context || {};
+  const v = Number(ctx.taker_buy_ratio ?? row?.decision_context?.market_state?.taker_buy_ratio);
+  const label = row?.decision_context?.market_state?.order_flow_label || ctx.taker_buy_label || 'Taker buy';
+  const tone = Number.isFinite(v) ? (v >= 0.58 ? 'up' : v <= 0.42 ? 'down' : 'neutral') : 'neutral';
+  return metricRail('Taker buy', Number.isFinite(v) ? pctRatio(v, 0) : '—', Number.isFinite(v) ? v * 100 : 50, tone, label);
+}
+
+function costMarginMetric(row) {
+  const ctx = row?.cost_context || row?.decision_context?.cost_context || {};
+  const gap = Number(ctx.threshold_gap_pct ?? row?.decision_context?.market_state?.threshold_gap_pct);
+  const total = Number(ctx.total_cost_pct ?? row?.decision_context?.market_state?.cost_floor_pct);
+  const label = ctx.cost_label || row?.decision_context?.market_state?.cost_label || 'コスト';
+  const tone = Number.isFinite(gap) ? (gap < 0 ? 'danger' : gap < 0.05 ? 'warning' : 'info') : 'neutral';
+  const fill = Number.isFinite(gap) ? (gap < 0 ? 92 : Math.min(100, 35 + gap * 220)) : 0;
+  const value = Number.isFinite(gap) ? `余裕 ${pct(gap, 3, true)}` : (Number.isFinite(total) ? pct(total, 3) : '—');
+  return metricRail('コスト余裕', value, fill, tone, label);
+}
+
+function technicalMetric(row) {
+  const ctx = row?.technical_context || row?.decision_context?.technical_context || {};
+  const score = Number(ctx.technical_score ?? row?.decision_context?.market_state?.technical_score);
+  const label = ctx.technical_confidence || row?.decision_context?.market_state?.technical_confidence || '—';
+  const tone = Number.isFinite(score) ? (score >= 70 ? 'info' : score >= 45 ? 'neutral' : 'muted') : 'neutral';
+  return metricRail('テクニカル', Number.isFinite(score) ? `${score}/100` : '—', Number.isFinite(score) ? score : 0, tone, label);
+}
+
+function sidewaysMetric(row) {
+  const ctx = row?.sideways_context || row?.decision_context?.sideways_context || {};
+  const minutes = Number(ctx.sideways_minutes ?? row?.decision_context?.market_state?.sideways_minutes);
+  const range = Number(ctx.sideways_range_pct ?? row?.decision_context?.market_state?.sideways_range_pct);
+  const tone = ctx.breakout_watch || row?.decision_context?.market_state?.breakout_watch ? 'warning' : (Number.isFinite(minutes) && minutes >= 15 ? 'info' : 'neutral');
+  const label = ctx.label || row?.decision_context?.market_state?.sideways_label || '横ばい';
+  const value = Number.isFinite(minutes) ? `${Math.round(minutes)}分` : '—';
+  const note = Number.isFinite(range) ? `${label} / 値幅 ${pct(range, 3)}` : label;
+  return metricRail('横ばい', value, Number.isFinite(minutes) ? Math.min(100, minutes * 3) : 0, tone, note);
+}
+
+function renderAlertSymbolDashboardCard(row) {
+  const ctx = row?.decision_context || {};
+  const level = row?.level || ctx.market_state?.level || '注意以上なし';
+  const tone = alertToneFromLevel(row);
+  const move = alertMoveDisplay(row);
+  const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
+  const title = row.decision_title || ctx.market_state?.combined_label || level;
+  const forecast = ctx.conditional_forecast || row.order_adjustment || row.decision_comment || '現在の気づきから、候補に残す注文位置と除外候補を見ます。';
+  const combined = row.combined_signal_summary || combinedSignalText(row);
+  const technicalMeaning = technicalPracticalText(row);
+  const preferred = candidateLabel(row);
+  const excluded = excludedLabel(row);
+  const invalidation = invalidationLabel(row);
+  return `<article class="alert-symbol-card is-${escapeHtml(tone)}">
+    <div class="alert-symbol-card-head">
+      <div><strong>${escapeHtml(row.symbol || '—')}</strong><small>${escapeHtml(title)}</small></div>
+      <span>${escapeHtml(level)}</span>
+    </div>
+    <div class="alert-symbol-card-move"><b>${escapeHtml(move)}</b><small>しきい値 ${escapeHtml(threshold)}</small></div>
+    <p class="alert-symbol-forecast">${escapeHtml(forecast)}</p>
+    <div class="alert-candidate-strip">
+      <span class="is-primary">主候補：${escapeHtml(preferred)}</span>
+      <span class="is-excluded">除外：${escapeHtml(excluded)}</span>
+      <span>信頼度：${escapeHtml(confidenceLabel(row))}</span>
+    </div>
+    <div class="alert-window-strip">${directionWindowBadges(row)}</div>
+    <div class="alert-metric-grid">
+      ${priceRangeMetric(row)}
+      ${volumeMetric(row)}
+      ${takerBuyMetric(row)}
+      ${costMarginMetric(row)}
+      ${technicalMetric(row)}
+      ${sidewaysMetric(row)}
+    </div>
+    <div class="alert-symbol-notes">
+      <small><b>複合判断</b>${escapeHtml(combined)}</small>
+      <small><b>テクニカル意味</b>${escapeHtml(technicalMeaning)}</small>
+      <small><b>外れ条件</b>${escapeHtml(invalidation)}</small>
+    </div>
+  </article>`;
+}
+
+function renderAlertDecisionDashboard(data, rows, focus, selectedSymbols = []) {
+  const ctx = focus?.decision_context || {};
+  const total = rows.length;
+  const hitCount = rows.filter((row) => row.alert_hit).length;
+  const preferred = focus ? candidateLabel(focus) : '候補なし';
+  const excluded = focus ? excludedLabel(focus) : '除外候補なし';
+  const invalidation = focus ? invalidationLabel(focus) : '外れ条件なし';
+  const confidence = focus ? confidenceLabel(focus) : '—';
+  const combined = focus?.combined_signal_summary || (focus ? combinedSignalText(focus) : '—');
+  const forecast = ctx.conditional_forecast || focus?.order_adjustment || focus?.decision_comment || '判定更新後に市場判断を表示します。';
+  const symbols = (data?.symbols || selectedSymbols || []).join(', ') || '—';
+  const dashboardClass = hitCount > 0 ? 'has-alerts' : 'is-calm';
+  const symbolCards = rows.map(renderAlertSymbolDashboardCard).join('') || '<span class="alert-summary-empty">判定できる通貨がありません。</span>';
+  return `<div class="alert-decision-dashboard ${dashboardClass}">
+    <section class="alert-decision-overview">
+      <div class="alert-decision-copy">
+        <span class="alert-dashboard-kicker">Decision Context 集約</span>
+        <strong>${escapeHtml(ctx.market_state?.combined_label || focus?.movement_alert_label || focus?.level || '市場判断')}</strong>
+        <p>${escapeHtml(forecast)}</p>
+      </div>
+      <div class="alert-decision-tiles">
+        <div><small>対象</small><b>${escapeHtml(symbols)}</b><span>${escapeHtml(total)}通貨 / 注意以上 ${escapeHtml(hitCount)}件</span></div>
+        <div><small>主候補</small><b>${escapeHtml(preferred)}</b><span>注文候補を残す方向</span></div>
+        <div><small>除外候補</small><b>${escapeHtml(excluded)}</b><span>実取引なら落とす候補</span></div>
+        <div><small>信頼度</small><b>${escapeHtml(confidence)}</b><span>${escapeHtml(shortAlertText(combined, '複合判断なし', 64))}</span></div>
+      </div>
+      <div class="alert-invalidation-line"><b>外れ条件：</b>${escapeHtml(invalidation)}</div>
+    </section>
+    <section class="alert-symbol-dashboard-grid">${symbolCards}</section>
+    <div class="alert-summary-context">mode ${escapeHtml(data?.alert_mode || 'simple')} / 窓 ${escapeHtml(data?.window_minutes ?? '—')}分 / decision_context v1 / 詳細表は確認用、上のカードを最初に見ます。</div>
+  </div>`;
+}
 function neededWinDisplay(v, digits = 1) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
   const n = Number(v);
@@ -1258,20 +1461,17 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   if (!data) {
     setState('is-clear');
     statusEl.textContent = '未判定';
-    textEl.textContent = '判定更新を押すと、注文位置の考え方と出来高コンテキストをここにまとめます。';
+    textEl.textContent = '判定更新を押すと、現在の市場判断・注文候補・除外候補・重要指標をここに集約します。';
     listEl.innerHTML = '<span class="alert-summary-empty">まだ判定していません。</span>';
     return;
   }
 
-  const rows = data.rows || [];
+  const rows = Array.isArray(data.rows) ? data.rows : [];
   const activeRows = rows.filter((row) => row.alert_hit);
   const rankedRows = rows.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0)));
   const focus = activeRows.length
-    ? activeRows.slice().sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct))[0]
+    ? activeRows.slice().sort((a, b) => (b.level_rank - a.level_rank) || (Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0))))[0]
     : rankedRows[0];
-  const windowMinutes = data.window_minutes ?? document.getElementById('alertWindowMinutes')?.value ?? '—';
-  const mode = data.alert_mode || document.getElementById('alertMode')?.value || 'simple';
-  const symbols = (data.symbols || selectedSymbols || []).join(', ') || '—';
 
   if (!rows.length) {
     setState('is-clear');
@@ -1289,31 +1489,10 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   } else {
     setState((focus?.level_rank || 0) >= 3 ? 'is-warning' : 'is-watch');
     statusEl.textContent = focus?.level || 'Lv2 注意';
-    textEl.textContent = focus?.order_adjustment || focus?.decision_comment || '買い候補として扱うなら、注文想定と指値位置を調整する段階です。';
+    textEl.textContent = focus?.decision_context?.conditional_forecast || focus?.order_adjustment || focus?.decision_comment || '買い候補として扱うなら、注文想定と指値位置を調整する段階です。';
   }
 
-  const rowHtml = rows.map((row) => {
-    const level = row.level || '注意以上なし';
-    const move = alertMoveDisplay(row);
-    const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
-    const title = row.decision_title || level;
-    const ctx = row.decision_context || {};
-    const directionSummary = row.direction_alert_summary || ctx.market_state?.direction_window_summary || '';
-    const continuationSummary = continuationAlertText(row);
-    const decision = ctx.conditional_forecast || row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意以上ではありません。');
-    const volume = row.market_context_text || volumeContextText(row.volume_context);
-    const volumeAlerts = volumeCostAlertText(row);
-    const costAlerts = costAlertText(row);
-    const combined = combinedSignalText(row);
-    const technical = technicalContextText(row);
-    const technicalMeaning = technicalPracticalText(row);
-    const preferred = ctx.preferred_candidate?.label ? `主候補: ${ctx.preferred_candidate.label}` : '';
-    const excluded = Array.isArray(ctx.excluded_candidates) && ctx.excluded_candidates.length ? `除外: ${ctx.excluded_candidates.map((item) => item.label).join(' / ')}` : '';
-    const invalidation = Array.isArray(ctx.invalidation_conditions) && ctx.invalidation_conditions.length ? `外れ条件: ${ctx.invalidation_conditions.slice(0, 2).join(' / ')}` : '';
-    const itemClass = row.alert_hit ? 'is-hit' : (row.level_rank === 1 ? 'is-info' : 'is-muted');
-    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small><b>テクニカル:</b> ${escapeHtml(technical)}</small><small><b>意味:</b> ${escapeHtml(technicalMeaning)}</small><small>${escapeHtml([volumeAlerts, costAlerts, combined].filter(Boolean).join(' / '))}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
-  }).join('');
-  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / decision_context v1 / 出来高は判断材料の一部で、将来の売買シミュレーターへ渡す材料です。</div>`;
+  listEl.innerHTML = renderAlertDecisionDashboard(data, rows, focus, selectedSymbols);
 }
 
 
