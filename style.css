@@ -35,6 +35,41 @@
   --radius-sm: 10px;
   --radius-lg: 18px;
 }
+body.theme-dark {
+  --bg-0: #15101a;
+  --bg-1: #211729;
+  --bg-2: #151d29;
+  --panel: rgba(34, 27, 42, 0.86);
+  --panel-strong: rgba(46, 36, 56, 0.96);
+  --panel-soft: rgba(79, 48, 72, 0.34);
+  --sidebar: rgba(29, 22, 36, 0.84);
+  --ink: #f4dceb;
+  --muted: #ccb1c5;
+  --muted-2: #aa8fa3;
+  --line: rgba(255, 162, 201, 0.20);
+  --line-strong: rgba(255, 162, 201, 0.34);
+  --pink: #ff8fc2;
+  --pink-strong: #ffacd0;
+  --pink-soft: rgba(255, 143, 194, 0.18);
+  --lavender: #b9a7ff;
+  --lavender-soft: rgba(185, 167, 255, 0.18);
+  --cream: #5a4727;
+  --cream-strong: #d7b95d;
+  --mint: #72d8ba;
+  --mint-soft: rgba(114, 216, 186, 0.16);
+  --blue: #83bef5;
+  --blue-soft: rgba(131, 190, 245, 0.14);
+  --good: #72d8ba;
+  --good-soft: rgba(114, 216, 186, 0.14);
+  --bad: #ff8fae;
+  --bad-soft: rgba(255, 143, 174, 0.15);
+  --warn: #ffd37b;
+  --warn-soft: rgba(255, 211, 123, 0.14);
+  --soft: rgba(255, 255, 255, 0.08);
+  --shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+  --shadow-soft: 0 10px 24px rgba(0, 0, 0, 0.22);
+  color-scheme: dark;
+}
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
@@ -410,6 +445,33 @@ h1 {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.theme-toggle {
+  min-height: 38px;
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.70);
+  color: var(--muted);
+  font-weight: 950;
+  white-space: nowrap;
+  box-shadow: var(--shadow-soft);
+  transition: transform .15s ease, border-color .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.theme-toggle:hover {
+  transform: translateY(-1px);
+  border-color: var(--line-strong);
+  color: var(--ink);
+  background: rgba(255,255,255,0.86);
 }
 
 .status-pill {
@@ -2676,3 +2738,185 @@ tr:hover td { background: rgba(255,255,255,0.34); }
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Dark mode: low-glare palette for long monitoring sessions. */
+body.theme-dark {
+  background:
+    radial-gradient(circle at 7% 9%, rgba(255,143,194,0.10) 0 42px, transparent 43px),
+    radial-gradient(circle at 13% 13%, rgba(185,167,255,0.10) 0 64px, transparent 65px),
+    radial-gradient(circle at 90% 8%, rgba(255,211,123,0.10) 0 50px, transparent 51px),
+    radial-gradient(circle at 82% 88%, rgba(185,167,255,0.16), transparent 28%),
+    radial-gradient(circle at 17% 84%, rgba(114,216,186,0.12), transparent 25%),
+    linear-gradient(135deg, var(--bg-0) 0%, var(--bg-1) 47%, var(--bg-2) 100%);
+}
+body.theme-dark::before {
+  background: rgba(255, 211, 123, 0.10);
+}
+body.theme-dark::after {
+  background-image:
+    radial-gradient(circle, rgba(255,143,194,0.11) 0 2px, transparent 2.2px),
+    radial-gradient(circle, rgba(185,167,255,0.10) 0 1.6px, transparent 1.8px);
+  opacity: 0.62;
+}
+body.theme-dark .sidebar {
+  background: linear-gradient(180deg, rgba(24,18,31,0.92), rgba(40,26,42,0.82));
+}
+body.theme-dark .sidebar::-webkit-scrollbar-track {
+  background: rgba(30, 22, 38, 0.76);
+}
+body.theme-dark .sidebar::-webkit-scrollbar-thumb {
+  border-color: rgba(30, 22, 38, 0.80);
+  background: rgba(255, 143, 194, 0.28);
+}
+body.theme-dark .sidebar::after {
+  color: rgba(255, 143, 194, 0.14);
+}
+body.theme-dark .brand-mark {
+  border-color: rgba(255,255,255,0.18);
+  background:
+    radial-gradient(circle at 34% 23%, rgba(255,255,255,0.30), transparent 27%),
+    linear-gradient(135deg, #6e3458, #b94e85);
+  box-shadow: 0 14px 28px rgba(0,0,0,0.26);
+}
+body.theme-dark .side-price-panel,
+body.theme-dark .hero-card,
+body.theme-dark .card,
+body.theme-dark .card.highlight,
+body.theme-dark .alert-symbol-card,
+body.theme-dark .alert-symbol-card.is-watch,
+body.theme-dark .alert-symbol-card.is-warning,
+body.theme-dark .alert-symbol-card.is-danger,
+body.theme-dark .alert-symbol-card.is-info,
+body.theme-dark .alert-decision-overview,
+body.theme-dark .alert-detail-two-tier {
+  background:
+    radial-gradient(circle at 94% 0%, rgba(255,211,123,0.08), transparent 28%),
+    linear-gradient(180deg, rgba(43,34,52,0.88), rgba(30,24,38,0.82));
+}
+body.theme-dark .hero-card,
+body.theme-dark .card.highlight {
+  border-color: var(--line-strong);
+}
+body.theme-dark .nav-item,
+body.theme-dark .side-note,
+body.theme-dark .status-pill,
+body.theme-dark .theme-toggle,
+body.theme-dark .secondary,
+body.theme-dark .auto-update-box,
+body.theme-dark .tag.soft,
+body.theme-dark .table-wrap,
+body.theme-dark .alert-decision-tiles div,
+body.theme-dark .alert-detail-pair,
+body.theme-dark .alert-metric-rail,
+body.theme-dark .alert-candidate-strip span,
+body.theme-dark .alert-window-badge,
+body.theme-dark .alert-growth-item,
+body.theme-dark #alertPreviewTable.alert-detail-table thead th,
+body.theme-dark #alertPreviewTable.alert-detail-table .alert-detail-main-row td {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--line);
+}
+body.theme-dark .nav-item:hover,
+body.theme-dark .theme-toggle:hover,
+body.theme-dark .secondary:hover {
+  background: rgba(255,255,255,0.10);
+}
+body.theme-dark .nav-item.active {
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(255,143,194,0.20), rgba(185,167,255,0.14));
+  border-color: var(--line-strong);
+}
+body.theme-dark .side-price-row,
+body.theme-dark .mini-chart-panel,
+body.theme-dark .alert-setting-chip,
+body.theme-dark .alert-settings-panel .alert-setting-chip,
+body.theme-dark .alert-invalidation-line,
+body.theme-dark .alert-detail-technical-meaning,
+body.theme-dark .alert-candidate-strip .is-primary,
+body.theme-dark .alert-candidate-strip .is-excluded,
+body.theme-dark .alert-window-badge.is-hit {
+  background: rgba(255,255,255,0.07);
+  border-color: var(--line);
+}
+body.theme-dark input,
+body.theme-dark select,
+body.theme-dark .alert-simple-select {
+  background: rgba(12, 10, 16, 0.54);
+  color: var(--ink);
+  border-color: var(--line);
+}
+body.theme-dark input::placeholder {
+  color: rgba(244,220,235,0.44);
+}
+body.theme-dark .primary,
+body.theme-dark .tiny-refresh {
+  color: var(--ink);
+  border-color: rgba(255,143,194,0.36);
+  background: linear-gradient(135deg, rgba(255,143,194,0.26), rgba(185,167,255,0.16));
+}
+body.theme-dark th {
+  color: var(--muted);
+  background: rgba(255,143,194,0.10);
+}
+body.theme-dark th,
+body.theme-dark td {
+  border-bottom-color: rgba(255,143,194,0.12);
+}
+body.theme-dark tr:hover td {
+  background: rgba(255,255,255,0.05);
+}
+body.theme-dark .memo-text,
+body.theme-dark .alert-detail-pair.is-wide span,
+body.theme-dark .alert-detail-line .alert-detail-pair:nth-child(4) span,
+body.theme-dark .alert-detail-line .alert-detail-pair:nth-child(5).is-wide span,
+body.theme-dark .alert-detail-technical-meaning {
+  color: var(--muted);
+}
+body.theme-dark .side-price-head,
+body.theme-dark .nav-item.active,
+body.theme-dark .alert-symbol-card-move b,
+body.theme-dark .alert-decision-tiles small,
+body.theme-dark .alert-detail-pair small,
+body.theme-dark .alert-metric-head small {
+  color: var(--pink-strong);
+}
+body.theme-dark .auto-update-status,
+body.theme-dark .alert-symbol-card-head > span,
+body.theme-dark .alert-candidate-strip span,
+body.theme-dark .alert-window-badge,
+body.theme-dark .alert-metric-rail em {
+  color: var(--muted-2);
+}
+body.theme-dark .side-price-badge,
+body.theme-dark .status-pill.ok {
+  color: var(--good);
+  background: var(--good-soft);
+  border-color: rgba(114,216,186,0.30);
+}
+body.theme-dark .status-pill.bad {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: rgba(255,143,174,0.32);
+}
+body.theme-dark .chart-box,
+body.theme-dark .summary-chart-box {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--line);
+}
+body.theme-dark .alert-meter-track {
+  background: rgba(255,255,255,0.12);
+}
+body.theme-dark .alert-growth-item.is-active,
+body.theme-dark .alert-growth-item.is-priority {
+  background: rgba(131, 190, 245, 0.12);
+}
+body.theme-dark .alert-growth-item.is-partial {
+  background: rgba(255, 211, 123, 0.12);
+}
+@media (max-width: 760px) {
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+}
+

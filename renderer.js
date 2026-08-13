@@ -8,6 +8,40 @@ const titles = {
   api: ['API・準備度', 'Electron内のローカルエンジン境界、安全範囲、禁止機能を確認します。'],
 };
 
+
+const THEME_STORAGE_KEY = 'blwThemeMode';
+
+function applyThemeMode(mode = 'light') {
+  const nextMode = mode === 'dark' ? 'dark' : 'light';
+  document.body.classList.toggle('theme-dark', nextMode === 'dark');
+  document.body.dataset.theme = nextMode;
+  const btn = document.getElementById('themeToggle');
+  if (btn) {
+    btn.textContent = nextMode === 'dark' ? '☀️ ライト' : '🌙 ダーク';
+    btn.setAttribute('aria-pressed', nextMode === 'dark' ? 'true' : 'false');
+    btn.title = nextMode === 'dark' ? 'ライトモードに切り替え' : 'ダークモードに切り替え';
+  }
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, nextMode);
+  } catch (_) {
+    // localStorage が使えない環境でも表示切り替え自体は維持します。
+  }
+}
+
+function setupThemeToggle() {
+  let saved = 'light';
+  try {
+    saved = localStorage.getItem(THEME_STORAGE_KEY) || 'light';
+  } catch (_) {
+    saved = 'light';
+  }
+  applyThemeMode(saved);
+  document.getElementById('themeToggle')?.addEventListener('click', () => {
+    const current = document.body.classList.contains('theme-dark') ? 'dark' : 'light';
+    applyThemeMode(current === 'dark' ? 'light' : 'dark');
+  });
+}
+
 const ALERT_PRESETS = {
   standard: { windowMinutes: 15, thresholdPct: 0.30, mode: 'simple', label: '標準' },
   sensitive: { windowMinutes: 15, thresholdPct: 0.20, mode: 'simple', label: '高め' },
@@ -2435,6 +2469,7 @@ async function refreshAll() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  setupThemeToggle();
   setupNav();
   document.getElementById('refreshAll')?.addEventListener('click', refreshAll);
   document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
