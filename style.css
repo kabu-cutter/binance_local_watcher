@@ -2288,3 +2288,18 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   color: #74506b;
   font-weight: 760;
 }
+
+/* Alert update 6: make the practical meaning of technical alerts visible. */
+.alert-detail-technical-meaning {
+  padding: 9px 11px;
+  border: 1px solid rgba(147, 203, 255, 0.24);
+  border-radius: 12px;
+  background: rgba(242, 248, 255, 0.68);
+  color: #5f5162;
+  font-size: 0.80rem;
+  line-height: 1.5;
+}
+.alert-detail-technical-meaning b {
+  color: var(--ink);
+  font-weight: 850;
+}
