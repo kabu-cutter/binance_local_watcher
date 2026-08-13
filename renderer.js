@@ -1120,8 +1120,9 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
 
   if (!activeRows.length) {
     setState('is-clear');
-    statusEl.textContent = 'アラートなし';
-    textEl.textContent = focus?.order_adjustment || focus?.decision_comment || '注意以上の上昇アラートはありません。買い候補として扱うなら、現在価格追随より指値候補側で考える状態です。';
+    statusEl.textContent = '注意以上なし';
+    const ctx = focus?.decision_context || {};
+    textEl.textContent = ctx.conditional_forecast || focus?.order_adjustment || focus?.decision_comment || '注意以上はありません。現在の気づきから、候補に残す注文位置と除外する候補を見ます。';
   } else {
     setState((focus?.level_rank || 0) >= 3 ? 'is-warning' : 'is-watch');
     statusEl.textContent = focus?.level || 'Lv2 注意';
@@ -1129,16 +1130,35 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   }
 
   const rowHtml = rows.map((row) => {
-    const level = row.level || 'アラートなし';
+    const level = row.level || '注意以上なし';
     const move = row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true);
     const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
     const title = row.decision_title || level;
-    const decision = row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意アラートではありません。');
+    const ctx = row.decision_context || {};
+    const decision = ctx.conditional_forecast || row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意以上ではありません。');
     const volume = row.market_context_text || volumeContextText(row.volume_context);
-    const itemClass = row.alert_hit ? 'is-hit' : 'is-muted';
-    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small></div>`;
+    const preferred = ctx.preferred_candidate?.label ? `主候補: ${ctx.preferred_candidate.label}` : '';
+    const excluded = Array.isArray(ctx.excluded_candidates) && ctx.excluded_candidates.length ? `除外: ${ctx.excluded_candidates.map((item) => item.label).join(' / ')}` : '';
+    const invalidation = Array.isArray(ctx.invalidation_conditions) && ctx.invalidation_conditions.length ? `外れ条件: ${ctx.invalidation_conditions.slice(0, 2).join(' / ')}` : '';
+    const itemClass = row.alert_hit ? 'is-hit' : (row.level_rank === 1 ? 'is-info' : 'is-muted');
+    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
   }).join('');
-  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / 出来高は判断材料の一部で、単独では売買判断に使いません。</div>`;
+  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / decision_context v1 / 出来高は判断材料の一部で、将来の売買シミュレーターへ渡す材料です。</div>`;
+}
+
+
+function renderAlertGrowthStatus(items = []) {
+  const el = document.getElementById('alertGrowthStatus');
+  if (!el) return;
+  if (!Array.isArray(items) || !items.length) {
+    el.innerHTML = '<span class="alert-growth-empty">判定更新後に、次に増やすアラートの着手状況を表示します。</span>';
+    return;
+  }
+  el.innerHTML = items.map((item) => {
+    const status = item.status || '設計中';
+    const cls = status.includes('着手') ? 'is-active' : status.includes('優先') ? 'is-priority' : status.includes('一部') ? 'is-partial' : 'is-planned';
+    return `<div class="alert-growth-item ${cls}"><strong>${escapeHtml(item.family || '—')}</strong><span>${escapeHtml(status)} / 優先${escapeHtml(item.priority || '—')}</span><small>${escapeHtml(item.note || '')}</small></div>`;
+  }).join('');
 }
 
 async function loadAlertPreview() {
@@ -1171,15 +1191,16 @@ async function loadAlertPreview() {
   const data = await getJson(`/api/alert-preview?window_minutes=${encodeURIComponent(windowMinutes)}&alert_mode=${encodeURIComponent(alertMode)}&rolling_min_points=${encodeURIComponent(rollingMinPoints)}&alert_rising_ratio=${encodeURIComponent(risingRatio)}&threshold_pct=${encodeURIComponent(thresholdPct)}&cost_floor_pct=${encodeURIComponent(costFloorPct)}&symbols=${encodeURIComponent(selectedSymbols.join(','))}&thresholds=${encodeURIComponent(thresholdsQuery)}&save_history=${encodeURIComponent(saveHistory)}`);
   updateAlertThresholdGuide(data);
   renderAlertSummary(data, selectedSymbols);
+  renderAlertGrowthStatus(data.growth_alert_context || []);
   const appliedSummary = (data.rows || []).map((row) => `${row.symbol}:${pct(row.threshold_pct, 2)}`).join(' / ');
   document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / 共通 ${pct(data.common_threshold_pct ?? data.threshold_pct, 2)} / 適用 ${appliedSummary || '—'} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
-    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status} / ${top.order_adjustment || top.decision_comment || ''}`
-    : '注意以上の上位通知はありません。現在は注文位置を急がず、指値候補側で見る状態です。';
+    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status} / ${top.decision_context?.conditional_forecast || top.order_adjustment || top.decision_comment || ''}`
+    : '注意以上の上位通知はありません。現在の気づき・注文候補・外れ条件を上のサマリーに表示しています。';
   const rows = (data.rows || []).map((row) => ({
     symbol: row.symbol,
-    level: row.level || 'アラートなし',
+    level: row.level || '注意以上なし',
     status: row.status,
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
@@ -1188,6 +1209,11 @@ async function loadAlertPreview() {
     order_hint: row.order_adjustment || '—',
     target_hint: row.target_adjustment || '—',
     risk_hint: row.risk_comment || '—',
+    confidence: row.decision_context?.confidence_level ? `${row.decision_context.confidence_level}：${row.decision_context.confidence_reason || ''}` : '—',
+    preferred_candidate: row.decision_context?.preferred_candidate?.label || '—',
+    excluded_candidates: Array.isArray(row.decision_context?.excluded_candidates) && row.decision_context.excluded_candidates.length ? row.decision_context.excluded_candidates.map((item) => item.label).join(' / ') : '—',
+    invalidation: Array.isArray(row.decision_context?.invalidation_conditions) && row.decision_context.invalidation_conditions.length ? row.decision_context.invalidation_conditions.join(' / ') : '—',
+    simulator_note: row.decision_context?.simulator_note || '—',
     streak: `${row.streak_count ?? 0}`,
     rolling_streak: `${row.rolling_streak ?? 0}`,
     rising_ratio: row.rising_ratio === null || row.rising_ratio === undefined ? '—' : pct(row.rising_ratio, 1),
@@ -1207,6 +1233,11 @@ async function loadAlertPreview() {
     ['order_hint', '注文位置の考え方'],
     ['target_hint', '利確幅の考え方'],
     ['risk_hint', 'リスクの見方'],
+    ['confidence', '見通し信頼度'],
+    ['preferred_candidate', '残す主候補'],
+    ['excluded_candidates', '除外候補'],
+    ['invalidation', '外れ条件'],
+    ['simulator_note', 'シミュレーター連携'],
     ['streak', '連続回数'],
     ['rolling_streak', 'rolling連続'],
     ['rising_ratio', '上昇比率'],

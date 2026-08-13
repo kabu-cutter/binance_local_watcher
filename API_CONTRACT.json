@@ -91,7 +91,17 @@
           "rows[].decision_comment",
           "rows[].order_adjustment",
           "rows[].target_adjustment",
-          "rows[].risk_comment"
+          "rows[].risk_comment",
+          "decision_context_schema",
+          "growth_alert_context",
+          "rows[].decision_context",
+          "rows[].conditional_forecast",
+          "rows[].confidence_level",
+          "rows[].confidence_reason",
+          "rows[].preferred_candidate",
+          "rows[].excluded_candidates",
+          "rows[].invalidation_conditions",
+          "rows[].simulator_note"
         ]
       },
       "alert-history": {

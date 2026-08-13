@@ -2029,3 +2029,73 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   color: #813d67;
   font-size: .92rem;
 }
+
+/* Alert decision_context v1 and growth status */
+.alert-summary-item.is-info {
+  border-color: rgba(126, 190, 232, 0.30);
+  background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(239,248,255,0.50));
+}
+.alert-summary-item small:empty {
+  display: none;
+}
+.alert-growth-status {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.alert-growth-item,
+.alert-growth-empty {
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border: 1px solid rgba(203,126,170,0.14);
+  border-radius: 15px;
+  background: rgba(255,255,255,0.58);
+  color: var(--muted);
+  font-size: 0.80rem;
+  line-height: 1.45;
+}
+.alert-growth-item strong {
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+.alert-growth-item span {
+  color: #8a5d84;
+  font-weight: 850;
+  font-size: 0.76rem;
+}
+.alert-growth-item small {
+  color: var(--muted-2);
+  font-size: 0.75rem;
+}
+.alert-growth-item.is-active {
+  border-color: rgba(126,205,181,0.32);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(242,255,250,0.54));
+}
+.alert-growth-item.is-priority {
+  border-color: rgba(239,205,122,0.38);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,250,224,0.56));
+}
+.alert-growth-item.is-partial {
+  border-color: rgba(147,203,255,0.32);
+  background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(242,248,255,0.54));
+}
+.alert-growth-item.is-planned {
+  border-color: rgba(191,178,205,0.26);
+  background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(245,240,248,0.46));
+}
+#alertPreviewTable th:nth-child(11),
+#alertPreviewTable td:nth-child(11),
+#alertPreviewTable th:nth-child(12),
+#alertPreviewTable td:nth-child(12),
+#alertPreviewTable th:nth-child(13),
+#alertPreviewTable td:nth-child(13),
+#alertPreviewTable th:nth-child(14),
+#alertPreviewTable td:nth-child(14),
+#alertPreviewTable th:nth-child(15),
+#alertPreviewTable td:nth-child(15) {
+  min-width: 180px;
+  max-width: 360px;
+  white-space: normal;
+  line-height: 1.45;
+}

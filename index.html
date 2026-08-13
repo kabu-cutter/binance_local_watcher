@@ -139,7 +139,7 @@
             <div>
               <p class="eyebrow">Alert Center</p>
               <h3>アラートセンター</h3>
-              <p class="card-desc">ここは「売買するための合図」ではなく、手動取引前に気づくための安全装置です。チャート表示、アラート評価窓、Daily Goal/約定可能性計算は分けて扱います。</p>
+              <p class="card-desc">ここは市場状態を読み、注文候補・除外候補・外れ条件を整理する場所です。今は実注文を行いませんが、将来の売買シミュレーターと自動取引判断を視野に入れて設計します。</p>
             </div>
             <button class="secondary" id="reloadAlertDashboard">アラート全体更新</button>
           </div>
@@ -149,7 +149,7 @@
             <div class="alert-level-card level-warning"><strong>Lv3 警戒</strong><span>取引前チェック推奨</span></div>
             <div class="alert-level-card level-stop"><strong>Lv4 見送り候補</strong><span>条件が重い可能性</span></div>
           </div>
-          <p class="memo-text compact-memo">今は土台として「監視窓・上昇判定・履歴」を先に置きます。あとで下落、スプレッド/滑り、必要値幅、データ不足、Ollama遅延などのアラートへ育てます。</p>
+          <p class="memo-text compact-memo">今は土台として「監視窓・上昇判定・出来高コンテキスト・注文候補」を置きます。あとで下落、スプレッド/滑り、必要値幅、データ不足、時間帯注意などの判断へ育てます。</p>
         </div>
 
         <div class="grid two alert-foundation-grid">
@@ -184,13 +184,13 @@
             <summary class="alert-fold-summary">
               <span class="alert-fold-title">
                 <span class="eyebrow">Next Growth</span>
-                <strong>あとで増やすアラート</strong>
-                <small>条件診断の進化に合わせて追加</small>
+                <strong>次に増やすアラート（着手状況）</strong>
+                <small>decision_context と売買シミュレーターへつなげる拡張候補</small>
               </span>
               <span class="alert-fold-state" aria-hidden="true"></span>
             </summary>
             <div class="alert-fold-body">
-              <p class="card-desc">TODOのアラート進化ロードマップに合わせて、次の6系統を段階的に追加します。まずは表示・注意喚起から始め、売買指示にはしません。</p>
+              <p class="card-desc">TODOのアラート進化ロードマップに合わせて、次の系統を decision_context へ段階的に接続します。実注文はまだ行いませんが、将来の売買シミュレーターで使える判断材料として育てます。</p>
               <ul class="check-list alert-next-list">
               <li><strong>価格到達・相対価格</strong><span>固定価格だけでなく、前回高値/安値、日中始値からの変動率、30分レンジ突破を見ます。</span></li>
               <li><strong>急騰・急落</strong><span>1分/5分/15分/30分/1時間の監視窓で Moving up/down % 的に確認します。</span></li>
@@ -199,7 +199,10 @@
               <li><strong>成行・コスト注意</strong><span>1分値幅、スプレッド/滑り見積、必要利益幅に対するコストの重さを見ます。</span></li>
               <li><strong>時間帯注意</strong><span>JST 21:30/22:30/23:00、米国市場開始前後、深夜、週末の流動性注意を扱います。</span></li>
               </ul>
-              <p class="small alert-reference-note">アラートは焦らせる通知ではなく、手数料・必要値幅・Daily Goal・注文条件を落ち着いて確認するための材料です。</p>
+              <div class="alert-growth-status" id="alertGrowthStatus">
+                <span class="alert-growth-empty">判定更新後に、着手中・次に優先するアラート系統を表示します。</span>
+              </div>
+              <p class="small alert-reference-note">アラートは焦らせる通知ではなく、市場判断・注文候補・除外候補・外れ条件をまとめ、将来の売買シミュレーターへ渡す材料です。</p>
             </div>
           </details>
         </div>
@@ -228,7 +231,7 @@
               </tbody>
             </table>
             </div>
-            <p class="small alert-reference-note">あとで1分足分析キャッシュからP80/P90/P95などを出し、銘柄別・相場別のおすすめしきい値に進化させます。出来高はまず表示参考から始め、主条件にはしません。</p>
+            <p class="small alert-reference-note">あとで1分足分析キャッシュからP80/P90/P95などを出し、銘柄別・相場別のおすすめしきい値に進化させます。出来高は表示だけで終わらせず、価格変動・コスト・注文候補と組み合わせた判断材料として扱います。</p>
           </div>
         </details>
 
@@ -440,7 +443,7 @@
             <div class="alert-summary-main">
               <span class="alert-summary-kicker">現在の判定</span>
               <strong id="alertSummaryStatus">未判定</strong>
-              <p id="alertSummaryText">判定更新を押すと、注意以上のアラートがあるかをここにまとめます。</p>
+              <p id="alertSummaryText">判定更新を押すと、現在の気づき・条件付き見通し・残す注文候補・除外候補をここにまとめます。</p>
             </div>
             <div class="alert-summary-list" id="alertSummaryList">
               <span class="alert-summary-empty">まだ判定していません。</span>
@@ -452,7 +455,7 @@
           </div>
           <p class="memo-text" id="alertPreviewMemo">まだ判定していません。</p>
           <p class="memo-text" id="alertTopMemo">上位通知はまだありません。</p>
-          <div class="alert-detail-table-note">判定詳細：ここは確認用です。最初に見る情報は上の「現在の判定」にまとめます。</div>
+          <div class="alert-detail-table-note">判定詳細：ここは確認用です。最初に見る情報は上の「現在の判定」にまとめます。decision_context は将来の売買シミュレーターへ渡す材料です。</div>
           <div class="table-wrap"><table id="alertPreviewTable"></table></div>
 
           <details class="alert-history-fold alert-fold-card">
