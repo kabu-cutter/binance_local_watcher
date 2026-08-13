@@ -4625,84 +4625,57 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
 }
 
 function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes = 15) {
-  const moves = rows.map((row) => Number(row.move_pct)).filter(Number.isFinite);
-  const maxAbsMove = moves.length ? Math.max(...moves.map((v) => Math.abs(v))) : null;
-  const hasDown = moves.some((v) => v < 0);
-  const hasVolumeSurge = rows.some((row) => Number(row.volume_context?.volume_rank || 0) >= 4 || Number(row.volume_context?.trade_count_rank || 0) >= 4);
-  const hasVolumeCostAlerts = rows.some((row) => row.volume_cost_context && Array.isArray(row.volume_cost_context.active_alerts));
-  const hasCostHeavy = rows.some((row) => row.decision_context?.market_state?.cost_heavy || row.cost_context?.cost_risk === 'high' || row.cost_context?.cost_risk === 'near_threshold');
-  const hasContinuation = rows.some((row) => row.continuation_alert && (row.continuation_alert.level_rank || 0) >= 1);
-  const hasPricePosition = rows.some((row) => row.price_position_context && (row.price_position_context.level_rank || 0) >= 1);
-  const hasReferenceModes = rows.some((row) => row.reference_mode_context);
   const hasSideways = rows.some((row) => row.sideways_context && (row.sideways_context.level_rank || 0) >= 1);
   const hasTechnical = rows.some((row) => row.technical_context && Array.isArray(row.technical_context.active_alerts));
   const hasCombinedSignals = rows.some((row) => row.combined_signal_context && Array.isArray(row.combined_signal_context.active_alerts));
   return [
     {
-      family: '市場判断 / decision_context',
-      status: '着手中',
+      family: '現在使える判断材料',
+      status: '実装済み',
       priority: 'A',
-      note: '現在の気づき、条件付き見通し、注文候補、除外候補、外れ条件を返します。',
+      note: `価格変動・方向、複数窓継続、価格位置、出来高/フロー、コスト、横ばい、テクニカルを${windowMinutes}分主窓と複数窓で判定します。`,
     },
     {
-      family: '出来高コンテキスト',
-      status: hasVolumeCostAlerts ? '更新3 着手済み' : '更新3 着手済み',
+      family: 'decision_context',
+      status: '継続整備中',
       priority: 'A',
-      note: '出来高・取引回数・Taker buy比率を単独/複合アラート化し、decision_contextへ渡します。',
-    },
-    {
-      family: '価格変動・方向アラート',
-      status: '更新1 着手済み',
-      priority: 'A',
-      note: `上昇/下落/急騰/急落/Moving up/downを${windowMinutes}分窓と1m/5m/15m/30m/1h窓でdecision_contextへ渡します。`,
-    },
-    {
-      family: '価格到達・レンジ系',
-      status: hasPricePosition ? '更新2 着手済み' : '更新2 着手済み',
-      priority: 'A',
-      note: '日中高値/安値、30分レンジ上限/下限、突破/接近をdecision_contextへ渡します。',
-    },
-    {
-      family: '参考・別モード',
-      status: hasReferenceModes ? '更新2 着手済み' : '更新2 着手済み',
-      priority: 'A',
-      note: 'simple/rolling/sustainedを主判定と参考値に分け、選択外モードもdecision_contextへ残します。',
-    },
-    {
-      family: '成行・コスト注意',
-      status: hasCostHeavy ? '更新3 着手済み' : '更新3 着手済み',
-      priority: 'A',
-      note: '実取引寄りコスト目安をコスト超過/近接/余裕として分類し、注文候補の除外理由に接続します。',
-    },
-    {
-      family: '継続・矛盾チェック',
-      status: hasCombinedSignals ? '更新4 着手済み' : (hasContinuation ? '更新1.5 着手済み' : '更新1.5 着手済み'),
-      priority: 'A',
-      note: '複数窓の継続、短期/中期の矛盾、価格位置・出来高・コストの複合判定をdecision_contextへ渡します。',
+      note: '現在の気づき、条件付き見通し、注文候補、除外候補、外れ条件を返します。ここは売買シミュレーターの入口なので継続して重視します。',
     },
     {
       family: '横ばい・レンジ滞在',
-      status: hasSideways ? '更新4.5 実装済み' : '更新4.5 実装済み',
+      status: hasSideways ? '実装済み・判定中' : '実装済み',
       priority: 'A',
-      note: '横ばい継続時間、狭いレンジ幅、横ばい＋出来高急増をsideways_contextとしてdecision_contextへ渡します。',
+      note: '横ばい継続時間、狭いレンジ幅、横ばい＋出来高急増をsideways_contextとして渡します。',
     },
     {
       family: '強いテクニカルアラート',
-      status: hasTechnical ? '更新5+6 実装済み' : '更新5+6 実装済み',
+      status: hasTechnical ? '更新5+6 実装済み・判定中' : '更新5+6 実装済み',
       priority: 'A',
-      note: 'MA方向整合、ATR変動率、VWAP乖離、RSI、ボリンジャーバンド、複合テクニカル一致をtechnical_contextとして実取引判断材料にします。',
+      note: 'MA方向整合、ATR変動率、VWAP乖離、RSI、ボリンジャーバンド、複合テクニカル一致をtechnical_contextとして渡します。',
     },
     {
-      family: '次フェーズ技術強化',
-      status: '更新6 実装済み',
+      family: '複合市場判断',
+      status: hasCombinedSignals ? '更新4 実装済み・判定中' : '更新4 実装済み',
+      priority: 'A',
+      note: '継続・矛盾、出来高裏付け、価格位置、コスト超過を組み合わせ、候補を残す/除外する判断に接続します。',
+    },
+    {
+      family: '次工程：アラートセンター集約',
+      status: '次に着手',
+      priority: 'A',
+      note: '個別アラートを並べるだけでなく、主判断・残す候補・除外候補・外れ条件を上部に集約して見やすくします。',
+    },
+    {
+      family: '次フェーズ：時間帯・外部要因',
+      status: '保留',
       priority: 'B',
-      note: 'RSI、ボリンジャーバンド、複合テクニカル一致を追加済み。次はアラートセンター集約とシミュレーター検証へ渡します。',
+      note: 'JST時間帯、米国市場開始、ニュース、Binanceメンテナンスなどは外部データや誤検知対策が必要なため後回しです。',
     },
     {
-      family: 'シミュレーター連携',
-      status: '着手中',
+      family: '売買シミュレーター連携口',
+      status: '最後の工程',
       priority: 'A',
-      note: 'decision_contextを売買シミュレーターへ渡せる形にします。実注文はまだ行いません。',
+      note: 'シミュレーター本体は未実装。decision_contextを紙トレード/バックテストへ渡せる形式に整えます。実注文はまだ行いません。',
     },
   ];
 }

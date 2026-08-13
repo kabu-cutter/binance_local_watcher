@@ -988,7 +988,7 @@ async function fetchPrices({ source = 'manual' } = {}) {
     if (summaryMemo) summaryMemo.textContent = priceLines.join('\n');
     await loadSummaryMiniCharts();
     await loadImpact();
-    await loadAlertPreview();
+    await runAlertPreview();
     await loadChart();
     autoCurrentUpdateLastRunAt = new Date();
     const nextText = isAutoCurrentUpdateEnabled() ? ` / 次回 ${formatClock(new Date(Date.now() + AUTO_CURRENT_UPDATE_MS))}` : '';
@@ -1236,7 +1236,7 @@ async function loadAlertOrderCostEstimate() {
     if (memo) memo.textContent = `${data.order_label || '注文想定'} / ${data.estimate_label || '見積'} / ${yen(data.amount_jpy || amountJpy)} / コスト目安 ${total}`;
     renderAlertOrderCostEstimate(data);
     updateAlertThresholdGuide();
-    await loadAlertPreview();
+    await runAlertPreview();
   } catch (error) {
     if (memo) memo.textContent = `実コスト取得に失敗しました。手入力値を使います。${error.message || error}`;
     renderAlertOrderCostEstimate({ message: '実コスト取得に失敗しました。', recommended_cost_pct: optionalPercentInputValue('alertCostFloorPct') ?? 0.28, rows: [], note: String(error.message || error) });
@@ -1329,6 +1329,89 @@ function renderAlertGrowthStatus(items = []) {
     const cls = status.includes('着手') ? 'is-active' : status.includes('優先') ? 'is-priority' : status.includes('一部') ? 'is-partial' : 'is-planned';
     return `<div class="alert-growth-item ${cls}"><strong>${escapeHtml(item.family || '—')}</strong><span>${escapeHtml(status)} / 優先${escapeHtml(item.priority || '—')}</span><small>${escapeHtml(item.note || '')}</small></div>`;
   }).join('');
+}
+
+
+function setAlertPreviewLoading(isLoading) {
+  const buttons = [
+    document.getElementById('reloadAlertPreview'),
+    document.getElementById('reloadAlertPreviewTop'),
+    document.getElementById('reloadAlertDashboard'),
+  ].filter(Boolean);
+  buttons.forEach((btn) => {
+    if (!btn.dataset.normalText) btn.dataset.normalText = btn.textContent || '判定更新';
+    btn.disabled = Boolean(isLoading);
+    btn.textContent = isLoading ? '判定中…' : btn.dataset.normalText;
+  });
+}
+
+function renderAlertPreviewError(error) {
+  const message = String(error?.message || error || '不明なエラー');
+  console.error('[alert-preview]', error);
+  const memo = document.getElementById('alertPreviewMemo');
+  const topMemo = document.getElementById('alertTopMemo');
+  if (memo) memo.textContent = `アラート判定に失敗しました: ${message}`;
+  if (topMemo) topMemo.textContent = '判定更新でエラーが出ました。設定値・ローカルエンジン・Kline取得状態を確認してください。';
+  renderAlertSummary({ rows: [], symbols: [], message: 'アラート判定に失敗しました' }, []);
+  renderAlertPreviewDetailsTable(document.getElementById('alertPreviewTable'), [{
+    symbol: '—',
+    level: 'エラー',
+    status: '判定失敗',
+    move_pct: '—',
+    threshold: '—',
+    direction: '—',
+    movement_alert: '—',
+    continuation_alert: '—',
+    price_position: '—',
+    note: message,
+    volume: '—',
+    volume_alerts: '—',
+    cost_alerts: '—',
+    sideways_context: '—',
+    technical_context: '—',
+    technical_meaning: '—',
+    combined_signal: '—',
+    order_hint: '—',
+    target_hint: '—',
+    risk_hint: '—',
+    reference_mode: '—',
+    confidence: '—',
+    preferred_candidate: '—',
+    excluded_candidates: '—',
+    invalidation: '—',
+    simulator_note: '—',
+    streak: '—',
+    rolling_streak: '—',
+    rising_ratio: '—',
+    direction_ratio: '—',
+    samples: '—',
+    latest: '—',
+    base: '—',
+    latest_time: '—',
+  }], null);
+}
+
+async function runAlertPreview() {
+  setAlertPreviewLoading(true);
+  try {
+    await loadAlertPreview();
+  } catch (error) {
+    renderAlertPreviewError(error);
+  } finally {
+    setAlertPreviewLoading(false);
+  }
+}
+
+function toggleAlertSettings(forceOpen = null) {
+  const card = document.getElementById('alertSettingsCard');
+  const btn = document.getElementById('toggleAlertSettings');
+  if (!card) return;
+  const shouldOpen = forceOpen === null ? card.classList.contains('is-collapsed') : Boolean(forceOpen);
+  card.classList.toggle('is-collapsed', !shouldOpen);
+  if (btn) {
+    btn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+    btn.textContent = shouldOpen ? '設定を閉じる' : '設定を開く';
+  }
 }
 
 async function loadAlertPreview() {
@@ -1737,7 +1820,7 @@ async function updateHistoryToNow() {
     await loadSummary();
     await loadSummaryMiniCharts();
     await loadImpact();
-    await loadAlertPreview();
+    await runAlertPreview();
     await loadChart();
   } catch (e) {
     if (memo) memo.textContent = `現在価格＋現在時刻までの差分DLに失敗しました。\n${e.message}`;
@@ -2156,7 +2239,7 @@ function setupNav() {
       document.getElementById('pageSubtitle').textContent = titles[section][1];
       if (section === 'summary') loadSummaryMiniCharts().catch(console.error);
       if (section === 'chart') loadChart().catch(console.error);
-      if (section === 'alerts') loadAlertPreview().catch(console.error);
+      if (section === 'alerts') runAlertPreview();
     });
   });
 }
@@ -2166,7 +2249,7 @@ async function refreshAll() {
   await loadSummary();
   await loadSummaryMiniCharts();
   await loadImpact();
-  await loadAlertPreview();
+  await runAlertPreview();
   await loadApiReadiness();
   await loadDbStatus();
   await loadAnalysisCacheStatus().catch(console.error);
@@ -2178,8 +2261,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fetchPrices')?.addEventListener('click', () => fetchPrices({ source: 'manual' }));
   document.getElementById('reloadSummaryMiniCharts').addEventListener('click', loadSummaryMiniCharts);
   document.getElementById('reloadImpact').addEventListener('click', loadImpact);
-  document.getElementById('reloadAlertDashboard')?.addEventListener('click', loadAlertPreview);
-  document.getElementById('reloadAlertPreview').addEventListener('click', loadAlertPreview);
+  document.getElementById('reloadAlertDashboard')?.addEventListener('click', runAlertPreview);
+  document.getElementById('reloadAlertPreview')?.addEventListener('click', runAlertPreview);
+  document.getElementById('reloadAlertPreviewTop')?.addEventListener('click', runAlertPreview);
+  document.getElementById('toggleAlertSettings')?.addEventListener('click', () => toggleAlertSettings());
   document.getElementById('clearAlertHistory').addEventListener('click', clearAlertHistory);
   document.getElementById('reloadApiReadiness').addEventListener('click', loadApiReadiness);
   document.getElementById('reloadDbStatus').addEventListener('click', loadDbStatus);
@@ -2222,18 +2307,18 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertSensitivityPreset')?.addEventListener('change', async () => {
     applyAlertPreset();
     updateAlertThresholdGuide();
-    await loadAlertPreview();
+    await runAlertPreview();
   });
-  document.getElementById('alertWindowMinutes').addEventListener('change', () => { markAlertPresetCustom(); loadAlertPreview(); });
-  document.getElementById('alertMode').addEventListener('change', () => { markAlertPresetCustom(); updateAlertModeHints(); loadAlertPreview(); });
-  document.getElementById('alertRollingMinPoints').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertRisingRatio').addEventListener('change', loadAlertPreview);
-  document.getElementById('alertThresholdPct').addEventListener('input', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); });
-  document.getElementById('alertThresholdPct').addEventListener('change', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); loadAlertPreview(); });
+  document.getElementById('alertWindowMinutes')?.addEventListener('change', () => { markAlertPresetCustom(); runAlertPreview(); });
+  document.getElementById('alertMode')?.addEventListener('change', () => { markAlertPresetCustom(); updateAlertModeHints(); runAlertPreview(); });
+  document.getElementById('alertRollingMinPoints')?.addEventListener('change', runAlertPreview);
+  document.getElementById('alertRisingRatio')?.addEventListener('change', runAlertPreview);
+  document.getElementById('alertThresholdPct')?.addEventListener('input', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); });
+  document.getElementById('alertThresholdPct')?.addEventListener('change', () => { markAlertPresetCustom(); syncAlertThresholdFallbacks(); runAlertPreview(); });
   document.getElementById('alertCostFloorPct')?.addEventListener('change', () => {
     const memo = document.getElementById('alertCostEstimateMemo');
     if (memo) memo.textContent = '手入力値を使用中です。実コスト更新で再計算できます。';
-    loadAlertPreview();
+    runAlertPreview();
   });
   document.getElementById('loadActualAlertCost')?.addEventListener('click', loadAlertOrderCostEstimate);
   document.getElementById('alertOrderAmountPreset')?.addEventListener('change', () => { syncAlertOrderAmountInput(); renderAlertOrderCostEstimate(null); });
@@ -2241,11 +2326,12 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('alertOrderAssumption')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
   document.getElementById('alertEstimateStyle')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
   document.getElementById('alertSafetyBufferPct')?.addEventListener('change', () => { renderAlertOrderCostEstimate(null); });
-  document.getElementById('alertThresholdBTC').addEventListener('input', syncAlertThresholdFallbacks);
-  document.getElementById('alertThresholdBTC').addEventListener('change', () => { syncAlertThresholdFallbacks(); loadAlertPreview(); });
-  document.getElementById('alertThresholdETH').addEventListener('input', syncAlertThresholdFallbacks);
-  document.getElementById('alertThresholdETH').addEventListener('change', () => { syncAlertThresholdFallbacks(); loadAlertPreview(); });
-  document.getElementById('alertSaveHistory').addEventListener('change', loadAlertPreview);
-  document.querySelectorAll('.alertSymbol').forEach((el) => el.addEventListener('change', loadAlertPreview));
+  document.getElementById('alertThresholdBTC')?.addEventListener('input', syncAlertThresholdFallbacks);
+  document.getElementById('alertThresholdBTC')?.addEventListener('change', () => { syncAlertThresholdFallbacks(); runAlertPreview(); });
+  document.getElementById('alertThresholdETH')?.addEventListener('input', syncAlertThresholdFallbacks);
+  document.getElementById('alertThresholdETH')?.addEventListener('change', () => { syncAlertThresholdFallbacks(); runAlertPreview(); });
+  document.getElementById('alertSaveHistory')?.addEventListener('change', runAlertPreview);
+  document.querySelectorAll('.alertSymbol').forEach((el) => el.addEventListener('change', runAlertPreview));
+  toggleAlertSettings(false);
   refreshAll().then(loadChart).then(loadDailyReports).catch(console.error);
 });

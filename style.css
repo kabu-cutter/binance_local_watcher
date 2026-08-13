@@ -2303,3 +2303,65 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   color: var(--ink);
   font-weight: 850;
 }
+
+/* Alert settings compact controls */
+.alert-settings-head {
+  align-items: flex-start;
+  gap: 12px;
+}
+.alert-settings-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 220px;
+}
+.alert-settings-card.is-collapsed .alert-settings-panel {
+  display: none;
+}
+.alert-settings-card.is-collapsed {
+  padding-bottom: 14px;
+}
+.alert-growth-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.alert-growth-item {
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: rgba(255,255,255,0.04);
+}
+.alert-growth-item strong,
+.alert-growth-item span,
+.alert-growth-item small {
+  display: block;
+}
+.alert-growth-item small {
+  opacity: 0.78;
+  line-height: 1.45;
+  margin-top: 4px;
+}
+.alert-growth-item.is-active,
+.alert-growth-item.is-priority {
+  background: rgba(122, 162, 255, 0.10);
+}
+.alert-growth-item.is-partial {
+  background: rgba(255, 214, 102, 0.10);
+}
+.alert-growth-item.is-planned {
+  background: rgba(255,255,255,0.035);
+}
+.alert-summary-card.is-clear #alertSummaryStatus {
+  color: inherit;
+}
+@media (max-width: 760px) {
+  .alert-settings-head-actions {
+    justify-content: flex-start;
+    min-width: 0;
+    width: 100%;
+  }
+}
