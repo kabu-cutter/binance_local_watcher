@@ -116,6 +116,14 @@ function referenceModeText(row) {
   return `主:${selected} / ${rolling} / ${sustained}`;
 }
 
+function combinedSignalText(row) {
+  const ctx = row?.combined_signal_context || row?.decision_context?.combined_signal_context;
+  if (!ctx) return '継続・矛盾チェック: —';
+  const label = ctx.combined_label || '複合判定';
+  const summary = ctx.summary || '';
+  return summary && !summary.includes('注意以上の追加材料はありません') ? `${label} / ${summary}` : label;
+}
+
 function alertDetailPair(label, value, className = '') {
   return `<div class="alert-detail-pair ${className}"><small>${escapeHtml(label)}</small><span>${escapeHtml(value || '—')}</span></div>`;
 }
@@ -147,12 +155,15 @@ function renderAlertPreviewDetailsTable(el, rows, data) {
     const firstLine = [
       alertDetailPair('判断コメント', row.note, 'is-wide'),
       alertDetailPair('出来高コンテキスト', row.volume),
-      alertDetailPair('別モード参考値', row.reference_mode),
+      alertDetailPair('出来高・フローアラート', row.volume_alerts),
+      alertDetailPair('コストアラート', row.cost_alerts),
+      alertDetailPair('継続・矛盾チェック', row.combined_signal, 'is-wide'),
     ].join('');
     const secondLine = [
       alertDetailPair('注文位置', row.order_hint, 'is-wide'),
       alertDetailPair('利確幅', row.target_hint),
       alertDetailPair('リスク', row.risk_hint),
+      alertDetailPair('別モード参考値', row.reference_mode),
     ].join('');
     const thirdLine = [
       alertDetailPair('見通し信頼度', row.confidence),
@@ -200,6 +211,22 @@ function pctRatio(v, digits = 0) {
 function volumeContextText(context) {
   if (!context || !context.ok) return context?.note || '出来高 未取得';
   return `出来高 ${context.volume_label || '—'} ${ratio(context.volume_ratio)} / 取引回数 ${context.trade_count_label || '—'} ${ratio(context.trade_count_ratio)} / Taker buy ${context.taker_buy_label || '—'} ${pctRatio(context.taker_buy_ratio)}`;
+}
+
+function volumeCostAlertText(row) {
+  const ctx = row?.volume_cost_context || row?.decision_context?.volume_cost_context;
+  if (!ctx) return '出来高・フローアラートなし';
+  const items = Array.isArray(ctx.active_alerts) ? ctx.active_alerts.filter((item) => item.family === 'volume_context' || item.family === 'order_flow' || item.family === 'combined_volume_flow') : [];
+  if (!items.length) return ctx.volume_alert_summary || '出来高・フローアラートなし';
+  return items.slice(0, 4).map((item) => item.label || item.type).join(' / ');
+}
+
+function costAlertText(row) {
+  const ctx = row?.cost_context || row?.decision_context?.cost_context || row?.volume_cost_context?.cost_context;
+  if (!ctx) return 'コスト文脈なし';
+  const cost = ctx.total_cost_pct === null || ctx.total_cost_pct === undefined ? '—' : pct(ctx.total_cost_pct, 3);
+  const gap = ctx.threshold_gap_pct === null || ctx.threshold_gap_pct === undefined ? '—' : pct(ctx.threshold_gap_pct, 3, true);
+  return `${ctx.cost_label || 'コスト'} ${cost} / 差 ${gap}`;
 }
 function neededWinDisplay(v, digits = 1) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
@@ -1241,11 +1268,14 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
     const continuationSummary = continuationAlertText(row);
     const decision = ctx.conditional_forecast || row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意以上ではありません。');
     const volume = row.market_context_text || volumeContextText(row.volume_context);
+    const volumeAlerts = volumeCostAlertText(row);
+    const costAlerts = costAlertText(row);
+    const combined = combinedSignalText(row);
     const preferred = ctx.preferred_candidate?.label ? `主候補: ${ctx.preferred_candidate.label}` : '';
     const excluded = Array.isArray(ctx.excluded_candidates) && ctx.excluded_candidates.length ? `除外: ${ctx.excluded_candidates.map((item) => item.label).join(' / ')}` : '';
     const invalidation = Array.isArray(ctx.invalidation_conditions) && ctx.invalidation_conditions.length ? `外れ条件: ${ctx.invalidation_conditions.slice(0, 2).join(' / ')}` : '';
     const itemClass = row.alert_hit ? 'is-hit' : (row.level_rank === 1 ? 'is-info' : 'is-muted');
-    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
+    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([volumeAlerts, costAlerts, combined].filter(Boolean).join(' / '))}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
   }).join('');
   listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / decision_context v1 / 出来高は判断材料の一部で、将来の売買シミュレーターへ渡す材料です。</div>`;
 }
@@ -1316,6 +1346,10 @@ async function loadAlertPreview() {
     reference_mode: referenceModeText(row),
     note: row.level_note || row.decision_comment || '—',
     volume: row.market_context_text || volumeContextText(row.volume_context),
+    volume_alerts: row.volume_alert_summary || volumeCostAlertText(row),
+    order_flow: row.order_flow_summary || row.decision_context?.order_flow_summary || '—',
+    cost_alerts: row.cost_alert_summary || costAlertText(row),
+    combined_signal: row.combined_signal_summary || combinedSignalText(row),
     order_hint: row.order_adjustment || '—',
     target_hint: row.target_adjustment || '—',
     risk_hint: row.risk_comment || '—',

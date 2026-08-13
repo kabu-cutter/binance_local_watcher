@@ -2258,3 +2258,33 @@ tr:hover td { background: rgba(255,255,255,0.34); }
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 }
+
+
+/* Alert update 3: volume/order-flow/cost alerts are added to the two-tier judgement detail. */
+.alert-detail-line {
+  grid-template-columns: minmax(220px, 1.25fr) minmax(170px, .92fr) minmax(170px, .92fr) minmax(160px, .86fr);
+}
+.alert-detail-line .alert-detail-pair:nth-child(1).is-wide {
+  grid-column: span 1;
+}
+.alert-detail-line .alert-detail-pair:nth-child(4) span {
+  color: #8a5d3f;
+  font-weight: 760;
+}
+#alertPreviewTable.alert-detail-table .alert-detail-second-row td {
+  padding-bottom: 8px;
+}
+@media (max-width: 1280px) {
+  .alert-detail-line {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+/* Alert update 4: keep continuation/conflict check readable inside the two-tier detail. */
+.alert-detail-line .alert-detail-pair:nth-child(5).is-wide {
+  grid-column: 1 / -1;
+}
+.alert-detail-line .alert-detail-pair:nth-child(5).is-wide span {
+  color: #74506b;
+  font-weight: 760;
+}

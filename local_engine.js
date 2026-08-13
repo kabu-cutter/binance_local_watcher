@@ -2540,6 +2540,253 @@ function marketContextSummary(volumeContext = {}) {
 }
 
 
+function orderFlowBiasFromTakerRatio(ratio) {
+  const value = Number(ratio);
+  if (!Number.isFinite(value)) return { bias: 'unknown', label: '未取得', strength: 'unknown', rank: 0 };
+  if (value >= 0.62) return { bias: 'buy_side', label: '買い主導強め', strength: 'strong', rank: 2 };
+  if (value >= 0.55) return { bias: 'buy_side', label: '買い主導寄り', strength: 'info', rank: 1 };
+  if (value <= 0.38) return { bias: 'sell_side', label: '売り主導強め', strength: 'strong', rank: 2 };
+  if (value <= 0.45) return { bias: 'sell_side', label: '売り主導寄り', strength: 'info', rank: 1 };
+  return { bias: 'neutral', label: '中立', strength: 'neutral', rank: 0 };
+}
+
+function costRiskContext(thresholdPct, costFloorPct) {
+  const threshold = Number(thresholdPct);
+  const cost = Number(costFloorPct);
+  const gap = Number.isFinite(threshold) && Number.isFinite(cost) ? threshold - cost : null;
+  if (!Number.isFinite(cost)) {
+    return {
+      ok: false,
+      total_cost_pct: null,
+      threshold_pct: Number.isFinite(threshold) ? threshold : null,
+      threshold_gap_pct: null,
+      cost_risk: 'unknown',
+      cost_label: 'コスト未取得',
+      level: '—',
+      level_rank: 0,
+      alert_hit: false,
+      note: '実取引寄りコスト目安が未取得です。',
+    };
+  }
+  if (Number.isFinite(threshold) && threshold > 0 && cost >= threshold) {
+    return {
+      ok: true,
+      total_cost_pct: cost,
+      threshold_pct: threshold,
+      threshold_gap_pct: gap,
+      cost_risk: 'high',
+      cost_label: 'コスト超過',
+      level: 'Lv3 警戒',
+      level_rank: 3,
+      alert_hit: true,
+      note: `往復コスト目安 ${cost.toFixed(3)}% がしきい値 ${threshold.toFixed(3)}% 以上です。小さな値動き狙いは取引候補から外す材料です。`,
+    };
+  }
+  if (Number.isFinite(threshold) && threshold > 0 && cost >= threshold * 0.9) {
+    return {
+      ok: true,
+      total_cost_pct: cost,
+      threshold_pct: threshold,
+      threshold_gap_pct: gap,
+      cost_risk: 'near_threshold',
+      cost_label: 'コスト近接',
+      level: 'Lv2 注意',
+      level_rank: 2,
+      alert_hit: true,
+      note: `往復コスト目安 ${cost.toFixed(3)}% がしきい値 ${threshold.toFixed(3)}% に近く、浅い利確ではNetが残りにくい状態です。`,
+    };
+  }
+  if (Number.isFinite(threshold) && threshold > 0 && cost >= threshold * 0.7) {
+    return {
+      ok: true,
+      total_cost_pct: cost,
+      threshold_pct: threshold,
+      threshold_gap_pct: gap,
+      cost_risk: 'medium',
+      cost_label: 'コストやや重い',
+      level: 'Lv1 情報',
+      level_rank: 1,
+      alert_hit: false,
+      note: `往復コスト目安 ${cost.toFixed(3)}% はしきい値に対してやや重めです。利確幅に余裕が必要です。`,
+    };
+  }
+  return {
+    ok: true,
+    total_cost_pct: cost,
+    threshold_pct: Number.isFinite(threshold) ? threshold : null,
+    threshold_gap_pct: gap,
+    cost_risk: 'low',
+    cost_label: 'コスト余裕あり',
+    level: '注意以上なし',
+    level_rank: 0,
+    alert_hit: false,
+    note: Number.isFinite(threshold) ? `往復コスト目安 ${cost.toFixed(3)}% に対して、しきい値との差は ${gap.toFixed(3)}% です。` : '往復コスト目安を情報として保持します。',
+  };
+}
+
+function buildVolumeCostAlertContext({ movePct, thresholdPct, volumeContext, costContext }) {
+  const move = Number(movePct);
+  const direction = movementDirection(move);
+  const strength = movementStrength(move, thresholdPct);
+  const volumeRank = Number(volumeContext?.volume_rank || 0);
+  const tradeRank = Number(volumeContext?.trade_count_rank || 0);
+  const flow = orderFlowBiasFromTakerRatio(volumeContext?.taker_buy_ratio);
+  const activeAlerts = [];
+  const add = (family, type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
+    activeAlerts.push({ family, type, label, level, level_rank: levelRank, note, alert_hit: Boolean(alertHit), ...extra });
+  };
+
+  if (volumeContext && volumeContext.ok) {
+    if (volumeRank >= 4 || tradeRank >= 4) {
+      add('volume_context', 'volume_or_trade_surge', '出来高/取引回数急増', 'Lv2 注意', 2, '参加量が急増しています。方向が出る前後の急変・反転候補として扱います。', true, {
+        volume_ratio: volumeContext.volume_ratio,
+        trade_count_ratio: volumeContext.trade_count_ratio,
+      });
+    } else if (volumeRank >= 3 || tradeRank >= 3) {
+      add('volume_context', 'volume_or_trade_thick', '出来高/取引回数厚い', 'Lv1 情報', 1, '参加量が通常より厚めです。値動きの裏付け候補として残します。', false, {
+        volume_ratio: volumeContext.volume_ratio,
+        trade_count_ratio: volumeContext.trade_count_ratio,
+      });
+    } else if (volumeRank === 1 && tradeRank === 1) {
+      add('volume_context', 'volume_and_trade_thin', '出来高/取引回数薄い', 'Lv1 情報', 1, '参加量が薄く、追随判断の信頼度を下げる材料です。', false, {
+        volume_ratio: volumeContext.volume_ratio,
+        trade_count_ratio: volumeContext.trade_count_ratio,
+      });
+    }
+
+    if (flow.rank >= 2) {
+      add('order_flow', flow.bias === 'buy_side' ? 'strong_buy_side' : 'strong_sell_side', flow.label, 'Lv2 注意', 2, `${flow.label}です。価格方向と一致する場合は継続材料、不一致なら矛盾材料として扱います。`, true, { taker_buy_ratio: volumeContext.taker_buy_ratio });
+    } else if (flow.rank >= 1) {
+      add('order_flow', flow.bias === 'buy_side' ? 'buy_side_bias' : 'sell_side_bias', flow.label, 'Lv1 情報', 1, `${flow.label}です。単独では売買判断に使わず、方向・出来高・価格位置と組み合わせます。`, false, { taker_buy_ratio: volumeContext.taker_buy_ratio });
+    }
+
+    const volumeBacked = volumeRank >= 3 || tradeRank >= 3;
+    const volumeSurge = volumeRank >= 4 || tradeRank >= 4;
+    if (direction === 'up' && (strength === 'threshold' || strength === 'strong') && volumeBacked && flow.bias !== 'sell_side') {
+      add('combined_volume_flow', 'up_with_volume_support', '上昇＋参加量裏付け', 'Lv2 注意', 2, '上昇に出来高または取引回数の裏付けがあります。浅め〜標準指値候補を残す材料です。', true);
+    }
+    if (direction === 'up' && (strength === 'threshold' || strength === 'strong') && (volumeRank <= 1 && tradeRank <= 1)) {
+      add('combined_volume_flow', 'up_with_thin_volume', '上昇＋出来高薄い', 'Lv2 注意', 2, '価格は上がっていますが参加量が薄く、追随候補を落とす材料です。', true);
+    }
+    if (direction === 'up' && (strength === 'threshold' || strength === 'strong') && flow.bias === 'sell_side') {
+      add('combined_volume_flow', 'up_with_sell_flow_divergence', '上昇＋売り主導寄り', 'Lv2 注意', 2, '価格上昇に対してTaker buyが弱く、上昇継続の信頼度を下げる矛盾材料です。', true);
+    }
+    if (direction === 'down' && (strength === 'threshold' || strength === 'strong') && (volumeSurge || flow.bias === 'sell_side')) {
+      add('combined_volume_flow', 'down_with_sell_pressure', '下落＋売り圧力', 'Lv2 注意', 2, '下落方向に参加量または売り主導が重なっています。浅い買い指値を除外する材料です。', true);
+    }
+    if ((direction === 'flat' || strength === 'small' || strength === 'info') && volumeSurge) {
+      add('combined_volume_flow', 'volume_leads_price', '出来高先行', 'Lv2 注意', 2, '価格変化は限定的ですが参加量が急増しています。レンジ突破または反落の前兆として、方向確定待ちに寄せます。', true);
+    }
+  }
+
+  if (costContext && costContext.ok && (costContext.level_rank || 0) >= 1) {
+    add('cost_context', costContext.cost_risk === 'high' ? 'cost_exceeds_threshold' : costContext.cost_risk === 'near_threshold' ? 'cost_near_threshold' : 'cost_medium', costContext.cost_label, costContext.level, costContext.level_rank, costContext.note, costContext.alert_hit, {
+      total_cost_pct: costContext.total_cost_pct,
+      threshold_gap_pct: costContext.threshold_gap_pct,
+    });
+  }
+
+  const ranked = activeAlerts.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || (Number(b.alert_hit) - Number(a.alert_hit)));
+  const primary = ranked[0] || null;
+  return {
+    ok: Boolean(volumeContext?.ok || costContext?.ok),
+    volume_level: volumeContext?.volume_level || 'unknown',
+    volume_label: volumeContext?.volume_label || '未取得',
+    volume_ratio: Number.isFinite(Number(volumeContext?.volume_ratio)) ? Number(volumeContext.volume_ratio) : null,
+    trade_count_level: volumeContext?.trade_count_level || 'unknown',
+    trade_count_label: volumeContext?.trade_count_label || '未取得',
+    trade_count_ratio: Number.isFinite(Number(volumeContext?.trade_count_ratio)) ? Number(volumeContext.trade_count_ratio) : null,
+    order_flow_bias: flow.bias,
+    order_flow_label: flow.label,
+    order_flow_rank: flow.rank,
+    taker_buy_ratio: Number.isFinite(Number(volumeContext?.taker_buy_ratio)) ? Number(volumeContext.taker_buy_ratio) : null,
+    cost_context: costContext || null,
+    level: primary?.level || '注意以上なし',
+    level_rank: primary?.level_rank || 0,
+    alert_hit: ranked.some((item) => item.alert_hit && (item.level_rank || 0) >= 2),
+    primary_signal: primary?.type || 'none',
+    primary_label: primary?.label || '出来高・コスト通常',
+    active_alerts: ranked,
+    summary: ranked.length ? ranked.slice(0, 4).map((item) => `${item.label}: ${item.note}`).join(' / ') : '出来高・取引回数・Taker buy・コストで注意以上の追加材料はありません。',
+    volume_alert_summary: ranked.filter((item) => item.family === 'volume_context' || item.family === 'combined_volume_flow').map((item) => item.label).join(' / ') || '出来高アラートなし',
+    order_flow_summary: flow.label,
+    cost_alert_summary: costContext?.note || 'コスト文脈なし',
+  };
+}
+
+function applyVolumeCostDecisionOverlay(decision, volumeCostContext, costContext, direction) {
+  if (!decision || !volumeCostContext) return decision;
+  const types = new Set((volumeCostContext.active_alerts || []).map((item) => item.type));
+  if (costContext?.cost_risk === 'high') {
+    return {
+      ...decision,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'no_trade_cost_exceeds',
+      decision_title: 'コスト超過 / 取引候補を絞る',
+      decision_comment: '実取引寄りコストがしきい値以上です。小さな値動きでは利益が残りにくく、取引候補から外す判断を優先します。',
+      order_adjustment: '成行追随・浅め指値・標準指値は除外寄りです。候補に残すなら、十分に深い指値またはコスト差が改善した後だけです。',
+      target_adjustment: '必要利確価格は、往復コストを明確に上回る幅が取れる場合だけ設定します。',
+      risk_comment: costContext.note,
+    };
+  }
+  if (types.has('up_with_thin_volume') || types.has('up_with_sell_flow_divergence')) {
+    return {
+      ...decision,
+      entry_bias: 'standard_limit_or_watch',
+      decision_title: '上昇の裏付け弱め',
+      decision_comment: '価格は上向きですが、出来高またはTaker buyの裏付けが弱めです。追随候補を落とす判断です。',
+      order_adjustment: '買い候補として扱うなら、成行追随と浅すぎる指値は避け、標準〜深め指値または待機に寄せます。',
+      target_adjustment: '利確幅は控えめに見積もらず、コスト後Netが残る幅を満たす時だけ候補にします。',
+      risk_comment: '出来高・フローが伴わない上昇はダマシや伸び不足を重く見ます。',
+    };
+  }
+  if (types.has('down_with_sell_pressure')) {
+    return {
+      ...decision,
+      entry_bias: 'deeper_limit_or_rebound_wait',
+      decision_title: '下落＋売り圧力',
+      decision_comment: '下落に参加量または売り主導が重なっています。浅い買い候補は除外します。',
+      order_adjustment: '買い候補として残すなら、深め指値または反発確認後だけです。現在価格付近は候補から外します。',
+      target_adjustment: '反発幅がコスト後Netを十分に残す場合だけ利確候補にします。',
+      risk_comment: '続落リスクが強く、約定後に損切り側へ先に触れる可能性を重く見ます。',
+    };
+  }
+  if (types.has('volume_leads_price')) {
+    return {
+      ...decision,
+      entry_bias: 'range_break_or_lower_limit',
+      decision_title: '出来高先行 / 方向待ち',
+      decision_comment: '参加量が先に増えていますが、価格方向はまだ限定的です。現在価格で決め打ちしない判断です。',
+      order_adjustment: 'レンジ上抜け後の浅め〜標準指値候補と、レンジ下限付近の深め指値候補を分けて残します。',
+      target_adjustment: '方向確定前なので、レンジ幅とコスト後Netを超える条件だけを候補にします。',
+      risk_comment: '攻防中の可能性があり、上抜け・下抜けどちらにも外れ条件を置きます。',
+    };
+  }
+  if (types.has('up_with_volume_support') && direction === 'up' && costContext?.cost_risk !== 'near_threshold') {
+    return {
+      ...decision,
+      entry_bias: 'shallow_to_standard_limit',
+      decision_title: '上昇＋参加量裏付け',
+      decision_comment: '上昇に出来高または取引回数の裏付けがあります。追随ではなく、浅め〜標準指値候補を残す判断です。',
+      order_adjustment: '成行追随は優先しません。浅め指値で到達機会を残し、標準指値で利確余地も残す比較にします。',
+      target_adjustment: '必要利確価格は、出来高裏付けがある間の継続余地とコスト後Netを基準にします。',
+      risk_comment: '出来高が急増しすぎる場合は反落もあるため、外れ条件を同時に置きます。',
+    };
+  }
+  if (costContext?.cost_risk === 'near_threshold') {
+    return {
+      ...decision,
+      entry_bias: 'lower_limit_for_margin',
+      decision_title: `${decision.decision_title} / コスト近接`,
+      decision_comment: `${decision.decision_comment || ''} コストがしきい値に近く、注文位置は利確余地を作る方向に補正します。`.trim(),
+      order_adjustment: '買い候補として扱うなら、現在価格付近ではなく標準〜深め指値で、必要利確価格までの余地を作ります。',
+      target_adjustment: '浅い利確幅は避け、実取引寄りコストを明確に上回るNetだけを候補にします。',
+      risk_comment: costContext.note,
+    };
+  }
+  return decision;
+}
+
+
 function movementDirection(movePct) {
   const move = Number(movePct);
   if (!Number.isFinite(move)) return 'unknown';
@@ -2908,6 +3155,241 @@ function applyContinuationDecisionOverlay(decision, continuation, selectedSnapsh
   return decision;
 }
 
+function strongestDirectionSnapshot(rows, predicate) {
+  const filtered = (Array.isArray(rows) ? rows : []).filter((row) => row && row.ok && Number.isFinite(Number(row.move_pct)) && (!predicate || predicate(row)));
+  if (!filtered.length) return null;
+  return filtered.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || (Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0))) || (Number(b.window_minutes || 0) - Number(a.window_minutes || 0)))[0];
+}
+
+function directionBucketScore(rows, direction) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row && row.direction === direction && Number.isFinite(Number(row.move_pct)))
+    .reduce((sum, row) => {
+      const level = Number(row.level_rank || 0);
+      const windowWeight = Number(row.window_minutes || 0) >= 30 ? 1.4 : Number(row.window_minutes || 0) >= 15 ? 1.15 : 1;
+      return sum + (level + Math.min(Math.abs(Number(row.move_pct || 0)) * 2, 1)) * windowWeight;
+    }, 0);
+}
+
+function compactActiveAlert(item) {
+  if (!item) return null;
+  return {
+    family: item.family || 'combined_market_signal',
+    type: item.type || 'unknown',
+    label: item.label || item.type || '複合判定',
+    level: item.level || '注意以上なし',
+    level_rank: Number(item.level_rank || 0),
+    note: item.note || '',
+    alert_hit: Boolean(item.alert_hit),
+  };
+}
+
+function emptyCombinedSignalContext(note = '継続・矛盾チェックに必要な材料が不足しています。') {
+  return {
+    ok: false,
+    combined_signal: 'data_unavailable',
+    combined_label: '複合判定不可',
+    combined_level: '—',
+    combined_level_rank: 0,
+    alert_hit: false,
+    direction_score: { up: 0, down: 0 },
+    short_direction: 'unknown',
+    medium_long_direction: 'unknown',
+    strongest_window_minutes: null,
+    strongest_move_pct: null,
+    price_position_signal: 'unknown',
+    volume_cost_signal: 'none',
+    active_alerts: [],
+    summary: note,
+    invalidation_conditions: [],
+  };
+}
+
+function buildContinuationConflictContext({ movementWindowMoves = [], continuationAlert = null, pricePositionContext = null, volumeCostContext = null, costContext = null }) {
+  const rows = (Array.isArray(movementWindowMoves) ? movementWindowMoves : []).filter((row) => row && row.ok && Number.isFinite(Number(row.move_pct)));
+  const activeAlerts = [];
+  const add = (family, type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
+    activeAlerts.push({ family, type, label, level, level_rank: levelRank, note, alert_hit: Boolean(alertHit), ...extra });
+  };
+
+  const short = strongestDirectionSnapshot(rows, (row) => Number(row.window_minutes) <= 15);
+  const veryShort = strongestDirectionSnapshot(rows, (row) => Number(row.window_minutes) <= 5);
+  const mediumLong = strongestDirectionSnapshot(rows, (row) => Number(row.window_minutes) >= 30);
+  const strongest = strongestDirectionSnapshot(rows);
+  const upScore = directionBucketScore(rows, 'up');
+  const downScore = directionBucketScore(rows, 'down');
+  const priceSignal = pricePositionContext?.signal || 'unknown';
+  const priceLabel = pricePositionContext?.label || '価格位置不明';
+  const volumeTypes = new Set((volumeCostContext?.active_alerts || []).map((item) => item.type));
+  const continuationSignal = continuationAlert?.signal || 'no_continuation';
+  const hasCostReject = costContext?.cost_risk === 'high';
+  const hasCostNear = costContext?.cost_risk === 'near_threshold';
+  const hasVolumeSupport = volumeTypes.has('up_with_volume_support');
+  const hasThinUp = volumeTypes.has('up_with_thin_volume') || volumeTypes.has('up_with_sell_flow_divergence');
+  const hasSellPressure = volumeTypes.has('down_with_sell_pressure');
+  const hasVolumeLead = volumeTypes.has('volume_leads_price');
+  const isUpperPosition = ['near_day_high', 'range_upper', 'day_high_breakout', 'range_breakout_up'].includes(priceSignal);
+  const isLowerBreak = ['day_low_breakdown', 'range_breakout_down'].includes(priceSignal);
+  const isBreakoutUp = ['day_high_breakout', 'range_breakout_up'].includes(priceSignal);
+  const isBreakoutDown = ['day_low_breakdown', 'range_breakout_down'].includes(priceSignal);
+
+  if (hasCostReject && strongest && (strongest.level_rank || 0) >= 1) {
+    add('combined_market_signal', 'trade_rejected_by_cost', 'コスト主導の取引除外', 'Lv3 警戒', 3, '値動き材料はありますが、往復コストがしきい値以上です。シミュレーターでは取引候補を除外し、見送りを主候補にします。', true);
+  } else if (hasCostNear && strongest && (strongest.level_rank || 0) >= 2) {
+    add('combined_market_signal', 'cost_near_on_signal', 'シグナル＋コスト近接', 'Lv2 注意', 2, '価格シグナルはありますがコスト余裕が小さく、浅い利確では利益が残りにくい状態です。', true);
+  }
+
+  if (short && mediumLong && short.direction === 'up' && mediumLong.direction === 'down' && (short.level_rank || 0) >= 1 && (mediumLong.level_rank || 0) >= 1) {
+    add('continuation_conflict', 'short_up_against_medium_down', '短期上昇＋中期下向き', 'Lv2 注意', 2, `${short.window_minutes}分は上向きですが、${mediumLong.window_minutes}分は下向きです。戻り上げの可能性を重く見て、成行追随を落とします。`, true, { short_window: short.window_minutes, medium_window: mediumLong.window_minutes });
+  }
+  if (short && mediumLong && short.direction === 'down' && mediumLong.direction === 'up' && (short.level_rank || 0) >= 1 && (mediumLong.level_rank || 0) >= 1) {
+    add('continuation_conflict', 'short_down_in_medium_uptrend', '短期下落＋中期上向き', 'Lv2 注意', 2, `${short.window_minutes}分は下向きですが、${mediumLong.window_minutes}分は上向きです。押し目候補にはなりますが、反発確認なしの浅い買いは落とします。`, true, { short_window: short.window_minutes, medium_window: mediumLong.window_minutes });
+  }
+
+  if ((continuationSignal === 'upward_continuation' || continuationSignal === 'upward_multi_window') && hasVolumeSupport && !isUpperPosition && !hasCostReject) {
+    add('combined_market_signal', 'up_continuation_with_volume', '上昇継続＋参加量裏付け', 'Lv2 注意', 2, '複数窓上昇に出来高・取引回数の裏付けがあります。浅め〜標準指値候補を残す材料です。', true);
+  }
+  if ((continuationSignal === 'upward_continuation' || continuationSignal === 'upward_multi_window') && hasThinUp) {
+    add('continuation_conflict', 'up_continuation_weak_volume_or_flow', '上昇継続＋裏付け不足', 'Lv2 注意', 2, '複数窓上昇はありますが、出来高またはTaker buyの裏付けが弱く、追随候補を落とす材料です。', true);
+  }
+  if ((continuationSignal === 'downward_continuation' || continuationSignal === 'downward_multi_window') && (hasSellPressure || isBreakoutDown || isLowerBreak)) {
+    add('combined_market_signal', 'down_continuation_with_pressure', '下落継続＋売り圧力', 'Lv3 警戒', 3, '複数窓下落に売り圧力または下抜けが重なっています。浅い買い候補は除外し、反発確認まで待つ判断です。', true);
+  }
+
+  if (isBreakoutUp && hasVolumeSupport && !hasCostReject) {
+    add('combined_market_signal', 'breakout_up_confirmed_by_volume', `${priceLabel}＋参加量`, 'Lv2 注意', 2, '上抜けに参加量の裏付けがあります。成行追随ではなく、浅め〜標準指値でブレイク後の到達機会を検証する材料です。', true);
+  }
+  if (isBreakoutUp && (hasThinUp || hasCostNear)) {
+    add('continuation_conflict', 'breakout_up_weak_confirmation', `${priceLabel}＋裏付け不足`, 'Lv2 注意', 2, '上抜けていますが、出来高・フロー・コストのどれかが弱く、ブレイク失敗を外れ条件にします。', true);
+  }
+  if (isBreakoutDown) {
+    add('combined_market_signal', 'breakout_down_buy_filter', `${priceLabel}買い候補絞り`, 'Lv2 注意', 2, '下抜け中です。買い候補は深め指値または反発確認後に限定し、浅い買い候補を除外します。', true);
+  }
+
+  if (hasVolumeLead) {
+    add('combined_market_signal', 'volume_leads_direction_wait', '出来高先行・方向待ち', 'Lv2 注意', 2, '価格変化より参加量が先に増えています。上抜け・下抜けのどちらもあり得るため、方向確定前の成行追随は除外します。', true);
+  }
+
+  if (!activeAlerts.length && rows.length >= 2 && Math.abs(upScore - downScore) <= 0.8 && (upScore > 0 || downScore > 0)) {
+    add('continuation_conflict', 'mixed_direction_low_confidence', '方向混在', 'Lv1 情報', 1, '複数窓で方向が揃っていません。注文候補は待機寄りにし、明確な継続または価格位置シグナルを待ちます。', false);
+  }
+
+  const ranked = activeAlerts.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || (Number(b.alert_hit) - Number(a.alert_hit)));
+  const primary = ranked[0] || null;
+  const invalidation = [];
+  if (primary?.type === 'short_up_against_medium_down') invalidation.push('中期下向きが解消し、30分以上の窓も上昇側へ揃う。');
+  if (primary?.type === 'short_down_in_medium_uptrend') invalidation.push('短期下落が止まり、5分/15分でも上昇側へ戻る。');
+  if (primary?.type === 'up_continuation_weak_volume_or_flow') invalidation.push('出来高・取引回数が厚くなり、Taker buyが買い主導寄りへ戻る。');
+  if (primary?.type === 'down_continuation_with_pressure') invalidation.push('売り圧力が弱まり、反発後も出来高が維持される。');
+  if (primary?.type === 'breakout_up_weak_confirmation') invalidation.push('上抜け後にレンジ上限を維持し、出来高・Taker buyの裏付けが増える。');
+  if (primary?.type === 'volume_leads_direction_wait') invalidation.push('レンジ上抜けまたは下抜けで方向が確定する。');
+
+  const summary = ranked.length
+    ? ranked.slice(0, 3).map((item) => `${item.label}: ${item.note}`).join(' / ')
+    : '継続・矛盾チェックで注意以上の追加材料はありません。';
+  return {
+    ok: true,
+    combined_signal: primary?.type || 'no_combined_signal',
+    combined_label: primary?.label || '複合判定なし',
+    combined_level: primary?.level || '注意以上なし',
+    combined_level_rank: primary?.level_rank || 0,
+    alert_hit: ranked.some((item) => item.alert_hit && (item.level_rank || 0) >= 2),
+    direction_score: { up: Number(upScore.toFixed(3)), down: Number(downScore.toFixed(3)) },
+    short_direction: short?.direction || 'unknown',
+    medium_long_direction: mediumLong?.direction || 'unknown',
+    strongest_window_minutes: strongest?.window_minutes || null,
+    strongest_move_pct: Number.isFinite(Number(strongest?.move_pct)) ? Number(strongest.move_pct) : null,
+    price_position_signal: priceSignal,
+    volume_cost_signal: volumeCostContext?.primary_signal || 'none',
+    active_alerts: ranked.map(compactActiveAlert).filter(Boolean),
+    summary,
+    invalidation_conditions: invalidation,
+  };
+}
+
+function applyCombinedSignalDecisionOverlay(decision, combinedContext) {
+  if (!decision || !combinedContext) return decision;
+  const signal = combinedContext.combined_signal;
+  if (signal === 'trade_rejected_by_cost') {
+    return {
+      ...decision,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'no_trade_cost_exceeds',
+      decision_title: '複合判定：コスト主導で取引除外',
+      decision_comment: '価格・出来高材料があっても、往復コストがしきい値以上です。実取引ロジックでは取引候補を落とします。',
+      order_adjustment: '成行追随・浅め指値・標準指値は除外し、コスト差が改善するまで待機を主候補にします。',
+      target_adjustment: '必要利確価格は、往復コストを明確に上回る値幅が取れる場合だけ検証します。',
+      risk_comment: combinedContext.summary,
+    };
+  }
+  if (signal === 'short_up_against_medium_down') {
+    return {
+      ...decision,
+      entry_bias: 'standard_limit_or_watch',
+      decision_title: '複合判定：短期上昇と中期下向きの矛盾',
+      decision_comment: '短期だけは上向きですが、中期は下向きです。戻り上げの可能性を重く見て、現在価格追随は候補から外します。',
+      order_adjustment: '買い候補として残すなら標準〜深め指値または見送りです。浅め指値は中期下向きが解消するまで弱い候補にします。',
+      target_adjustment: '利確幅は短期の戻りだけで見積もらず、中期下向きが解消する条件を待ちます。',
+      risk_comment: '短期上昇が中期下落の戻りにすぎない場合、約定後に再下落するリスクを重く見ます。',
+    };
+  }
+  if (signal === 'short_down_in_medium_uptrend') {
+    return {
+      ...decision,
+      entry_bias: 'wait_for_pullback',
+      decision_title: '複合判定：中期上向き内の短期下落',
+      decision_comment: '中期は上向きですが短期は下げています。押し目候補にはなりますが、反発確認なしの浅い買いは落とします。',
+      order_adjustment: '買い候補は押し目の標準指値、または反発確認後の浅め指値に分けます。成行追随は優先しません。',
+      target_adjustment: '必要利確価格は、中期上昇の継続余地と反発後の出来高維持を条件にします。',
+      risk_comment: '押し目ではなく下落転換になる外れ条件を必ず置きます。',
+    };
+  }
+  if (signal === 'up_continuation_with_volume' || signal === 'breakout_up_confirmed_by_volume') {
+    return {
+      ...decision,
+      entry_bias: 'shallow_to_standard_limit',
+      decision_title: `複合判定：${combinedContext.combined_label}`,
+      decision_comment: '複数窓の上昇または上抜けに参加量の裏付けがあります。追随ではなく、浅め〜標準指値候補を残します。',
+      order_adjustment: '成行追随は優先せず、浅め指値で到達機会、標準指値で利確余地を比較します。',
+      target_adjustment: '必要利確価格はコスト後Netが残る範囲で、上昇継続の余地がある場合だけ候補にします。',
+      risk_comment: '上抜け失敗または出来高低下を外れ条件にします。',
+    };
+  }
+  if (signal === 'up_continuation_weak_volume_or_flow' || signal === 'breakout_up_weak_confirmation' || signal === 'cost_near_on_signal') {
+    return {
+      ...decision,
+      entry_bias: 'standard_limit_or_watch',
+      decision_title: `複合判定：${combinedContext.combined_label}`,
+      decision_comment: '上向き材料はありますが、出来高・フロー・コストのどれかが弱く、追随候補を落とします。',
+      order_adjustment: '買い候補として残すなら標準指値または待機です。浅め指値は利益幅不足・ブレイク失敗リスクを重く見ます。',
+      target_adjustment: '必要利確価格は上げすぎず、Netが残る範囲だけを候補にします。',
+      risk_comment: combinedContext.summary,
+    };
+  }
+  if (signal === 'down_continuation_with_pressure' || signal === 'breakout_down_buy_filter') {
+    return {
+      ...decision,
+      entry_bias: 'deeper_limit_or_rebound_wait',
+      decision_title: `複合判定：${combinedContext.combined_label}`,
+      decision_comment: '下落継続または下抜けに売り圧力が重なっています。浅い買い候補は除外します。',
+      order_adjustment: '買い候補は深め指値または反発確認後だけです。現在価格付近と浅め指値は候補から外します。',
+      target_adjustment: '反発幅がコスト後Netを十分に残す場合だけ検証します。',
+      risk_comment: '続落リスクを主リスクとして扱い、反発確認を外れ条件にします。',
+    };
+  }
+  if (signal === 'volume_leads_direction_wait' || signal === 'mixed_direction_low_confidence') {
+    return {
+      ...decision,
+      entry_bias: 'range_break_or_lower_limit',
+      decision_title: `複合判定：${combinedContext.combined_label}`,
+      decision_comment: '方向がまだ確定していません。実取引ロジックでは現在価格で決め打ちせず、レンジ突破または下限指値に分けます。',
+      order_adjustment: '上抜け確認後の浅め〜標準指値と、レンジ下限付近の深め指値を別候補にします。成行追随は除外します。',
+      target_adjustment: '方向確定前は、レンジ幅とコスト後Netを超える条件だけを候補にします。',
+      risk_comment: combinedContext.summary,
+    };
+  }
+  return decision;
+}
+
 function jstDateKey(date) {
   if (!date || Number.isNaN(new Date(date).getTime())) return '';
   const jst = new Date(new Date(date).getTime() + JST_OFFSET_MS);
@@ -3166,6 +3648,15 @@ function orderCandidatesForEntryBias(entryBias, { movePct, costHeavy }) {
       candidate('待機/見送り', 'watch_only', 'preferred', 'データ取得を先に整える候補です。'),
     ];
   }
+  if (entryBias === 'no_trade_cost_exceeds') {
+    return [
+      candidate('成行追随', 'market_follow', 'excluded', 'コストがしきい値以上で、現在価格追随は取引候補から外します。'),
+      candidate('浅め指値', 'shallow_limit', 'excluded', '浅い指値ではコスト後Netが残りにくい前提です。'),
+      candidate('標準指値', 'standard_limit', 'excluded', '標準指値でも利確余地が不足しやすいため除外寄りです。'),
+      candidate('深め指値', 'deep_limit', 'weak', '十分な利確余地を作れる場合だけ検証候補に残します。'),
+      candidate('待機/見送り', 'watch_only', 'preferred', 'コスト差が改善するまで取引しない候補を優先します。'),
+    ];
+  }
   if (entryBias === 'wait_for_pullback') {
     return [
       candidate('成行追随', 'market_follow', 'excluded', '急騰後で滑り・高値掴みを重く見ます。'),
@@ -3238,7 +3729,7 @@ function orderCandidatesForEntryBias(entryBias, { movePct, costHeavy }) {
   ];
 }
 
-function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, decision, movementWindowMoves = [], primaryDirectionAlert = null, continuationAlert = null, pricePositionContext = null, selectedWindowMovePct = null, selectedWindowMinutes = null }) {
+function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, volumeCostContext = null, costContext = null, decision, movementWindowMoves = [], primaryDirectionAlert = null, continuationAlert = null, pricePositionContext = null, combinedSignalContext = null, selectedWindowMovePct = null, selectedWindowMinutes = null }) {
   const move = Number(movePct);
   const threshold = Number(thresholdPct);
   const cost = Number(costFloorPct);
@@ -3261,13 +3752,23 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
   if (direction === 'down') {
     invalidationConditions.push('下落が止まり、反発後も出来高が維持される。');
   }
+  if (costContext?.cost_risk === 'high' || costContext?.cost_risk === 'near_threshold') {
+    invalidationConditions.push('コスト目安がしきい値から十分に下がる、または必要値幅がコストを明確に上回る。');
+  }
+  if (Array.isArray(combinedSignalContext?.invalidation_conditions)) {
+    combinedSignalContext.invalidation_conditions.forEach((item) => {
+      if (item && !invalidationConditions.includes(item)) invalidationConditions.push(item);
+    });
+  }
   if (!invalidationConditions.length) {
     invalidationConditions.push('出来高・値動き・コスト差のいずれかが現在条件から大きく変わる。');
   }
   const directionSummary = directionAlertSummary(movementWindowMoves);
   const continuationSummary = continuationAlert && continuationAlert.signal !== 'no_continuation' ? `${continuationAlert.label}：${continuationAlert.note}` : '';
   const pricePositionText = pricePositionSummary(pricePositionContext);
-  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${pricePositionText}。${decision.market_context_text || marketContextSummary(volumeContext)}`;
+  const volumeCostSummary = volumeCostContext?.summary ? `。${volumeCostContext.summary}` : '';
+  const combinedSummary = combinedSignalContext?.summary ? `。継続・矛盾チェック: ${combinedSignalContext.summary}` : '';
+  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${pricePositionText}。${decision.market_context_text || marketContextSummary(volumeContext)}${volumeCostSummary}${combinedSummary}`;
   const conditionalForecast = decision.order_adjustment || decision.decision_comment || '条件付き見通しは未判定です。';
   const simulationUse = preferred
     ? `売買シミュレーターでは「${preferred.label}」を主候補として検証し、除外候補は取引しない比較対象にします。`
@@ -3319,16 +3820,37 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
       trade_count_level: volumeContext?.trade_count_level || 'unknown',
       trade_count_ratio: Number.isFinite(Number(volumeContext?.trade_count_ratio)) ? Number(volumeContext.trade_count_ratio) : null,
       taker_buy_ratio: Number.isFinite(Number(volumeContext?.taker_buy_ratio)) ? Number(volumeContext.taker_buy_ratio) : null,
+      order_flow_bias: volumeCostContext?.order_flow_bias || orderFlowBiasFromTakerRatio(volumeContext?.taker_buy_ratio).bias,
+      order_flow_label: volumeCostContext?.order_flow_label || orderFlowBiasFromTakerRatio(volumeContext?.taker_buy_ratio).label,
+      volume_cost_signal: volumeCostContext?.primary_signal || 'none',
+      volume_cost_label: volumeCostContext?.primary_label || '出来高・コスト通常',
+      combined_signal: combinedSignalContext?.combined_signal || 'no_combined_signal',
+      combined_label: combinedSignalContext?.combined_label || '複合判定なし',
+      combined_level: combinedSignalContext?.combined_level || '注意以上なし',
       cost_floor_pct: Number.isFinite(cost) ? cost : null,
+      cost_risk: costContext?.cost_risk || (costHeavy ? 'near_threshold' : 'unknown'),
+      cost_label: costContext?.cost_label || '',
+      threshold_gap_pct: Number.isFinite(Number(costContext?.threshold_gap_pct)) ? Number(costContext.threshold_gap_pct) : (Number.isFinite(cost) && Number.isFinite(threshold) ? threshold - cost : null),
       cost_heavy: Boolean(costHeavy),
     },
     price_position: pricePositionContext || null,
     price_position_summary: pricePositionText,
+    volume_cost_context: volumeCostContext || null,
+    combined_signal_context: combinedSignalContext || null,
+    combined_signal_summary: combinedSignalContext?.summary || '継続・矛盾チェックで注意以上の追加材料はありません。',
+    combined_signal: combinedSignalContext?.combined_signal || 'no_combined_signal',
+    combined_label: combinedSignalContext?.combined_label || '複合判定なし',
+    cost_context: costContext || null,
+    volume_alert_summary: volumeCostContext?.volume_alert_summary || '',
+    order_flow_summary: volumeCostContext?.order_flow_summary || '',
+    cost_alert_summary: volumeCostContext?.cost_alert_summary || costContext?.note || '',
     reference_mode_context: null,
     active_alerts: [
       ...(Array.isArray(movementWindowMoves) ? movementWindowMoves.filter((row) => row && (row.level_rank || 0) >= 1).map((row) => ({ family: 'price_direction', window_minutes: row.window_minutes, type: row.movement_alert_type, label: row.movement_alert_label, level: row.level, move_pct: row.move_pct })) : []),
       ...((continuationAlert && (continuationAlert.level_rank || 0) >= 1) ? [{ family: 'multi_window_continuation', type: continuationAlert.signal, label: continuationAlert.label, level: continuationAlert.level, direction: continuationAlert.direction, supporting_windows: continuationAlert.supporting_windows, threshold_windows: continuationAlert.threshold_windows, alert_hit: continuationAlert.alert_hit }] : []),
       ...(Array.isArray(pricePositionContext?.active_alerts) ? pricePositionContext.active_alerts.map((item) => ({ ...item, alert_hit: Boolean(pricePositionContext.alert_hit) })) : []),
+      ...(Array.isArray(volumeCostContext?.active_alerts) ? volumeCostContext.active_alerts : []),
+      ...(Array.isArray(combinedSignalContext?.active_alerts) ? combinedSignalContext.active_alerts : []),
     ],
     order_candidates: candidates,
     preferred_candidate: preferred,
@@ -3348,10 +3870,12 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
   const maxAbsMove = moves.length ? Math.max(...moves.map((v) => Math.abs(v))) : null;
   const hasDown = moves.some((v) => v < 0);
   const hasVolumeSurge = rows.some((row) => Number(row.volume_context?.volume_rank || 0) >= 4 || Number(row.volume_context?.trade_count_rank || 0) >= 4);
-  const hasCostHeavy = rows.some((row) => row.decision_context?.market_state?.cost_heavy);
+  const hasVolumeCostAlerts = rows.some((row) => row.volume_cost_context && Array.isArray(row.volume_cost_context.active_alerts));
+  const hasCostHeavy = rows.some((row) => row.decision_context?.market_state?.cost_heavy || row.cost_context?.cost_risk === 'high' || row.cost_context?.cost_risk === 'near_threshold');
   const hasContinuation = rows.some((row) => row.continuation_alert && (row.continuation_alert.level_rank || 0) >= 1);
   const hasPricePosition = rows.some((row) => row.price_position_context && (row.price_position_context.level_rank || 0) >= 1);
   const hasReferenceModes = rows.some((row) => row.reference_mode_context);
+  const hasCombinedSignals = rows.some((row) => row.combined_signal_context && Array.isArray(row.combined_signal_context.active_alerts));
   return [
     {
       family: '市場判断 / decision_context',
@@ -3361,9 +3885,9 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
     },
     {
       family: '出来高コンテキスト',
-      status: '着手中',
+      status: hasVolumeCostAlerts ? '更新3 着手済み' : '更新3 着手済み',
       priority: 'A',
-      note: '出来高・取引回数・Taker buy比率をアラート判断と将来シミュレーター材料へ渡します。',
+      note: '出来高・取引回数・Taker buy比率を単独/複合アラート化し、decision_contextへ渡します。',
     },
     {
       family: '価格変動・方向アラート',
@@ -3385,15 +3909,15 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
     },
     {
       family: '成行・コスト注意',
-      status: hasCostHeavy ? '次に優先' : '一部着手',
+      status: hasCostHeavy ? '更新3 着手済み' : '更新3 着手済み',
       priority: 'A',
-      note: '実取引寄りコスト、スプレッド、板滑りを注文候補の除外理由に接続します。',
+      note: '実取引寄りコスト目安をコスト超過/近接/余裕として分類し、注文候補の除外理由に接続します。',
     },
     {
       family: '継続・矛盾チェック',
-      status: hasContinuation ? '更新1.5 着手済み' : '更新1.5 着手済み',
+      status: hasCombinedSignals ? '更新4 着手済み' : (hasContinuation ? '更新1.5 着手済み' : '更新1.5 着手済み'),
       priority: 'A',
-      note: '1m/5m/15m/30m/1hの複数窓を見て、中期上昇/下落継続をdecision_contextへ渡します。',
+      note: '複数窓の継続、短期/中期の矛盾、価格位置・出来高・コストの複合判定をdecision_contextへ渡します。',
     },
     {
       family: 'シミュレーター連携',
@@ -3653,6 +4177,14 @@ async function alertPreview(params = {}) {
         base_price: null,
         latest_time: '',
         volume_context: volumeContextBySymbol[symbol] || null,
+        volume_cost_context: buildVolumeCostAlertContext({ movePct: null, thresholdPct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, costFloorPct) }),
+        combined_signal_context: emptyCombinedSignalContext('価格データ不足のため継続・矛盾チェック不可'),
+        combined_signal_summary: '価格データ不足のため継続・矛盾チェック不可',
+        combined_signal: 'data_unavailable',
+        cost_context: costRiskContext(Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, costFloorPct),
+        volume_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, costFloorPct) }).volume_alert_summary,
+        order_flow_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, costFloorPct) }).order_flow_summary,
+        cost_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct, costFloorPct) }).cost_alert_summary,
         market_context_text: marketContextSummary(volumeContextBySymbol[symbol]),
         decision_title: '判定材料不足',
         decision_comment: '判定材料が不足しています。注文位置の判断には進みません。',
@@ -3702,6 +4234,14 @@ async function alertPreview(params = {}) {
         base_price: symbolRows[0]?.price ?? null,
         latest_time: symbolRows[0] ? formatJst(symbolRows[0].timestamp) : '',
         volume_context: volumeContextBySymbol[symbol] || null,
+        volume_cost_context: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }),
+        combined_signal_context: emptyCombinedSignalContext('履歴データ不足のため継続・矛盾チェック不可'),
+        combined_signal_summary: '履歴データ不足のため継続・矛盾チェック不可',
+        combined_signal: 'data_unavailable',
+        cost_context: costRiskContext(thresholdForSymbol, costFloorPct),
+        volume_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).volume_alert_summary,
+        order_flow_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).order_flow_summary,
+        cost_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).cost_alert_summary,
         market_context_text: marketContextSummary(volumeContextBySymbol[symbol]),
         decision_title: '判定材料不足',
         decision_comment: '履歴データが不足しています。注文位置の判断には進みません。',
@@ -3745,6 +4285,14 @@ async function alertPreview(params = {}) {
         base_price: null,
         latest_time: formatJst(latest.timestamp),
         volume_context: volumeContextBySymbol[symbol] || null,
+        volume_cost_context: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }),
+        combined_signal_context: emptyCombinedSignalContext('履歴データ不足のため継続・矛盾チェック不可'),
+        combined_signal_summary: '履歴データ不足のため継続・矛盾チェック不可',
+        combined_signal: 'data_unavailable',
+        cost_context: costRiskContext(thresholdForSymbol, costFloorPct),
+        volume_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).volume_alert_summary,
+        order_flow_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).order_flow_summary,
+        cost_alert_summary: buildVolumeCostAlertContext({ movePct: null, thresholdPct: thresholdForSymbol, volumeContext: volumeContextBySymbol[symbol] || null, costContext: costRiskContext(thresholdForSymbol, costFloorPct) }).cost_alert_summary,
         market_context_text: marketContextSummary(volumeContextBySymbol[symbol]),
         decision_title: '判定材料不足',
         decision_comment: '窓内の起点価格が不足しています。注文位置の判断には進みません。',
@@ -3799,13 +4347,29 @@ async function alertPreview(params = {}) {
     const effectiveLevelInfo = effectiveDirectionSnapshot ? directionLevelInfoFromSnapshot(effectiveDirectionSnapshot, levelInfo) : levelInfo;
     const continuationIsStronger = continuationAlert && (continuationAlert.level_rank || 0) > (effectiveLevelInfo.level_rank || 0);
     const pricePositionIsStronger = pricePositionContext && (pricePositionContext.level_rank || 0) > (continuationIsStronger ? (continuationAlert.level_rank || 0) : (effectiveLevelInfo.level_rank || 0));
-    const contextLevelInfo = pricePositionIsStronger
+    const preliminaryLevelInfo = pricePositionIsStronger
       ? { ...effectiveLevelInfo, level: pricePositionContext.level, level_rank: pricePositionContext.level_rank, movement_alert_type: pricePositionContext.signal, movement_alert_label: pricePositionContext.label }
       : (continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo);
     const decisionBasisMovePct = Number.isFinite(Number(effectiveDirectionSnapshot?.move_pct)) ? Number(effectiveDirectionSnapshot.move_pct) : movePct;
     const decisionBasisWindowMinutes = Number.isFinite(Number(effectiveDirectionSnapshot?.window_minutes)) ? Number(effectiveDirectionSnapshot.window_minutes) : windowMinutes;
-    const alertHit = Boolean((hit && levelInfo.alert_hit) || effectiveDirectionSnapshot?.alert_hit || continuationAlert?.alert_hit || pricePositionContext?.alert_hit);
     const volumeContext = volumeContextBySymbol[symbol] || null;
+    const costContext = costRiskContext(thresholdForSymbol, costFloorPct);
+    const volumeCostContext = buildVolumeCostAlertContext({ movePct: decisionBasisMovePct, thresholdPct: thresholdForSymbol, volumeContext, costContext });
+    const combinedSignalContext = buildContinuationConflictContext({
+      movementWindowMoves: directionWindowMoves,
+      continuationAlert,
+      pricePositionContext,
+      volumeCostContext,
+      costContext,
+    });
+    const volumeCostIsStronger = volumeCostContext && (volumeCostContext.level_rank || 0) > (preliminaryLevelInfo.level_rank || 0);
+    const combinedIsStronger = combinedSignalContext && (combinedSignalContext.combined_level_rank || 0) > (volumeCostIsStronger ? (volumeCostContext.level_rank || 0) : (preliminaryLevelInfo.level_rank || 0));
+    const contextLevelInfo = combinedIsStronger
+      ? { ...preliminaryLevelInfo, level: combinedSignalContext.combined_level, level_rank: combinedSignalContext.combined_level_rank, movement_alert_type: combinedSignalContext.combined_signal, movement_alert_label: combinedSignalContext.combined_label }
+      : (volumeCostIsStronger
+        ? { ...preliminaryLevelInfo, level: volumeCostContext.level, level_rank: volumeCostContext.level_rank, movement_alert_type: volumeCostContext.primary_signal, movement_alert_label: volumeCostContext.primary_label }
+        : preliminaryLevelInfo);
+    const alertHit = Boolean((hit && levelInfo.alert_hit) || effectiveDirectionSnapshot?.alert_hit || continuationAlert?.alert_hit || pricePositionContext?.alert_hit || volumeCostContext?.alert_hit || combinedSignalContext?.alert_hit);
     let decision = buildOrderDecisionComment({
       movePct: decisionBasisMovePct,
       thresholdPct: thresholdForSymbol,
@@ -3815,6 +4379,8 @@ async function alertPreview(params = {}) {
     });
     decision = applyContinuationDecisionOverlay(decision, continuationAlert, selectedDirectionSnapshot);
     decision = applyPricePositionDecisionOverlay(decision, pricePositionContext, movementDirection(decisionBasisMovePct));
+    decision = applyVolumeCostDecisionOverlay(decision, volumeCostContext, costContext, movementDirection(decisionBasisMovePct));
+    decision = applyCombinedSignalDecisionOverlay(decision, combinedSignalContext);
     const decisionContext = enrichDecisionContext({
       symbol,
       windowMinutes: decisionBasisWindowMinutes,
@@ -3824,11 +4390,14 @@ async function alertPreview(params = {}) {
       costFloorPct,
       levelInfo: contextLevelInfo,
       volumeContext,
+      volumeCostContext,
+      costContext,
       decision,
       movementWindowMoves: directionWindowMoves,
       primaryDirectionAlert,
       continuationAlert,
       pricePositionContext,
+      combinedSignalContext,
       selectedWindowMovePct: movePct,
       selectedWindowMinutes: windowMinutes,
     });
@@ -3846,7 +4415,7 @@ async function alertPreview(params = {}) {
     return {
       symbol,
       status: alertHit
-        ? (pricePositionIsStronger ? `${pricePositionContext.label}アラート` : (continuationAlert?.alert_hit && continuationIsStronger ? `${continuationAlert.label}アラート` : (effectiveDirectionSnapshot ? directionAlertStatus(effectiveDirectionSnapshot, effectiveLevelInfo.movement_status) : (alertMode === 'rolling' ? `ローリング${levelInfo.movement_alert_label}アラート` : alertMode === 'sustained' ? `持続${levelInfo.movement_alert_label}アラート` : levelInfo.movement_status))))
+        ? (combinedIsStronger ? `${combinedSignalContext.combined_label}アラート` : (pricePositionIsStronger ? `${pricePositionContext.label}アラート` : (continuationAlert?.alert_hit && continuationIsStronger ? `${continuationAlert.label}アラート` : (effectiveDirectionSnapshot ? directionAlertStatus(effectiveDirectionSnapshot, effectiveLevelInfo.movement_status) : (alertMode === 'rolling' ? `ローリング${levelInfo.movement_alert_label}アラート` : alertMode === 'sustained' ? `持続${levelInfo.movement_alert_label}アラート` : levelInfo.movement_status)))))
         : (effectiveLevelInfo.level_rank === 1 ? effectiveLevelInfo.movement_status : '監視中'),
       level: contextLevelInfo.level,
       level_rank: contextLevelInfo.level_rank,
@@ -3862,8 +4431,8 @@ async function alertPreview(params = {}) {
       direction: effectiveLevelInfo.direction,
       direction_label: effectiveLevelInfo.direction_label,
       movement_strength: effectiveLevelInfo.movement_strength,
-      movement_alert_type: pricePositionIsStronger ? pricePositionContext.signal : (continuationIsStronger ? continuationAlert.signal : effectiveLevelInfo.movement_alert_type),
-      movement_alert_label: pricePositionIsStronger ? pricePositionContext.label : (continuationIsStronger ? continuationAlert.label : effectiveLevelInfo.movement_alert_label),
+      movement_alert_type: combinedIsStronger ? combinedSignalContext.combined_signal : (pricePositionIsStronger ? pricePositionContext.signal : (continuationIsStronger ? continuationAlert.signal : effectiveLevelInfo.movement_alert_type)),
+      movement_alert_label: combinedIsStronger ? combinedSignalContext.combined_label : (pricePositionIsStronger ? pricePositionContext.label : (continuationIsStronger ? continuationAlert.label : effectiveLevelInfo.movement_alert_label)),
       primary_direction_alert: primaryDirectionAlert,
       continuation_alert: continuationAlert,
       price_position_context: pricePositionContext,
@@ -3884,6 +4453,14 @@ async function alertPreview(params = {}) {
       base_price: base.price,
       latest_time: formatJst(latest.timestamp),
       volume_context: volumeContext,
+      volume_cost_context: volumeCostContext,
+      combined_signal_context: combinedSignalContext,
+      combined_signal_summary: combinedSignalContext.summary,
+      combined_signal: combinedSignalContext.combined_signal,
+      cost_context: costContext,
+      volume_alert_summary: volumeCostContext.volume_alert_summary,
+      order_flow_summary: volumeCostContext.order_flow_summary,
+      cost_alert_summary: volumeCostContext.cost_alert_summary,
       market_context_text: decision.market_context_text,
       entry_bias: decision.entry_bias,
       decision_title: decision.decision_title,
@@ -3923,6 +4500,9 @@ async function alertPreview(params = {}) {
         decision_basis_move_pct: row.decision_basis_move_pct,
         decision_basis_window_minutes: row.decision_basis_window_minutes,
         threshold_pct: row.threshold_pct,
+        volume_alert_summary: row.volume_alert_summary,
+        order_flow_summary: row.order_flow_summary,
+        cost_alert_summary: row.cost_alert_summary,
         window_minutes: windowMinutes,
         alert_mode: alertMode,
         streak_count: row.streak_count,
@@ -3936,6 +4516,9 @@ async function alertPreview(params = {}) {
         price_position_context: row.price_position_context,
         price_position_summary: row.price_position_summary,
         reference_mode_context: row.reference_mode_context,
+        combined_signal_context: row.combined_signal_context,
+        combined_signal_summary: row.combined_signal_summary,
+        combined_signal: row.combined_signal,
         volume_context: row.volume_context,
         entry_bias: row.entry_bias,
         decision_title: row.decision_title,
