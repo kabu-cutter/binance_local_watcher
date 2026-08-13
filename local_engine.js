@@ -2908,6 +2908,223 @@ function applyContinuationDecisionOverlay(decision, continuation, selectedSnapsh
   return decision;
 }
 
+function jstDateKey(date) {
+  if (!date || Number.isNaN(new Date(date).getTime())) return '';
+  const jst = new Date(new Date(date).getTime() + JST_OFFSET_MS);
+  return `${jst.getUTCFullYear()}-${pad2(jst.getUTCMonth() + 1)}-${pad2(jst.getUTCDate())}`;
+}
+
+function signedPctDiff(current, reference) {
+  const c = Number(current);
+  const r = Number(reference);
+  if (!Number.isFinite(c) || !Number.isFinite(r) || r <= 0) return null;
+  return ((c - r) / r) * 100;
+}
+
+function pricePositionLabel(signal) {
+  const labels = {
+    day_high_breakout: '日中高値突破',
+    day_low_breakdown: '日中安値割れ',
+    range_breakout_up: '30分レンジ上抜け',
+    range_breakout_down: '30分レンジ下抜け',
+    near_day_high: '日中高値接近',
+    near_day_low: '日中安値接近',
+    range_upper: '30分レンジ上限付近',
+    range_lower: '30分レンジ下限付近',
+    range_middle: '30分レンジ中央付近',
+    unknown: '価格位置不明',
+  };
+  return labels[signal] || '価格位置メモ';
+}
+
+function buildPricePositionContext(symbolRows, latest, thresholdPct) {
+  const threshold = Number(thresholdPct);
+  const proximityPct = Number.isFinite(threshold) && threshold > 0 ? Math.max(0.04, threshold * 0.35) : 0.08;
+  const current = Number(latest?.price);
+  if (!latest || !Number.isFinite(current) || !Array.isArray(symbolRows) || symbolRows.length < 2) {
+    return {
+      ok: false,
+      signal: 'unknown',
+      label: pricePositionLabel('unknown'),
+      level: '—',
+      level_rank: 0,
+      alert_hit: false,
+      note: '価格位置を判定する履歴が不足しています。',
+      active_alerts: [],
+    };
+  }
+  const latestTime = latest.timestamp instanceof Date ? latest.timestamp : new Date(latest.timestamp);
+  const sameDayKey = jstDateKey(latestTime);
+  const dayRowsAll = symbolRows.filter((row) => row.timestamp <= latestTime && jstDateKey(row.timestamp) === sameDayKey && Number.isFinite(Number(row.price)));
+  const beforeRows = symbolRows.filter((row) => row.timestamp < latestTime && Number.isFinite(Number(row.price)));
+  const dayRowsBefore = beforeRows.filter((row) => jstDateKey(row.timestamp) === sameDayKey);
+  const rangeStart = new Date(latestTime.getTime() - 30 * 60 * 1000);
+  const rangeRowsAll = symbolRows.filter((row) => row.timestamp >= rangeStart && row.timestamp <= latestTime && Number.isFinite(Number(row.price)));
+  const rangeRowsBefore = symbolRows.filter((row) => row.timestamp >= rangeStart && row.timestamp < latestTime && Number.isFinite(Number(row.price)));
+
+  const prices = (items) => items.map((row) => Number(row.price)).filter(Number.isFinite);
+  const dayPricesAll = prices(dayRowsAll);
+  const dayPricesBefore = prices(dayRowsBefore);
+  const rangePricesAll = prices(rangeRowsAll);
+  const rangePricesBefore = prices(rangeRowsBefore);
+  const dayHigh = dayPricesAll.length ? Math.max(...dayPricesAll) : null;
+  const dayLow = dayPricesAll.length ? Math.min(...dayPricesAll) : null;
+  const prevDayHigh = dayPricesBefore.length ? Math.max(...dayPricesBefore) : dayHigh;
+  const prevDayLow = dayPricesBefore.length ? Math.min(...dayPricesBefore) : dayLow;
+  const rangeHigh = rangePricesAll.length ? Math.max(...rangePricesAll) : null;
+  const rangeLow = rangePricesAll.length ? Math.min(...rangePricesAll) : null;
+  const prevRangeHigh = rangePricesBefore.length ? Math.max(...rangePricesBefore) : rangeHigh;
+  const prevRangeLow = rangePricesBefore.length ? Math.min(...rangePricesBefore) : rangeLow;
+
+  const distanceToDayHighPct = signedPctDiff(current, dayHigh);
+  const distanceToDayLowPct = signedPctDiff(current, dayLow);
+  const distanceToPrevDayHighPct = signedPctDiff(current, prevDayHigh);
+  const distanceToPrevDayLowPct = signedPctDiff(current, prevDayLow);
+  const distanceToRangeHighPct = signedPctDiff(current, rangeHigh);
+  const distanceToRangeLowPct = signedPctDiff(current, rangeLow);
+  const distanceToPrevRangeHighPct = signedPctDiff(current, prevRangeHigh);
+  const distanceToPrevRangeLowPct = signedPctDiff(current, prevRangeLow);
+  const rangeSpanPct = Number.isFinite(Number(rangeHigh)) && Number.isFinite(Number(rangeLow)) && Number(rangeLow) > 0 ? ((Number(rangeHigh) - Number(rangeLow)) / Number(rangeLow)) * 100 : null;
+  const rangePositionRatio = Number.isFinite(Number(rangeHigh)) && Number.isFinite(Number(rangeLow)) && Number(rangeHigh) > Number(rangeLow) ? (current - Number(rangeLow)) / (Number(rangeHigh) - Number(rangeLow)) : null;
+
+  const activeAlerts = [];
+  const add = (type, label, level, levelRank, note) => {
+    activeAlerts.push({ family: 'price_position', type, label, level, level_rank: levelRank, note });
+  };
+
+  let signal = 'range_middle';
+  let level = '注意以上なし';
+  let levelRank = 0;
+  let alertHit = false;
+  let note = '価格は直近レンジの中央付近です。方向アラートや出来高と組み合わせて見ます。';
+
+  const brokePrevDayHigh = Number.isFinite(Number(distanceToPrevDayHighPct)) && distanceToPrevDayHighPct >= 0 && dayRowsBefore.length >= 2;
+  const brokePrevDayLow = Number.isFinite(Number(distanceToPrevDayLowPct)) && distanceToPrevDayLowPct <= 0 && dayRowsBefore.length >= 2;
+  const brokePrevRangeHigh = Number.isFinite(Number(distanceToPrevRangeHighPct)) && distanceToPrevRangeHighPct >= 0 && rangeRowsBefore.length >= 2;
+  const brokePrevRangeLow = Number.isFinite(Number(distanceToPrevRangeLowPct)) && distanceToPrevRangeLowPct <= 0 && rangeRowsBefore.length >= 2;
+  const nearDayHigh = Number.isFinite(Number(distanceToDayHighPct)) && Math.abs(distanceToDayHighPct) <= proximityPct;
+  const nearDayLow = Number.isFinite(Number(distanceToDayLowPct)) && Math.abs(distanceToDayLowPct) <= proximityPct;
+  const nearRangeHigh = Number.isFinite(Number(rangePositionRatio)) && rangePositionRatio >= 0.72;
+  const nearRangeLow = Number.isFinite(Number(rangePositionRatio)) && rangePositionRatio <= 0.28;
+
+  if (brokePrevDayHigh && Number.isFinite(Number(distanceToPrevDayHighPct)) && distanceToPrevDayHighPct >= Math.max(0, proximityPct * 0.25)) {
+    signal = 'day_high_breakout';
+    level = 'Lv2 注意'; levelRank = 2; alertHit = true;
+    note = '日中高値を上抜けています。追随候補にするには出来高・約定回数・コスト後Netの裏付けが必要です。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (brokePrevDayLow && Number.isFinite(Number(distanceToPrevDayLowPct)) && distanceToPrevDayLowPct <= -Math.max(0, proximityPct * 0.25)) {
+    signal = 'day_low_breakdown';
+    level = 'Lv2 注意'; levelRank = 2; alertHit = true;
+    note = '日中安値を割っています。買い候補は浅い指値を外し、反発確認後または深め指値に限定する材料です。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (brokePrevRangeHigh && Number.isFinite(Number(distanceToPrevRangeHighPct)) && distanceToPrevRangeHighPct >= Math.max(0, proximityPct * 0.25)) {
+    signal = 'range_breakout_up';
+    level = 'Lv2 注意'; levelRank = 2; alertHit = true;
+    note = '30分レンジを上抜けています。ブレイク追随候補は出来高の裏付けがある時だけ残し、弱い時は押し目待ちに寄せます。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (brokePrevRangeLow && Number.isFinite(Number(distanceToPrevRangeLowPct)) && distanceToPrevRangeLowPct <= -Math.max(0, proximityPct * 0.25)) {
+    signal = 'range_breakout_down';
+    level = 'Lv2 注意'; levelRank = 2; alertHit = true;
+    note = '30分レンジを下抜けています。逆張り買いは続落リスクを重く見て、深め指値または反発確認に限定します。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (nearDayHigh) {
+    signal = 'near_day_high';
+    level = 'Lv1 情報'; levelRank = 1;
+    note = '日中高値に近い位置です。上昇中でも現在価格追随は高値掴みになりやすく、押し目候補を優先します。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (nearDayLow) {
+    signal = 'near_day_low';
+    level = 'Lv1 情報'; levelRank = 1;
+    note = '日中安値に近い位置です。反発候補にはなりますが、下抜け時は買い候補から外す条件も同時に置きます。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (nearRangeHigh) {
+    signal = 'range_upper';
+    level = 'Lv1 情報'; levelRank = 1;
+    note = '30分レンジ上限寄りです。買い候補としては追随より、上抜け確認か押し目待ちに分ける材料です。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  } else if (nearRangeLow) {
+    signal = 'range_lower';
+    level = 'Lv1 情報'; levelRank = 1;
+    note = '30分レンジ下限寄りです。買い候補なら深すぎない指値や反発確認を比較する材料です。';
+    add(signal, pricePositionLabel(signal), level, levelRank, note);
+  }
+
+  return {
+    ok: true,
+    signal,
+    label: pricePositionLabel(signal),
+    level,
+    level_rank: levelRank,
+    alert_hit: alertHit,
+    note,
+    current_price: current,
+    day_key: sameDayKey,
+    day_high: Number.isFinite(Number(dayHigh)) ? dayHigh : null,
+    day_low: Number.isFinite(Number(dayLow)) ? dayLow : null,
+    range_high_30m: Number.isFinite(Number(rangeHigh)) ? rangeHigh : null,
+    range_low_30m: Number.isFinite(Number(rangeLow)) ? rangeLow : null,
+    range_span_pct: Number.isFinite(Number(rangeSpanPct)) ? rangeSpanPct : null,
+    range_position_ratio: Number.isFinite(Number(rangePositionRatio)) ? rangePositionRatio : null,
+    distance_to_day_high_pct: Number.isFinite(Number(distanceToDayHighPct)) ? distanceToDayHighPct : null,
+    distance_to_day_low_pct: Number.isFinite(Number(distanceToDayLowPct)) ? distanceToDayLowPct : null,
+    distance_to_range_high_pct: Number.isFinite(Number(distanceToRangeHighPct)) ? distanceToRangeHighPct : null,
+    distance_to_range_low_pct: Number.isFinite(Number(distanceToRangeLowPct)) ? distanceToRangeLowPct : null,
+    proximity_pct: proximityPct,
+    active_alerts: activeAlerts,
+  };
+}
+
+function pricePositionSummary(context) {
+  if (!context || !context.ok) return '価格位置: 判定不可';
+  const high = Number.isFinite(Number(context.distance_to_day_high_pct)) ? `${context.distance_to_day_high_pct.toFixed(3)}%` : '—';
+  const low = Number.isFinite(Number(context.distance_to_day_low_pct)) ? `${context.distance_to_day_low_pct.toFixed(3)}%` : '—';
+  const range = Number.isFinite(Number(context.range_position_ratio)) ? `${Math.round(context.range_position_ratio * 100)}%位置` : '—';
+  return `${context.label} / 日中高値差 ${high} / 日中安値差 ${low} / 30分レンジ ${range}`;
+}
+
+function applyPricePositionDecisionOverlay(decision, pricePosition, direction) {
+  if (!decision || !pricePosition || !pricePosition.ok) return decision;
+  const signal = pricePosition.signal;
+  const base = { ...decision, price_position_note: pricePosition.note };
+  if (['day_high_breakout', 'range_breakout_up'].includes(signal)) {
+    return {
+      ...base,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'breakout_or_pullback_wait',
+      decision_title: `${decision.decision_title} / ${pricePosition.label}`,
+      decision_comment: `${decision.decision_comment} ${pricePosition.label}のため、追随候補は出来高・取引回数の裏付けがある時だけ残し、弱い時は押し目待ちへ落とす判断です。`,
+      order_adjustment: `${decision.order_adjustment} 価格位置は${pricePosition.label}です。成行追随を主候補にせず、浅め指値は高値掴みリスク、標準〜押し目指値は未約定リスクとして比較します。`,
+      risk_comment: `${decision.risk_comment} ${pricePosition.label}ではブレイク失敗時の反落を外れ条件にします。`,
+    };
+  }
+  if (['day_low_breakdown', 'range_breakout_down'].includes(signal)) {
+    return {
+      ...base,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'deeper_limit_or_rebound_wait',
+      decision_title: `${decision.decision_title} / ${pricePosition.label}`,
+      decision_comment: `${decision.decision_comment} ${pricePosition.label}のため、浅い買い候補は外し、深め指値または反発確認後だけを残す判断です。`,
+      order_adjustment: `${decision.order_adjustment} 価格位置は${pricePosition.label}です。現在価格付近の買いは候補から外し、反発確認または深め指値を比較します。`,
+      risk_comment: `${decision.risk_comment} 下抜け後は続落を主リスクとして扱います。`,
+    };
+  }
+  if (['near_day_high', 'range_upper'].includes(signal) && direction === 'up') {
+    return {
+      ...base,
+      decision_title: `${decision.decision_title} / 上限接近`,
+      decision_comment: `${decision.decision_comment} 価格が上限寄りのため、買い候補は追随より押し目・標準指値を優先します。`,
+      order_adjustment: `${decision.order_adjustment} 上限接近中なので、浅すぎる指値は利益幅不足になりやすく、押し目候補まで下げる判断を残します。`,
+    };
+  }
+  if (['near_day_low', 'range_lower'].includes(signal)) {
+    return {
+      ...base,
+      decision_title: `${decision.decision_title} / 下限接近`,
+      decision_comment: `${decision.decision_comment} 価格が下限寄りのため、反発候補と下抜け見送り条件をセットで扱います。`,
+      order_adjustment: `${decision.order_adjustment} 下限接近中なので、深すぎない指値候補と反発確認後候補を比較します。下抜け時は候補から外します。`,
+    };
+  }
+  return base;
+}
+
 function directionAlertSummary(windowMoves) {
   const rows = Array.isArray(windowMoves) ? windowMoves.filter((row) => row && row.ok) : [];
   if (!rows.length) return '方向アラート判定不可';
@@ -3021,7 +3238,7 @@ function orderCandidatesForEntryBias(entryBias, { movePct, costHeavy }) {
   ];
 }
 
-function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, decision, movementWindowMoves = [], primaryDirectionAlert = null, continuationAlert = null, selectedWindowMovePct = null, selectedWindowMinutes = null }) {
+function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, decision, movementWindowMoves = [], primaryDirectionAlert = null, continuationAlert = null, pricePositionContext = null, selectedWindowMovePct = null, selectedWindowMinutes = null }) {
   const move = Number(movePct);
   const threshold = Number(thresholdPct);
   const cost = Number(costFloorPct);
@@ -3049,7 +3266,8 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
   }
   const directionSummary = directionAlertSummary(movementWindowMoves);
   const continuationSummary = continuationAlert && continuationAlert.signal !== 'no_continuation' ? `${continuationAlert.label}：${continuationAlert.note}` : '';
-  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${decision.market_context_text || marketContextSummary(volumeContext)}`;
+  const pricePositionText = pricePositionSummary(pricePositionContext);
+  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${pricePositionText}。${decision.market_context_text || marketContextSummary(volumeContext)}`;
   const conditionalForecast = decision.order_adjustment || decision.decision_comment || '条件付き見通しは未判定です。';
   const simulationUse = preferred
     ? `売買シミュレーターでは「${preferred.label}」を主候補として検証し、除外候補は取引しない比較対象にします。`
@@ -3084,6 +3302,9 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
       supporting_windows: Array.isArray(continuationAlert?.supporting_windows) ? continuationAlert.supporting_windows : [],
       threshold_windows: Array.isArray(continuationAlert?.threshold_windows) ? continuationAlert.threshold_windows : [],
       short_term_confirmation: continuationAlert?.short_term_confirmation || 'unknown',
+      price_position_signal: pricePositionContext?.signal || 'unknown',
+      price_position_label: pricePositionContext?.label || '価格位置不明',
+      price_position_note: pricePositionContext?.note || '',
       selected_window_minutes: Number.isFinite(Number(selectedWindowMinutes)) ? Number(selectedWindowMinutes) : windowMinutes,
       selected_window_move_pct: Number.isFinite(Number(selectedWindowMovePct)) ? Number(selectedWindowMovePct) : (Number.isFinite(move) ? move : null),
       decision_basis_window_minutes: windowMinutes,
@@ -3101,9 +3322,13 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
       cost_floor_pct: Number.isFinite(cost) ? cost : null,
       cost_heavy: Boolean(costHeavy),
     },
+    price_position: pricePositionContext || null,
+    price_position_summary: pricePositionText,
+    reference_mode_context: null,
     active_alerts: [
       ...(Array.isArray(movementWindowMoves) ? movementWindowMoves.filter((row) => row && (row.level_rank || 0) >= 1).map((row) => ({ family: 'price_direction', window_minutes: row.window_minutes, type: row.movement_alert_type, label: row.movement_alert_label, level: row.level, move_pct: row.move_pct })) : []),
       ...((continuationAlert && (continuationAlert.level_rank || 0) >= 1) ? [{ family: 'multi_window_continuation', type: continuationAlert.signal, label: continuationAlert.label, level: continuationAlert.level, direction: continuationAlert.direction, supporting_windows: continuationAlert.supporting_windows, threshold_windows: continuationAlert.threshold_windows, alert_hit: continuationAlert.alert_hit }] : []),
+      ...(Array.isArray(pricePositionContext?.active_alerts) ? pricePositionContext.active_alerts.map((item) => ({ ...item, alert_hit: Boolean(pricePositionContext.alert_hit) })) : []),
     ],
     order_candidates: candidates,
     preferred_candidate: preferred,
@@ -3125,6 +3350,8 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
   const hasVolumeSurge = rows.some((row) => Number(row.volume_context?.volume_rank || 0) >= 4 || Number(row.volume_context?.trade_count_rank || 0) >= 4);
   const hasCostHeavy = rows.some((row) => row.decision_context?.market_state?.cost_heavy);
   const hasContinuation = rows.some((row) => row.continuation_alert && (row.continuation_alert.level_rank || 0) >= 1);
+  const hasPricePosition = rows.some((row) => row.price_position_context && (row.price_position_context.level_rank || 0) >= 1);
+  const hasReferenceModes = rows.some((row) => row.reference_mode_context);
   return [
     {
       family: '市場判断 / decision_context',
@@ -3145,10 +3372,16 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
       note: `上昇/下落/急騰/急落/Moving up/downを${windowMinutes}分窓と1m/5m/15m/30m/1h窓でdecision_contextへ渡します。`,
     },
     {
-      family: '価格到達・相対価格',
-      status: '設計中',
+      family: '価格到達・レンジ系',
+      status: hasPricePosition ? '更新2 着手済み' : '更新2 着手済み',
       priority: 'A',
-      note: '前回高値/安値、日中始値、レンジ上限/下限を取引候補の条件にします。',
+      note: '日中高値/安値、30分レンジ上限/下限、突破/接近をdecision_contextへ渡します。',
+    },
+    {
+      family: '参考・別モード',
+      status: hasReferenceModes ? '更新2 着手済み' : '更新2 着手済み',
+      priority: 'A',
+      note: 'simple/rolling/sustainedを主判定と参考値に分け、選択外モードもdecision_contextへ残します。',
     },
     {
       family: '成行・コスト注意',
@@ -3409,6 +3642,9 @@ async function alertPreview(params = {}) {
         primary_direction_alert: null,
         continuation_alert: null,
         continuation_alert_summary: '継続判定不可',
+        price_position_context: null,
+        price_position_summary: '価格位置: 判定不可',
+        reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
         threshold_pct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct,
@@ -3455,6 +3691,9 @@ async function alertPreview(params = {}) {
         primary_direction_alert: null,
         continuation_alert: null,
         continuation_alert_summary: '継続判定不可',
+        price_position_context: null,
+        price_position_summary: '価格位置: 判定不可',
+        reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
         threshold_pct: thresholdForSymbol,
@@ -3495,6 +3734,9 @@ async function alertPreview(params = {}) {
         primary_direction_alert: null,
         continuation_alert: null,
         continuation_alert_summary: '継続判定不可',
+        price_position_context: null,
+        price_position_summary: '価格位置: 判定不可',
+        reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
         threshold_pct: thresholdForSymbol,
@@ -3515,6 +3757,7 @@ async function alertPreview(params = {}) {
     const primaryDirectionAlert = choosePrimaryDirectionAlert(directionWindowMoves, windowMinutes);
     const selectedDirectionSnapshot = directionWindowMoves.find((row) => Number(row.window_minutes) === Number(windowMinutes)) || null;
     const continuationAlert = buildMultiWindowContinuation(directionWindowMoves, windowMinutes);
+    const pricePositionContext = buildPricePositionContext(symbolRows, latest, thresholdForSymbol);
     const direction = movementDirection(movePct);
     let streakCount = 0;
     for (let i = windowRows.length - 1; i >= 0; i -= 1) {
@@ -3555,18 +3798,23 @@ async function alertPreview(params = {}) {
     const effectiveDirectionSnapshot = primaryIsStronger ? primaryDirectionAlert : null;
     const effectiveLevelInfo = effectiveDirectionSnapshot ? directionLevelInfoFromSnapshot(effectiveDirectionSnapshot, levelInfo) : levelInfo;
     const continuationIsStronger = continuationAlert && (continuationAlert.level_rank || 0) > (effectiveLevelInfo.level_rank || 0);
+    const pricePositionIsStronger = pricePositionContext && (pricePositionContext.level_rank || 0) > (continuationIsStronger ? (continuationAlert.level_rank || 0) : (effectiveLevelInfo.level_rank || 0));
+    const contextLevelInfo = pricePositionIsStronger
+      ? { ...effectiveLevelInfo, level: pricePositionContext.level, level_rank: pricePositionContext.level_rank, movement_alert_type: pricePositionContext.signal, movement_alert_label: pricePositionContext.label }
+      : (continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo);
     const decisionBasisMovePct = Number.isFinite(Number(effectiveDirectionSnapshot?.move_pct)) ? Number(effectiveDirectionSnapshot.move_pct) : movePct;
     const decisionBasisWindowMinutes = Number.isFinite(Number(effectiveDirectionSnapshot?.window_minutes)) ? Number(effectiveDirectionSnapshot.window_minutes) : windowMinutes;
-    const alertHit = Boolean((hit && levelInfo.alert_hit) || effectiveDirectionSnapshot?.alert_hit || continuationAlert?.alert_hit);
+    const alertHit = Boolean((hit && levelInfo.alert_hit) || effectiveDirectionSnapshot?.alert_hit || continuationAlert?.alert_hit || pricePositionContext?.alert_hit);
     const volumeContext = volumeContextBySymbol[symbol] || null;
     let decision = buildOrderDecisionComment({
       movePct: decisionBasisMovePct,
       thresholdPct: thresholdForSymbol,
       costFloorPct,
-      levelInfo: continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo,
+      levelInfo: contextLevelInfo,
       volumeContext,
     });
     decision = applyContinuationDecisionOverlay(decision, continuationAlert, selectedDirectionSnapshot);
+    decision = applyPricePositionDecisionOverlay(decision, pricePositionContext, movementDirection(decisionBasisMovePct));
     const decisionContext = enrichDecisionContext({
       symbol,
       windowMinutes: decisionBasisWindowMinutes,
@@ -3574,22 +3822,34 @@ async function alertPreview(params = {}) {
       movePct: decisionBasisMovePct,
       thresholdPct: thresholdForSymbol,
       costFloorPct,
-      levelInfo: continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo,
+      levelInfo: contextLevelInfo,
       volumeContext,
       decision,
       movementWindowMoves: directionWindowMoves,
       primaryDirectionAlert,
       continuationAlert,
+      pricePositionContext,
       selectedWindowMovePct: movePct,
       selectedWindowMinutes: windowMinutes,
     });
+    const referenceModeContext = {
+      selected_mode: alertMode,
+      simple: { hit: simpleHit, move_pct: movePct, threshold_pct: thresholdForSymbol },
+      rolling: { hit: rollingHit, streak: rollingStreak, up_streak: rollingUpStreak, down_streak: rollingDownStreak, min_points: rollingMinPoints },
+      sustained: { hit: sustainedHit, dominant_direction_ratio: dominantDirectionRatio, required_ratio: risingRatioThreshold, rising_ratio: risingRatio, falling_ratio: fallingRatio },
+      note: '選択モードを主判定に使い、別モードは参考値として売買シミュレーター設計用に残します。',
+    };
+    decisionContext.reference_mode_context = referenceModeContext;
+    if ((alertMode === 'rolling' && rollingHit) || (alertMode === 'sustained' && sustainedHit)) {
+      decisionContext.active_alerts.push({ family: 'alert_mode', type: alertMode, label: alertMode === 'rolling' ? 'rollingモード到達' : 'sustainedモード到達', level: levelInfo.level, alert_hit: true });
+    }
     return {
       symbol,
       status: alertHit
-        ? (continuationAlert?.alert_hit && continuationIsStronger ? `${continuationAlert.label}アラート` : (effectiveDirectionSnapshot ? directionAlertStatus(effectiveDirectionSnapshot, effectiveLevelInfo.movement_status) : (alertMode === 'rolling' ? `ローリング${levelInfo.movement_alert_label}アラート` : alertMode === 'sustained' ? `持続${levelInfo.movement_alert_label}アラート` : levelInfo.movement_status)))
+        ? (pricePositionIsStronger ? `${pricePositionContext.label}アラート` : (continuationAlert?.alert_hit && continuationIsStronger ? `${continuationAlert.label}アラート` : (effectiveDirectionSnapshot ? directionAlertStatus(effectiveDirectionSnapshot, effectiveLevelInfo.movement_status) : (alertMode === 'rolling' ? `ローリング${levelInfo.movement_alert_label}アラート` : alertMode === 'sustained' ? `持続${levelInfo.movement_alert_label}アラート` : levelInfo.movement_status))))
         : (effectiveLevelInfo.level_rank === 1 ? effectiveLevelInfo.movement_status : '監視中'),
-      level: continuationIsStronger ? continuationAlert.level : effectiveLevelInfo.level,
-      level_rank: continuationIsStronger ? continuationAlert.level_rank : effectiveLevelInfo.level_rank,
+      level: contextLevelInfo.level,
+      level_rank: contextLevelInfo.level_rank,
       level_note: decision.decision_comment || effectiveLevelInfo.level_note,
       raw_level_note: effectiveLevelInfo.level_note,
       alert_hit: alertHit,
@@ -3602,10 +3862,13 @@ async function alertPreview(params = {}) {
       direction: effectiveLevelInfo.direction,
       direction_label: effectiveLevelInfo.direction_label,
       movement_strength: effectiveLevelInfo.movement_strength,
-      movement_alert_type: continuationIsStronger ? continuationAlert.signal : effectiveLevelInfo.movement_alert_type,
-      movement_alert_label: continuationIsStronger ? continuationAlert.label : effectiveLevelInfo.movement_alert_label,
+      movement_alert_type: pricePositionIsStronger ? pricePositionContext.signal : (continuationIsStronger ? continuationAlert.signal : effectiveLevelInfo.movement_alert_type),
+      movement_alert_label: pricePositionIsStronger ? pricePositionContext.label : (continuationIsStronger ? continuationAlert.label : effectiveLevelInfo.movement_alert_label),
       primary_direction_alert: primaryDirectionAlert,
       continuation_alert: continuationAlert,
+      price_position_context: pricePositionContext,
+      price_position_summary: pricePositionSummary(pricePositionContext),
+      reference_mode_context: referenceModeContext,
       direction_alerts: directionWindowMoves,
       direction_alert_summary: directionAlertSummary(directionWindowMoves),
       continuation_alert_summary: continuationAlert ? `${continuationAlert.label}: ${continuationAlert.note}` : '—',
@@ -3670,6 +3933,9 @@ async function alertPreview(params = {}) {
         primary_direction_alert: row.primary_direction_alert,
         continuation_alert: row.continuation_alert,
         continuation_alert_summary: row.continuation_alert_summary,
+        price_position_context: row.price_position_context,
+        price_position_summary: row.price_position_summary,
+        reference_mode_context: row.reference_mode_context,
         volume_context: row.volume_context,
         entry_bias: row.entry_bias,
         decision_title: row.decision_title,

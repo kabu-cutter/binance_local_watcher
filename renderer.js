@@ -98,6 +98,86 @@ function continuationAlertText(row) {
   return `${c.label || '継続判定'}${windows} / ${c.note || ''}`;
 }
 
+function pricePositionText(row) {
+  const ctx = row?.price_position_context || row?.decision_context?.price_position;
+  if (!ctx || !ctx.ok) return '価格位置: 判定不可';
+  const range = Number.isFinite(Number(ctx.range_position_ratio)) ? `${Math.round(Number(ctx.range_position_ratio) * 100)}%位置` : '—';
+  const dayHigh = Number.isFinite(Number(ctx.distance_to_day_high_pct)) ? `${Number(ctx.distance_to_day_high_pct).toFixed(3)}%` : '—';
+  const dayLow = Number.isFinite(Number(ctx.distance_to_day_low_pct)) ? `${Number(ctx.distance_to_day_low_pct).toFixed(3)}%` : '—';
+  return `${ctx.label || '価格位置'} / 日中高値差 ${dayHigh} / 日中安値差 ${dayLow} / 30分レンジ ${range}`;
+}
+
+function referenceModeText(row) {
+  const ctx = row?.reference_mode_context || row?.decision_context?.reference_mode_context;
+  if (!ctx) return '別モード参考値: —';
+  const selected = ctx.selected_mode || 'simple';
+  const rolling = ctx.rolling ? `rolling ${ctx.rolling.hit ? '到達' : '未達'} / 連続${ctx.rolling.streak ?? 0}` : 'rolling —';
+  const sustained = ctx.sustained ? `sustained ${ctx.sustained.hit ? '到達' : '未達'} / 方向比率${pct(ctx.sustained.dominant_direction_ratio, 1)}` : 'sustained —';
+  return `主:${selected} / ${rolling} / ${sustained}`;
+}
+
+function alertDetailPair(label, value, className = '') {
+  return `<div class="alert-detail-pair ${className}"><small>${escapeHtml(label)}</small><span>${escapeHtml(value || '—')}</span></div>`;
+}
+
+function renderAlertPreviewDetailsTable(el, rows, data) {
+  if (!el) return;
+  el.classList.add('alert-detail-table');
+  el.innerHTML = '';
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>通貨</th><th>判定</th><th>状態</th><th>変動率</th><th>しきい値</th><th>方向・継続</th><th>価格位置</th></tr>';
+  el.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  rows.forEach((row) => {
+    const main = document.createElement('tr');
+    main.className = 'alert-detail-main-row';
+    const directionSummary = [row.direction, row.movement_alert, row.continuation_alert].filter((v) => v && v !== '—').join(' / ') || '—';
+    const cells = [row.symbol, row.level, row.status, row.move_pct, row.threshold, directionSummary, row.price_position];
+    cells.forEach((value) => {
+      const td = document.createElement('td');
+      td.textContent = value || '—';
+      main.appendChild(td);
+    });
+    tbody.appendChild(main);
+
+    const detail = document.createElement('tr');
+    detail.className = 'alert-detail-second-row';
+    const td = document.createElement('td');
+    td.colSpan = 7;
+    const firstLine = [
+      alertDetailPair('判断コメント', row.note, 'is-wide'),
+      alertDetailPair('出来高コンテキスト', row.volume),
+      alertDetailPair('別モード参考値', row.reference_mode),
+    ].join('');
+    const secondLine = [
+      alertDetailPair('注文位置', row.order_hint, 'is-wide'),
+      alertDetailPair('利確幅', row.target_hint),
+      alertDetailPair('リスク', row.risk_hint),
+    ].join('');
+    const thirdLine = [
+      alertDetailPair('見通し信頼度', row.confidence),
+      alertDetailPair('残す主候補', row.preferred_candidate),
+      alertDetailPair('除外候補', row.excluded_candidates),
+      alertDetailPair('外れ条件', row.invalidation, 'is-wide'),
+      alertDetailPair('シミュレーター連携', row.simulator_note, 'is-wide'),
+    ].join('');
+    const smallLine = [
+      alertDetailPair('連続回数', row.streak),
+      alertDetailPair('rolling連続', row.rolling_streak),
+      alertDetailPair('上昇比率', row.rising_ratio),
+      alertDetailPair('下落/方向比率', row.direction_ratio),
+      alertDetailPair('サンプル', row.samples),
+      alertDetailPair('最新価格', row.latest),
+      alertDetailPair('起点価格', row.base),
+      alertDetailPair('最新時刻', row.latest_time),
+    ].join('');
+    td.innerHTML = `<div class="alert-detail-two-tier"><div class="alert-detail-line">${firstLine}</div><div class="alert-detail-line">${secondLine}</div><div class="alert-detail-line alert-detail-line-context">${thirdLine}</div><div class="alert-detail-line alert-detail-line-small">${smallLine}</div></div>`;
+    detail.appendChild(td);
+    tbody.appendChild(detail);
+  });
+  el.appendChild(tbody);
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -278,6 +358,7 @@ async function postJson(path, body) {
 }
 
 function renderTable(el, columns, rows) {
+  if (el) el.classList.remove('alert-detail-table');
   el.innerHTML = '';
   const thead = document.createElement('thead');
   const trh = document.createElement('tr');
@@ -918,17 +999,17 @@ function updateAlertModeHints() {
     if (isActive) {
       badge.textContent = '使用中';
     } else {
-      badge.textContent = '今は未使用';
+      badge.textContent = '参考値';
     }
   });
   const hint = document.getElementById('alertModeHint');
   if (!hint) return;
   if (mode === 'rolling') {
-    hint.textContent = 'rollingでは、直近窓内の連続上昇本数を重視します。暗めの項目は今のrolling判定では使わない参考項目です。';
+    hint.textContent = 'rollingでは、直近窓内の連続上昇/下落本数を重視します。選択中は主判定、未選択時も参考値としてdecision_contextへ残します。';
   } else if (mode === 'sustained') {
-    hint.textContent = 'sustainedでは、直近窓内の変動率と上昇比率%を組み合わせます。暗めの項目は今のsustained判定では使わない参考項目です。';
+    hint.textContent = 'sustainedでは、直近窓内の変動率と方向比率%を組み合わせます。選択中は主判定、未選択時も参考値としてdecision_contextへ残します。';
   } else {
-    hint.textContent = 'simpleでは、窓・しきい値を使って単純な変動率を見ます。暗めの項目は今のsimple判定では使いません。';
+    hint.textContent = 'simpleでは、窓・しきい値の単純な変動率を主判定にします。rolling/sustainedも別モード参考値としてdecision_contextへ残します。';
   }
 }
 
@@ -1231,6 +1312,8 @@ async function loadAlertPreview() {
     movement_alert: row.movement_alert_label || row.decision_context?.market_state?.movement_alert_label || '—',
     direction_alerts: row.direction_alert_summary || row.decision_context?.market_state?.direction_window_summary || '—',
     continuation_alert: continuationAlertText(row),
+    price_position: pricePositionText(row),
+    reference_mode: referenceModeText(row),
     note: row.level_note || row.decision_comment || '—',
     volume: row.market_context_text || volumeContextText(row.volume_context),
     order_hint: row.order_adjustment || '—',
@@ -1244,39 +1327,13 @@ async function loadAlertPreview() {
     streak: `${row.streak_count ?? 0}`,
     rolling_streak: `${row.rolling_streak ?? 0}`,
     rising_ratio: row.rising_ratio === null || row.rising_ratio === undefined ? '—' : pct(row.rising_ratio, 1),
+    direction_ratio: row.dominant_direction_ratio === null || row.dominant_direction_ratio === undefined ? '—' : pct(row.dominant_direction_ratio, 1),
     samples: `${row.samples ?? 0}`,
     latest: yen(row.latest_price),
     base: yen(row.base_price),
     latest_time: row.latest_time || '—',
   }));
-  renderTable(document.getElementById('alertPreviewTable'), [
-    ['symbol', '通貨'],
-    ['level', '判定'],
-    ['status', '状態'],
-    ['move_pct', `変動率(${data.window_minutes}分)`],
-    ['threshold', '適用しきい値'],
-    ['direction', '方向'],
-    ['movement_alert', '方向アラート'],
-    ['direction_alerts', '窓別方向メモ'],
-    ['continuation_alert', '継続判定'],
-    ['note', '判断コメント'],
-    ['volume', '出来高コンテキスト'],
-    ['order_hint', '注文位置の考え方'],
-    ['target_hint', '利確幅の考え方'],
-    ['risk_hint', 'リスクの見方'],
-    ['confidence', '見通し信頼度'],
-    ['preferred_candidate', '残す主候補'],
-    ['excluded_candidates', '除外候補'],
-    ['invalidation', '外れ条件'],
-    ['simulator_note', 'シミュレーター連携'],
-    ['streak', '連続回数'],
-    ['rolling_streak', 'rolling連続'],
-    ['rising_ratio', '上昇比率'],
-    ['samples', 'サンプル数'],
-    ['latest', '最新価格'],
-    ['base', '起点価格'],
-    ['latest_time', '最新時刻'],
-  ], rows);
+  renderAlertPreviewDetailsTable(document.getElementById('alertPreviewTable'), rows, data);
   await loadAlertHistory();
 }
 

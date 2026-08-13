@@ -131,7 +131,16 @@
           "rows[].rolling_up_streak",
           "rows[].rolling_down_streak",
           "rows[].decision_context.market_state.direction_window_moves",
-          "rows[].decision_context.active_alerts"
+          "rows[].decision_context.active_alerts",
+          "rows[].price_position_context",
+          "rows[].price_position_summary",
+          "rows[].reference_mode_context",
+          "rows[].decision_context.price_position",
+          "rows[].decision_context.price_position_summary",
+          "rows[].decision_context.reference_mode_context",
+          "rows[].decision_context.market_state.price_position_signal",
+          "rows[].decision_context.market_state.price_position_label",
+          "rows[].decision_context.active_alerts[].family=price_position"
         ]
       },
       "alert-history": {

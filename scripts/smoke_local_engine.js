@@ -53,8 +53,13 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'selected_window_move_pct')), 'alert-preview.selected_window_move_pct missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'decision_basis_move_pct')), 'alert-preview.decision_basis_move_pct missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'continuation_alert')), 'alert-preview.continuation_alert missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'price_position_context')), 'alert-preview.price_position_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'reference_mode_context')), 'alert-preview.reference_mode_context missing');
   assert(alertPreview.rows.every((row) => row.decision_context && row.decision_context.market_state), 'alert-preview.decision_context.market_state missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'continuation_signal')), 'alert-preview.decision_context.market_state.continuation_signal missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'price_position')), 'alert-preview.decision_context.price_position missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'reference_mode_context')), 'alert-preview.decision_context.reference_mode_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'price_position_signal')), 'alert-preview.decision_context.market_state.price_position_signal missing');
   assert(Array.isArray(alertPreview.growth_alert_context), 'alert-preview.growth_alert_context missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
 
