@@ -2558,6 +2558,364 @@ function movementStrength(movePct, thresholdPct) {
   return 'small';
 }
 
+const ALERT_DIRECTION_WINDOWS = [1, 5, 15, 30, 60];
+
+function movementDirectionLabel(direction) {
+  if (direction === 'up') return '上昇';
+  if (direction === 'down') return '下落';
+  if (direction === 'flat') return '横ばい';
+  return '不明';
+}
+
+function movementStrengthLabel(strength) {
+  if (strength === 'strong') return '強い';
+  if (strength === 'threshold') return 'しきい値到達';
+  if (strength === 'info') return '小さめ';
+  if (strength === 'small') return '小動き';
+  return '不明';
+}
+
+function movementAlertType(movePct, thresholdPct) {
+  const direction = movementDirection(movePct);
+  const strength = movementStrength(movePct, thresholdPct);
+  if (direction === 'up' && strength === 'strong') return 'spike_up';
+  if (direction === 'up' && strength === 'threshold') return 'rise';
+  if (direction === 'up' && strength === 'info') return 'moving_up';
+  if (direction === 'down' && strength === 'strong') return 'spike_down';
+  if (direction === 'down' && strength === 'threshold') return 'fall';
+  if (direction === 'down' && strength === 'info') return 'moving_down';
+  if (direction === 'flat') return 'flat';
+  return 'quiet';
+}
+
+function movementAlertLabel(type) {
+  const labels = {
+    spike_up: '急騰',
+    rise: '上昇',
+    moving_up: 'Moving up',
+    spike_down: '急落',
+    fall: '下落',
+    moving_down: 'Moving down',
+    flat: '横ばい',
+    quiet: '小動き',
+    data_unavailable: '判定不可',
+  };
+  return labels[type] || '小動き';
+}
+
+function directionLevelInfo(movePct, thresholdPct) {
+  const move = Number(movePct);
+  const threshold = Number(thresholdPct);
+  const direction = movementDirection(move);
+  const strength = movementStrength(move, threshold);
+  const type = movementAlertType(move, threshold);
+  if (!Number.isFinite(move) || !Number.isFinite(threshold) || threshold <= 0) {
+    return {
+      level: '—', level_rank: 0, level_note: '判定不可', alert_hit: false,
+      direction, direction_label: movementDirectionLabel(direction), movement_strength: strength,
+      movement_alert_type: 'data_unavailable', movement_alert_label: '判定不可', movement_status: '判定不可', movement_side: 'none',
+    };
+  }
+  if (strength === 'strong') {
+    const sideLabel = direction === 'down' ? '急落' : direction === 'up' ? '急騰' : '急変';
+    return {
+      level: 'Lv3 警戒', level_rank: 3, level_note: `${sideLabel}。しきい値の2倍以上で、実取引では追随・逆張りの両方を慎重に扱います。`, alert_hit: true,
+      direction, direction_label: movementDirectionLabel(direction), movement_strength: strength,
+      movement_alert_type: type, movement_alert_label: movementAlertLabel(type), movement_status: `${sideLabel}アラート`, movement_side: direction,
+    };
+  }
+  if (strength === 'threshold') {
+    const sideLabel = direction === 'down' ? '下落' : direction === 'up' ? '上昇' : '変動';
+    return {
+      level: 'Lv2 注意', level_rank: 2, level_note: `${sideLabel}しきい値に到達。注意表示と履歴保存の対象です。`, alert_hit: true,
+      direction, direction_label: movementDirectionLabel(direction), movement_strength: strength,
+      movement_alert_type: type, movement_alert_label: movementAlertLabel(type), movement_status: `${sideLabel}アラート`, movement_side: direction,
+    };
+  }
+  if (strength === 'info') {
+    const sideLabel = direction === 'down' ? 'Moving down' : direction === 'up' ? 'Moving up' : '小動き';
+    return {
+      level: 'Lv1 情報', level_rank: 1, level_note: `${sideLabel}。注意以上ではありませんが、方向メモとして残します。`, alert_hit: false,
+      direction, direction_label: movementDirectionLabel(direction), movement_strength: strength,
+      movement_alert_type: type, movement_alert_label: movementAlertLabel(type), movement_status: sideLabel, movement_side: direction,
+    };
+  }
+  return {
+    level: '注意以上なし', level_rank: 0, level_note: 'しきい値未満。方向メモとして市場状態だけ表示します。', alert_hit: false,
+    direction, direction_label: movementDirectionLabel(direction), movement_strength: strength,
+    movement_alert_type: type, movement_alert_label: movementAlertLabel(type), movement_status: direction === 'down' ? '小さな下落' : direction === 'up' ? '小さな上昇' : '小動き', movement_side: direction,
+  };
+}
+
+function computeWindowMoveSnapshot(symbolRows, latest, windowMinutes, thresholdPct) {
+  const minutes = Math.max(1, Math.min(240, safeInt(windowMinutes, 15)));
+  if (!latest || !Array.isArray(symbolRows) || symbolRows.length < 2) {
+    return {
+      window_minutes: minutes,
+      ok: false,
+      samples: Array.isArray(symbolRows) ? symbolRows.length : 0,
+      move_pct: null,
+      base_price: null,
+      latest_price: latest?.price ?? null,
+      direction: 'unknown',
+      direction_label: '不明',
+      movement_strength: 'unknown',
+      movement_alert_type: 'data_unavailable',
+      movement_alert_label: '判定不可',
+      level: '—',
+      level_rank: 0,
+      alert_hit: false,
+      note: '価格履歴が不足しています。',
+    };
+  }
+  const windowStart = new Date(latest.timestamp.getTime() - minutes * 60 * 1000);
+  const windowRows = symbolRows.filter((row) => row.timestamp >= windowStart && row.timestamp <= latest.timestamp);
+  const base = windowRows[0];
+  if (!base || !Number.isFinite(base.price) || base.price <= 0) {
+    return {
+      window_minutes: minutes,
+      ok: false,
+      samples: windowRows.length,
+      move_pct: null,
+      base_price: null,
+      latest_price: latest.price,
+      direction: 'unknown',
+      direction_label: '不明',
+      movement_strength: 'unknown',
+      movement_alert_type: 'data_unavailable',
+      movement_alert_label: '判定不可',
+      level: '—',
+      level_rank: 0,
+      alert_hit: false,
+      note: '窓内の起点価格が不足しています。',
+    };
+  }
+  const movePct = ((latest.price - base.price) / base.price) * 100;
+  const levelInfo = directionLevelInfo(movePct, thresholdPct);
+  return {
+    window_minutes: minutes,
+    ok: true,
+    samples: windowRows.length,
+    move_pct: movePct,
+    base_price: base.price,
+    latest_price: latest.price,
+    direction: levelInfo.direction,
+    direction_label: levelInfo.direction_label,
+    movement_strength: levelInfo.movement_strength,
+    movement_strength_label: movementStrengthLabel(levelInfo.movement_strength),
+    movement_alert_type: levelInfo.movement_alert_type,
+    movement_alert_label: levelInfo.movement_alert_label,
+    level: levelInfo.level,
+    level_rank: levelInfo.level_rank,
+    alert_hit: levelInfo.alert_hit,
+    note: levelInfo.level_note,
+  };
+}
+
+function buildDirectionWindowSnapshots(symbolRows, latest, mainWindowMinutes, thresholdPct) {
+  const windows = Array.from(new Set([safeInt(mainWindowMinutes, 15), ...ALERT_DIRECTION_WINDOWS])).filter((value) => value > 0).sort((a, b) => a - b);
+  return windows.map((minutes) => computeWindowMoveSnapshot(symbolRows, latest, minutes, thresholdPct));
+}
+
+function choosePrimaryDirectionAlert(windowMoves, mainWindowMinutes) {
+  const rows = Array.isArray(windowMoves) ? windowMoves.filter((row) => row && row.ok) : [];
+  if (!rows.length) return null;
+  const main = rows.find((row) => Number(row.window_minutes) === Number(mainWindowMinutes));
+  const ranked = rows.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || (Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0))));
+  const strongest = ranked[0] || main || rows[0];
+  if (!main) return strongest;
+  // 選択中の窓は表示に残すが、より強い別窓アラートを潰さない。
+  // 例: 15分はLv1でも、30分/60分がしきい値超えなら中期上昇を判断の軸にする。
+  if ((strongest.level_rank || 0) > (main.level_rank || 0)) return strongest;
+  if ((strongest.level_rank || 0) === (main.level_rank || 0) && (strongest.level_rank || 0) >= 2) return strongest;
+  if ((main.level_rank || 0) >= 1) return main;
+  return strongest;
+}
+
+function directionLevelInfoFromSnapshot(snapshot, fallbackLevelInfo) {
+  if (!snapshot || !snapshot.ok) return fallbackLevelInfo;
+  return {
+    level: snapshot.level || fallbackLevelInfo?.level || '注意以上なし',
+    level_rank: Number.isFinite(Number(snapshot.level_rank)) ? Number(snapshot.level_rank) : Number(fallbackLevelInfo?.level_rank || 0),
+    level_note: snapshot.note || fallbackLevelInfo?.level_note || '',
+    alert_hit: Boolean(snapshot.alert_hit),
+    direction: snapshot.direction || fallbackLevelInfo?.direction || 'unknown',
+    direction_label: snapshot.direction_label || movementDirectionLabel(snapshot.direction),
+    movement_strength: snapshot.movement_strength || fallbackLevelInfo?.movement_strength || 'unknown',
+    movement_alert_type: snapshot.movement_alert_type || fallbackLevelInfo?.movement_alert_type || 'quiet',
+    movement_alert_label: snapshot.movement_alert_label || fallbackLevelInfo?.movement_alert_label || movementAlertLabel(snapshot.movement_alert_type),
+    movement_status: `${snapshot.window_minutes}分${snapshot.movement_alert_label || '方向'}アラート`,
+    movement_side: snapshot.direction || fallbackLevelInfo?.movement_side || 'none',
+  };
+}
+
+function directionAlertStatus(snapshot, fallbackStatus) {
+  if (!snapshot || !snapshot.ok) return fallbackStatus || '監視中';
+  if ((snapshot.level_rank || 0) >= 2) return `${snapshot.window_minutes}分${snapshot.movement_alert_label}アラート`;
+  if ((snapshot.level_rank || 0) === 1) return `${snapshot.window_minutes}分${snapshot.movement_alert_label}`;
+  return fallbackStatus || `${snapshot.window_minutes}分小動き`;
+}
+
+function buildMultiWindowContinuation(windowMoves, mainWindowMinutes) {
+  const rows = Array.isArray(windowMoves) ? windowMoves.filter((row) => row && row.ok && Number.isFinite(Number(row.move_pct))) : [];
+  if (!rows.length) {
+    return {
+      signal: 'unknown',
+      label: '継続判定不可',
+      direction: 'unknown',
+      level: '—',
+      level_rank: 0,
+      alert_hit: false,
+      supporting_windows: [],
+      threshold_windows: [],
+      short_term_confirmation: 'unknown',
+      note: '複数窓の価格履歴が不足しています。',
+    };
+  }
+  const main = rows.find((row) => Number(row.window_minutes) === Number(mainWindowMinutes));
+  const upRows = rows.filter((row) => row.direction === 'up');
+  const downRows = rows.filter((row) => row.direction === 'down');
+  const upHitRows = upRows.filter((row) => (row.level_rank || 0) >= 2);
+  const downHitRows = downRows.filter((row) => (row.level_rank || 0) >= 2);
+  const upInfoRows = upRows.filter((row) => (row.level_rank || 0) >= 1);
+  const downInfoRows = downRows.filter((row) => (row.level_rank || 0) >= 1);
+  const upScore = upHitRows.length * 3 + upInfoRows.length;
+  const downScore = downHitRows.length * 3 + downInfoRows.length;
+  const direction = upScore > downScore ? 'up' : downScore > upScore ? 'down' : (main?.direction || 'flat');
+  const infoRows = direction === 'up' ? upInfoRows : direction === 'down' ? downInfoRows : [];
+  const hitRows = direction === 'up' ? upHitRows : direction === 'down' ? downHitRows : [];
+  const mediumHitRows = hitRows.filter((row) => Number(row.window_minutes) >= 30);
+  const shortRows = rows.filter((row) => Number(row.window_minutes) <= 15);
+  const shortSame = shortRows.filter((row) => row.direction === direction && (row.level_rank || 0) >= 1);
+  const shortHit = shortRows.some((row) => row.direction === direction && (row.level_rank || 0) >= 2);
+  const shortTermConfirmation = shortHit ? 'strong' : shortSame.length ? 'weak' : 'none';
+  const supportingWindows = infoRows.map((row) => row.window_minutes);
+  const thresholdWindows = hitRows.map((row) => row.window_minutes);
+  const directionLabel = movementDirectionLabel(direction);
+
+  if (direction === 'up' && mediumHitRows.length >= 1 && infoRows.length >= 2) {
+    return {
+      signal: 'upward_continuation',
+      label: '中期上昇継続',
+      direction,
+      level: 'Lv2 注意',
+      level_rank: 2,
+      alert_hit: true,
+      supporting_windows: supportingWindows,
+      threshold_windows: thresholdWindows,
+      short_term_confirmation: shortTermConfirmation,
+      note: `${thresholdWindows.join('/')}分で上昇しきい値超え。${Number(mainWindowMinutes)}分が未達でも、中期上昇は判断材料に残します。`,
+    };
+  }
+  if (direction === 'down' && mediumHitRows.length >= 1 && infoRows.length >= 2) {
+    return {
+      signal: 'downward_continuation',
+      label: '中期下落継続',
+      direction,
+      level: 'Lv2 注意',
+      level_rank: 2,
+      alert_hit: true,
+      supporting_windows: supportingWindows,
+      threshold_windows: thresholdWindows,
+      short_term_confirmation: shortTermConfirmation,
+      note: `${thresholdWindows.join('/')}分で下落しきい値超え。${Number(mainWindowMinutes)}分が未達でも、中期下落は判断材料に残します。`,
+    };
+  }
+  if (direction === 'up' && hitRows.length >= 2) {
+    return {
+      signal: 'upward_multi_window',
+      label: '複数窓上昇',
+      direction,
+      level: 'Lv2 注意',
+      level_rank: 2,
+      alert_hit: true,
+      supporting_windows: supportingWindows,
+      threshold_windows: thresholdWindows,
+      short_term_confirmation: shortTermConfirmation,
+      note: `${thresholdWindows.join('/')}分で上昇しきい値を超えています。`,
+    };
+  }
+  if (direction === 'down' && hitRows.length >= 2) {
+    return {
+      signal: 'downward_multi_window',
+      label: '複数窓下落',
+      direction,
+      level: 'Lv2 注意',
+      level_rank: 2,
+      alert_hit: true,
+      supporting_windows: supportingWindows,
+      threshold_windows: thresholdWindows,
+      short_term_confirmation: shortTermConfirmation,
+      note: `${thresholdWindows.join('/')}分で下落しきい値を超えています。`,
+    };
+  }
+  if (infoRows.length >= 2) {
+    return {
+      signal: direction === 'up' ? 'weak_upward_bias' : direction === 'down' ? 'weak_downward_bias' : 'mixed',
+      label: direction === 'up' ? '上昇気配' : direction === 'down' ? '下落気配' : '方向混在',
+      direction,
+      level: 'Lv1 情報',
+      level_rank: 1,
+      alert_hit: false,
+      supporting_windows: supportingWindows,
+      threshold_windows: thresholdWindows,
+      short_term_confirmation: shortTermConfirmation,
+      note: `${directionLabel}方向の窓が複数ありますが、注意以上としてはまだ弱めです。`,
+    };
+  }
+  return {
+    signal: 'no_continuation',
+    label: '継続なし',
+    direction: 'flat',
+    level: '注意以上なし',
+    level_rank: 0,
+    alert_hit: false,
+    supporting_windows: supportingWindows,
+    threshold_windows: thresholdWindows,
+    short_term_confirmation: shortTermConfirmation,
+    note: '複数窓で同方向の継続はまだ弱めです。',
+  };
+}
+
+function applyContinuationDecisionOverlay(decision, continuation, selectedSnapshot) {
+  if (!continuation || !decision) return decision;
+  const selectedRank = Number(selectedSnapshot?.level_rank || 0);
+  const hitText = Array.isArray(continuation.threshold_windows) && continuation.threshold_windows.length
+    ? `${continuation.threshold_windows.join('/')}分`
+    : '中期窓';
+  if (continuation.signal === 'upward_continuation' && selectedRank < 2) {
+    return {
+      ...decision,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'shallow_or_standard_limit',
+      decision_title: '中期上昇継続（短期は未達）',
+      decision_comment: `${hitText}で上昇しきい値を超えています。短期は追随根拠がまだ弱いため、現在価格追随ではなく押し目・浅め〜標準指値候補で見る判断です。`,
+      order_adjustment: `${hitText}の上昇は買い候補の材料に残します。ただし選択中の短期窓は弱めなので、成行追随ではなく浅め〜標準指値、または押し目候補を優先します。`,
+      target_adjustment: '必要利確価格は、短期の伸び余地ではなく中期上昇の継続余地とコスト後Netを同時に見ます。',
+      risk_comment: '短期だけで追いかけると高値掴みになりやすい局面です。出来高・Taker buyが弱い場合は追随候補を除外します。',
+    };
+  }
+  if (continuation.signal === 'downward_continuation' && selectedRank < 2) {
+    return {
+      ...decision,
+      entry_bias: decision.entry_bias === 'data_unavailable' ? decision.entry_bias : 'deeper_limit_or_rebound_wait',
+      decision_title: '中期下落継続（短期は未達）',
+      decision_comment: `${hitText}で下落しきい値を超えています。買い候補として扱うなら、浅い指値を外し、深め指値または反発確認後だけを候補に残す判断です。`,
+      order_adjustment: `${hitText}の下落は買い候補を絞る材料です。現在価格付近や浅め指値は除外し、深め指値または反発確認後に寄せます。`,
+      target_adjustment: '反発幅が実取引寄りコストを超える条件だけを残します。',
+      risk_comment: '中期下落中は、約定後に続落するリスクを未約定リスクより重く見ます。',
+    };
+  }
+  return decision;
+}
+
+function directionAlertSummary(windowMoves) {
+  const rows = Array.isArray(windowMoves) ? windowMoves.filter((row) => row && row.ok) : [];
+  if (!rows.length) return '方向アラート判定不可';
+  const notable = rows.filter((row) => (row.level_rank || 0) >= 1);
+  const target = notable.length ? notable : rows.slice(-2);
+  return target.map((row) => `${row.window_minutes}分:${row.movement_alert_label} ${Number.isFinite(Number(row.move_pct)) ? Number(row.move_pct).toFixed(3) : '—'}%`).join(' / ');
+}
+
 function decisionConfidence({ movePct, thresholdPct, volumeContext }) {
   const strength = movementStrength(movePct, thresholdPct);
   const volumeRank = Number(volumeContext?.volume_rank || 0);
@@ -2663,7 +3021,7 @@ function orderCandidatesForEntryBias(entryBias, { movePct, costHeavy }) {
   ];
 }
 
-function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, decision }) {
+function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thresholdPct, costFloorPct, levelInfo, volumeContext, decision, movementWindowMoves = [], primaryDirectionAlert = null, continuationAlert = null, selectedWindowMovePct = null, selectedWindowMinutes = null }) {
   const move = Number(movePct);
   const threshold = Number(thresholdPct);
   const cost = Number(costFloorPct);
@@ -2689,7 +3047,9 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
   if (!invalidationConditions.length) {
     invalidationConditions.push('出来高・値動き・コスト差のいずれかが現在条件から大きく変わる。');
   }
-  const currentInsight = `${decision.decision_title}。${decision.market_context_text || marketContextSummary(volumeContext)}`;
+  const directionSummary = directionAlertSummary(movementWindowMoves);
+  const continuationSummary = continuationAlert && continuationAlert.signal !== 'no_continuation' ? `${continuationAlert.label}：${continuationAlert.note}` : '';
+  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${decision.market_context_text || marketContextSummary(volumeContext)}`;
   const conditionalForecast = decision.order_adjustment || decision.decision_comment || '条件付き見通しは未判定です。';
   const simulationUse = preferred
     ? `売買シミュレーターでは「${preferred.label}」を主候補として検証し、除外候補は取引しない比較対象にします。`
@@ -2700,6 +3060,10 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
     execution_stage: 'analysis_only_no_real_order',
     symbol,
     window_minutes: windowMinutes,
+    selected_window_minutes: Number.isFinite(Number(selectedWindowMinutes)) ? Number(selectedWindowMinutes) : windowMinutes,
+    selected_window_move_pct: Number.isFinite(Number(selectedWindowMovePct)) ? Number(selectedWindowMovePct) : (Number.isFinite(move) ? move : null),
+    decision_basis_window_minutes: windowMinutes,
+    decision_basis_move_pct: Number.isFinite(move) ? move : null,
     alert_mode: alertMode,
     current_insight: currentInsight,
     conditional_forecast: conditionalForecast,
@@ -2707,7 +3071,25 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
     confidence_reason: confidence.reason,
     market_state: {
       direction,
+      direction_label: movementDirectionLabel(direction),
       movement_strength: strength,
+      movement_strength_label: movementStrengthLabel(strength),
+      movement_alert_type: levelInfo?.movement_alert_type || movementAlertType(move, threshold),
+      movement_alert_label: levelInfo?.movement_alert_label || movementAlertLabel(movementAlertType(move, threshold)),
+      primary_direction_alert: primaryDirectionAlert || null,
+      continuation_alert: continuationAlert || null,
+      continuation_signal: continuationAlert?.signal || 'unknown',
+      continuation_label: continuationAlert?.label || '継続判定不可',
+      multi_window_direction: continuationAlert?.direction || direction,
+      supporting_windows: Array.isArray(continuationAlert?.supporting_windows) ? continuationAlert.supporting_windows : [],
+      threshold_windows: Array.isArray(continuationAlert?.threshold_windows) ? continuationAlert.threshold_windows : [],
+      short_term_confirmation: continuationAlert?.short_term_confirmation || 'unknown',
+      selected_window_minutes: Number.isFinite(Number(selectedWindowMinutes)) ? Number(selectedWindowMinutes) : windowMinutes,
+      selected_window_move_pct: Number.isFinite(Number(selectedWindowMovePct)) ? Number(selectedWindowMovePct) : (Number.isFinite(move) ? move : null),
+      decision_basis_window_minutes: windowMinutes,
+      decision_basis_move_pct: Number.isFinite(move) ? move : null,
+      direction_window_summary: directionSummary,
+      direction_window_moves: movementWindowMoves,
       move_pct: Number.isFinite(move) ? move : null,
       threshold_pct: Number.isFinite(threshold) ? threshold : null,
       level: levelInfo?.level || '注意以上なし',
@@ -2719,12 +3101,17 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
       cost_floor_pct: Number.isFinite(cost) ? cost : null,
       cost_heavy: Boolean(costHeavy),
     },
+    active_alerts: [
+      ...(Array.isArray(movementWindowMoves) ? movementWindowMoves.filter((row) => row && (row.level_rank || 0) >= 1).map((row) => ({ family: 'price_direction', window_minutes: row.window_minutes, type: row.movement_alert_type, label: row.movement_alert_label, level: row.level, move_pct: row.move_pct })) : []),
+      ...((continuationAlert && (continuationAlert.level_rank || 0) >= 1) ? [{ family: 'multi_window_continuation', type: continuationAlert.signal, label: continuationAlert.label, level: continuationAlert.level, direction: continuationAlert.direction, supporting_windows: continuationAlert.supporting_windows, threshold_windows: continuationAlert.threshold_windows, alert_hit: continuationAlert.alert_hit }] : []),
+    ],
     order_candidates: candidates,
     preferred_candidate: preferred,
     excluded_candidates: excluded,
     order_position_hint: decision.order_adjustment || '',
     target_hint: decision.target_adjustment || '',
     risk_hint: decision.risk_comment || '',
+    continuation_alert: continuationAlert || null,
     invalidation_conditions: invalidationConditions,
     simulator_note: simulationUse,
     no_trade_is_valid: preferred?.key === 'watch_only' || excluded.length >= 2,
@@ -2737,6 +3124,7 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
   const hasDown = moves.some((v) => v < 0);
   const hasVolumeSurge = rows.some((row) => Number(row.volume_context?.volume_rank || 0) >= 4 || Number(row.volume_context?.trade_count_rank || 0) >= 4);
   const hasCostHeavy = rows.some((row) => row.decision_context?.market_state?.cost_heavy);
+  const hasContinuation = rows.some((row) => row.continuation_alert && (row.continuation_alert.level_rank || 0) >= 1);
   return [
     {
       family: '市場判断 / decision_context',
@@ -2751,10 +3139,10 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
       note: '出来高・取引回数・Taker buy比率をアラート判断と将来シミュレーター材料へ渡します。',
     },
     {
-      family: '急騰・急落',
-      status: hasDown || (Number.isFinite(maxAbsMove) && maxAbsMove >= 0.2) ? '次に優先' : '設計中',
+      family: '価格変動・方向アラート',
+      status: '更新1 着手済み',
       priority: 'A',
-      note: `上昇だけでなく下落も含め、${windowMinutes}分窓の急変を候補化します。`,
+      note: `上昇/下落/急騰/急落/Moving up/downを${windowMinutes}分窓と1m/5m/15m/30m/1h窓でdecision_contextへ渡します。`,
     },
     {
       family: '価格到達・相対価格',
@@ -2770,9 +3158,9 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
     },
     {
       family: '継続・矛盾チェック',
-      status: '設計中',
-      priority: 'B',
-      note: '1m/5m/15m/30m/1hの方向が一致するか、短期だけ荒いかを見ます。',
+      status: hasContinuation ? '更新1.5 着手済み' : '更新1.5 着手済み',
+      priority: 'A',
+      note: '1m/5m/15m/30m/1hの複数窓を見て、中期上昇/下落継続をdecision_contextへ渡します。',
     },
     {
       family: 'シミュレーター連携',
@@ -2792,9 +3180,15 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
   const takerBuyRatio = Number(volumeContext?.taker_buy_ratio);
   const volumeSummary = marketContextSummary(volumeContext);
   const costHeavy = Number.isFinite(cost) && Number.isFinite(threshold) && threshold > 0 && cost >= threshold * 0.9;
-  const strongMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && move >= threshold * 2;
-  const hitMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && move >= threshold;
-  const infoMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && move >= Math.max(threshold * 0.5, 0.03);
+  const absMove = Math.abs(move);
+  const direction = movementDirection(move);
+  const strongMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && absMove >= threshold * 2;
+  const hitMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && absMove >= threshold;
+  const infoMove = Number.isFinite(move) && Number.isFinite(threshold) && threshold > 0 && absMove >= Math.max(threshold * 0.5, 0.03);
+  const downHit = direction === 'down' && hitMove;
+  const downInfo = direction === 'down' && infoMove;
+  const upHit = direction === 'up' && hitMove;
+  const upInfo = direction === 'up' && infoMove;
   const volumeBacked = volumeRank >= 3 || tradeRank >= 3;
   const volumeSurge = volumeRank >= 4 || tradeRank >= 4;
   const buyLed = Number.isFinite(takerBuyRatio) && takerBuyRatio >= 0.55;
@@ -2812,30 +3206,52 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
     };
   }
 
-  if (move < 0) {
-    if (volumeSurge || (volumeBacked && sellLed)) {
+  if (direction === 'down') {
+    if (strongMove && volumeSurge) {
       return {
         entry_bias: 'deeper_limit_or_rebound_wait',
-        decision_title: '下落＋出来高あり',
-        order_adjustment: '買い候補として扱うなら、現在価格付近ではなく深め指値、または反発確認後の候補に寄せる判断です。',
+        decision_title: '急落＋出来高急増',
+        order_adjustment: '買い候補として扱うなら、現在価格付近は除外し、深め指値か反発確認後だけを候補に残す判断です。',
+        target_adjustment: '必要利確価格は反発幅が実取引寄りコストを明確に超える範囲に限定します。',
+        risk_comment: '急落中は落ちるナイフを拾う形になりやすく、利確より先に逆行が続くリスクを最重視します。',
+        decision_comment: '急落と出来高急増が重なっています。買い候補なら深め指値か反発確認後に限定する判断です。',
+        market_context_text: volumeSummary,
+      };
+    }
+    if (downHit && (volumeBacked || sellLed)) {
+      return {
+        entry_bias: 'deeper_limit_or_rebound_wait',
+        decision_title: '下落しきい値到達',
+        order_adjustment: '買い候補として扱うなら、浅い指値は除外し、深め指値または反発確認後の候補に寄せる判断です。',
         target_adjustment: '必要利確価格は高く置きすぎず、反発幅が実取引寄りコストを超えるかを重く見ます。',
-        risk_comment: '出来高を伴う下落は、利確より先に逆行が続くリスクを重く見ます。',
-        decision_comment: '下落方向に出来高が集まっています。買い候補なら深め指値か反発確認後へ寄せる判断です。',
+        risk_comment: '下落方向に値動きが出ています。逆張り候補は未約定よりも約定後の続落リスクを重く見ます。',
+        decision_comment: '下落がしきい値に到達しています。買い候補なら深め指値か反発確認後へ寄せる判断です。',
+        market_context_text: volumeSummary,
+      };
+    }
+    if (downInfo) {
+      return {
+        entry_bias: 'standard_or_deeper_limit',
+        decision_title: '小さめの下落',
+        order_adjustment: '買い候補として扱うなら、現在価格追随ではなく標準〜深め指値で待つ判断です。',
+        target_adjustment: '必要利確価格までの余地を確保し、浅すぎる指値は避けます。',
+        risk_comment: '下落方向の情報メモです。反発前提を強く置かず、続落時の除外条件を優先します。',
+        decision_comment: '小さめの下落です。買い候補なら標準〜深め指値で待つ判断です。',
         market_context_text: volumeSummary,
       };
     }
     return {
       entry_bias: 'standard_or_deeper_limit',
-      decision_title: '上昇条件なし',
-      order_adjustment: '買い候補として扱うなら、現在価格追随ではなく標準〜深め指値で待つ判断です。',
-      target_adjustment: '必要利確価格までの余地を確保し、浅すぎる指値は避けます。',
-      risk_comment: '下落中のため、すぐに上方向へ戻る前提は置きません。',
-      decision_comment: '上昇条件はありません。買い候補なら標準〜深め指値で待つ判断です。',
+      decision_title: '弱い下落',
+      order_adjustment: '買い候補として扱うなら、現在価格追随ではなく深め指値だけを残す判断です。',
+      target_adjustment: '必要利確価格の到達余地はまだ弱く、目標利益を強く見積もらない方針です。',
+      risk_comment: '下落方向ですが注意以上ではありません。方向が強まるか反発するかを分けて見ます。',
+      decision_comment: '弱い下落です。買い候補なら深め指値だけを候補に残す判断です。',
       market_context_text: volumeSummary,
     };
   }
 
-  if (strongMove && volumeSurge) {
+  if (upHit && strongMove && volumeSurge) {
     return {
       entry_bias: 'wait_for_pullback',
       decision_title: '急騰＋出来高急増',
@@ -2847,7 +3263,7 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
     };
   }
 
-  if (hitMove && volumeBacked) {
+  if (upHit && volumeBacked) {
     if (costHeavy) {
       return {
         entry_bias: 'lower_limit_for_margin',
@@ -2872,7 +3288,7 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
     };
   }
 
-  if (hitMove) {
+  if (upHit) {
     return {
       entry_bias: 'standard_limit_or_watch',
       decision_title: '値動きあり / 出来高裏付け弱め',
@@ -2884,7 +3300,7 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
     };
   }
 
-  if (!hitMove && volumeSurge) {
+  if (!upHit && !downHit && volumeSurge) {
     return {
       entry_bias: 'range_break_or_lower_limit',
       decision_title: '出来高急増 / 価格変化は小さめ',
@@ -2896,7 +3312,7 @@ function buildOrderDecisionComment({ movePct, thresholdPct, costFloorPct, levelI
     };
   }
 
-  if (infoMove) {
+  if (upInfo) {
     return {
       entry_bias: 'watch_or_standard_limit',
       decision_title: '小さめの上昇',
@@ -2955,24 +3371,7 @@ async function alertPreview(params = {}) {
   const { rows, source } = await readHistoryRows();
   const volumeContexts = await Promise.all(targetSymbols.map(async (symbol) => [symbol, await volumeContextForSymbol(symbol, windowMinutes)]));
   const volumeContextBySymbol = Object.fromEntries(volumeContexts);
-  const makeLevel = (movePct, thresholdForSymbol) => {
-    if (!Number.isFinite(movePct) || !Number.isFinite(thresholdForSymbol) || thresholdForSymbol <= 0) {
-      return { level: '—', level_rank: 0, level_note: '判定不可', alert_hit: false };
-    }
-    if (movePct >= thresholdForSymbol * 2) {
-      return { level: 'Lv3 警戒', level_rank: 3, level_note: 'しきい値の2倍以上。取引前チェック推奨。', alert_hit: true };
-    }
-    if (movePct >= thresholdForSymbol) {
-      return { level: 'Lv2 注意', level_rank: 2, level_note: 'しきい値以上。注意表示と履歴保存の対象。', alert_hit: true };
-    }
-    if (movePct >= Math.max(thresholdForSymbol * 0.5, 0.03)) {
-      return { level: 'Lv1 情報', level_rank: 1, level_note: '小さめの変化。表示のみ。', alert_hit: false };
-    }
-    if (movePct < 0) {
-      return { level: '注意以上なし', level_rank: 0, level_note: '上昇条件なし。下落・急落アラートは今後追加予定です。', alert_hit: false };
-    }
-    return { level: '注意以上なし', level_rank: 0, level_note: '上昇しきい値未満。現在は注意アラートではありません。', alert_hit: false };
-  };
+  const makeLevel = (movePct, thresholdForSymbol) => directionLevelInfo(movePct, thresholdForSymbol);
   const thresholdGuidance = thresholdPct < costFloorPct
     ? `共通しきい値 ${thresholdPct.toFixed(2)}% は往復コスト目安 ${costFloorPct.toFixed(2)}% より低めです。情報表示寄りとして扱うのが安全です。`
     : thresholdPct < costFloorPct * 1.5
@@ -2998,6 +3397,20 @@ async function alertPreview(params = {}) {
         level_note: '履歴データ不足',
         alert_hit: false,
         move_pct: null,
+        selected_window_move_pct: null,
+        selected_window_minutes: windowMinutes,
+        decision_basis_move_pct: null,
+        decision_basis_window_minutes: windowMinutes,
+        direction: 'unknown',
+        direction_label: '不明',
+        movement_strength: 'unknown',
+        movement_alert_type: 'data_unavailable',
+        movement_alert_label: '判定不可',
+        primary_direction_alert: null,
+        continuation_alert: null,
+        continuation_alert_summary: '継続判定不可',
+        direction_alerts: [],
+        direction_alert_summary: '方向アラート判定不可',
         threshold_pct: Number.isFinite(thresholdsBySymbol[symbol]) ? thresholdsBySymbol[symbol] : thresholdPct,
         samples: 0,
         latest_price: null,
@@ -3030,6 +3443,20 @@ async function alertPreview(params = {}) {
         level_note: '履歴データ不足',
         alert_hit: false,
         move_pct: null,
+        selected_window_move_pct: null,
+        selected_window_minutes: windowMinutes,
+        decision_basis_move_pct: null,
+        decision_basis_window_minutes: windowMinutes,
+        direction: 'unknown',
+        direction_label: '不明',
+        movement_strength: 'unknown',
+        movement_alert_type: 'data_unavailable',
+        movement_alert_label: '判定不可',
+        primary_direction_alert: null,
+        continuation_alert: null,
+        continuation_alert_summary: '継続判定不可',
+        direction_alerts: [],
+        direction_alert_summary: '方向アラート判定不可',
         threshold_pct: thresholdForSymbol,
         samples: symbolRows.length,
         latest_price: symbolRows[0]?.price ?? null,
@@ -3056,6 +3483,20 @@ async function alertPreview(params = {}) {
         level_note: '窓内の起点価格不足',
         alert_hit: false,
         move_pct: null,
+        selected_window_move_pct: null,
+        selected_window_minutes: windowMinutes,
+        decision_basis_move_pct: null,
+        decision_basis_window_minutes: windowMinutes,
+        direction: 'unknown',
+        direction_label: '不明',
+        movement_strength: 'unknown',
+        movement_alert_type: 'data_unavailable',
+        movement_alert_label: '判定不可',
+        primary_direction_alert: null,
+        continuation_alert: null,
+        continuation_alert_summary: '継続判定不可',
+        direction_alerts: [],
+        direction_alert_summary: '方向アラート判定不可',
         threshold_pct: thresholdForSymbol,
         samples: windowRows.length,
         latest_price: latest.price,
@@ -3070,16 +3511,24 @@ async function alertPreview(params = {}) {
       };
     }
     const movePct = ((latest.price - base.price) / base.price) * 100;
+    const directionWindowMoves = buildDirectionWindowSnapshots(symbolRows, latest, windowMinutes, thresholdForSymbol);
+    const primaryDirectionAlert = choosePrimaryDirectionAlert(directionWindowMoves, windowMinutes);
+    const selectedDirectionSnapshot = directionWindowMoves.find((row) => Number(row.window_minutes) === Number(windowMinutes)) || null;
+    const continuationAlert = buildMultiWindowContinuation(directionWindowMoves, windowMinutes);
+    const direction = movementDirection(movePct);
     let streakCount = 0;
     for (let i = windowRows.length - 1; i >= 0; i -= 1) {
       const pivot = windowRows[i];
       if (!pivot || !Number.isFinite(pivot.price) || pivot.price <= 0) break;
       const moveFromPivot = ((latest.price - pivot.price) / pivot.price) * 100;
-      if (moveFromPivot >= thresholdForSymbol) streakCount += 1;
+      if (direction === 'up' && moveFromPivot >= thresholdForSymbol) streakCount += 1;
+      else if (direction === 'down' && moveFromPivot <= -thresholdForSymbol) streakCount += 1;
       else break;
     }
-    let rollingStreak = 0;
+    let rollingUpStreak = 0;
+    let rollingDownStreak = 0;
     let upSteps = 0;
+    let downSteps = 0;
     let totalSteps = 0;
     for (let i = windowRows.length - 1; i > 0; i -= 1) {
       const curr = windowRows[i];
@@ -3088,50 +3537,85 @@ async function alertPreview(params = {}) {
       const stepPct = ((curr.price - prev.price) / prev.price) * 100;
       totalSteps += 1;
       if (stepPct > 0) upSteps += 1;
-      if (stepPct > 0) rollingStreak += 1;
-      else break;
+      if (stepPct < 0) downSteps += 1;
+      if (stepPct > 0 && rollingDownStreak === 0) rollingUpStreak += 1;
+      else if (stepPct < 0 && rollingUpStreak === 0) rollingDownStreak += 1;
+      else if (stepPct !== 0) break;
     }
     const risingRatio = totalSteps > 0 ? (upSteps / totalSteps) * 100 : 0;
-    const simpleHit = movePct >= thresholdForSymbol;
-    const rollingHit = rollingStreak >= rollingMinPoints && movePct >= Math.max(thresholdForSymbol * 0.4, 0.02);
-    const sustainedHit = movePct >= thresholdForSymbol && risingRatio >= risingRatioThreshold;
+    const fallingRatio = totalSteps > 0 ? (downSteps / totalSteps) * 100 : 0;
+    const dominantDirectionRatio = direction === 'down' ? fallingRatio : direction === 'up' ? risingRatio : Math.max(risingRatio, fallingRatio);
+    const simpleHit = Math.abs(movePct) >= thresholdForSymbol;
+    const rollingStreak = direction === 'down' ? rollingDownStreak : rollingUpStreak;
+    const rollingHit = rollingStreak >= rollingMinPoints && Math.abs(movePct) >= Math.max(thresholdForSymbol * 0.4, 0.02);
+    const sustainedHit = Math.abs(movePct) >= thresholdForSymbol && dominantDirectionRatio >= risingRatioThreshold;
     const hit = alertMode === 'rolling' ? rollingHit : alertMode === 'sustained' ? sustainedHit : simpleHit;
     const levelInfo = makeLevel(movePct, thresholdForSymbol);
-    const alertHit = hit && levelInfo.alert_hit;
+    const primaryIsStronger = primaryDirectionAlert && (primaryDirectionAlert.level_rank || 0) > (levelInfo.level_rank || 0);
+    const effectiveDirectionSnapshot = primaryIsStronger ? primaryDirectionAlert : null;
+    const effectiveLevelInfo = effectiveDirectionSnapshot ? directionLevelInfoFromSnapshot(effectiveDirectionSnapshot, levelInfo) : levelInfo;
+    const continuationIsStronger = continuationAlert && (continuationAlert.level_rank || 0) > (effectiveLevelInfo.level_rank || 0);
+    const decisionBasisMovePct = Number.isFinite(Number(effectiveDirectionSnapshot?.move_pct)) ? Number(effectiveDirectionSnapshot.move_pct) : movePct;
+    const decisionBasisWindowMinutes = Number.isFinite(Number(effectiveDirectionSnapshot?.window_minutes)) ? Number(effectiveDirectionSnapshot.window_minutes) : windowMinutes;
+    const alertHit = Boolean((hit && levelInfo.alert_hit) || effectiveDirectionSnapshot?.alert_hit || continuationAlert?.alert_hit);
     const volumeContext = volumeContextBySymbol[symbol] || null;
-    const decision = buildOrderDecisionComment({
-      movePct,
+    let decision = buildOrderDecisionComment({
+      movePct: decisionBasisMovePct,
       thresholdPct: thresholdForSymbol,
       costFloorPct,
-      levelInfo,
+      levelInfo: continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo,
       volumeContext,
     });
+    decision = applyContinuationDecisionOverlay(decision, continuationAlert, selectedDirectionSnapshot);
     const decisionContext = enrichDecisionContext({
       symbol,
-      windowMinutes,
+      windowMinutes: decisionBasisWindowMinutes,
       alertMode,
-      movePct,
+      movePct: decisionBasisMovePct,
       thresholdPct: thresholdForSymbol,
       costFloorPct,
-      levelInfo,
+      levelInfo: continuationIsStronger ? { ...effectiveLevelInfo, level: continuationAlert.level, level_rank: continuationAlert.level_rank } : effectiveLevelInfo,
       volumeContext,
       decision,
+      movementWindowMoves: directionWindowMoves,
+      primaryDirectionAlert,
+      continuationAlert,
+      selectedWindowMovePct: movePct,
+      selectedWindowMinutes: windowMinutes,
     });
     return {
       symbol,
       status: alertHit
-        ? (alertMode === 'rolling' ? 'ローリング上昇アラート' : alertMode === 'sustained' ? '持続上昇アラート' : '上昇アラート')
-        : '監視中',
-      level: levelInfo.level,
-      level_rank: levelInfo.level_rank,
-      level_note: decision.decision_comment || levelInfo.level_note,
-      raw_level_note: levelInfo.level_note,
+        ? (continuationAlert?.alert_hit && continuationIsStronger ? `${continuationAlert.label}アラート` : (effectiveDirectionSnapshot ? directionAlertStatus(effectiveDirectionSnapshot, effectiveLevelInfo.movement_status) : (alertMode === 'rolling' ? `ローリング${levelInfo.movement_alert_label}アラート` : alertMode === 'sustained' ? `持続${levelInfo.movement_alert_label}アラート` : levelInfo.movement_status)))
+        : (effectiveLevelInfo.level_rank === 1 ? effectiveLevelInfo.movement_status : '監視中'),
+      level: continuationIsStronger ? continuationAlert.level : effectiveLevelInfo.level,
+      level_rank: continuationIsStronger ? continuationAlert.level_rank : effectiveLevelInfo.level_rank,
+      level_note: decision.decision_comment || effectiveLevelInfo.level_note,
+      raw_level_note: effectiveLevelInfo.level_note,
       alert_hit: alertHit,
-      move_pct: movePct,
+      move_pct: decisionBasisMovePct,
+      selected_window_move_pct: movePct,
+      selected_window_minutes: windowMinutes,
+      decision_basis_move_pct: decisionBasisMovePct,
+      decision_basis_window_minutes: decisionBasisWindowMinutes,
       threshold_pct: thresholdForSymbol,
+      direction: effectiveLevelInfo.direction,
+      direction_label: effectiveLevelInfo.direction_label,
+      movement_strength: effectiveLevelInfo.movement_strength,
+      movement_alert_type: continuationIsStronger ? continuationAlert.signal : effectiveLevelInfo.movement_alert_type,
+      movement_alert_label: continuationIsStronger ? continuationAlert.label : effectiveLevelInfo.movement_alert_label,
+      primary_direction_alert: primaryDirectionAlert,
+      continuation_alert: continuationAlert,
+      direction_alerts: directionWindowMoves,
+      direction_alert_summary: directionAlertSummary(directionWindowMoves),
+      continuation_alert_summary: continuationAlert ? `${continuationAlert.label}: ${continuationAlert.note}` : '—',
       streak_count: streakCount,
       rolling_streak: rollingStreak,
+      rolling_up_streak: rollingUpStreak,
+      rolling_down_streak: rollingDownStreak,
       rising_ratio: risingRatio,
+      falling_ratio: fallingRatio,
+      dominant_direction_ratio: dominantDirectionRatio,
       samples: windowRows.length,
       latest_price: latest.price,
       base_price: base.price,
@@ -3157,7 +3641,7 @@ async function alertPreview(params = {}) {
   const alertCount = resultRows.filter((row) => row.alert_hit).length;
   const ranked = resultRows
     .filter((row) => row.alert_hit && Number.isFinite(row.move_pct))
-    .sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct));
+    .sort((a, b) => (b.level_rank - a.level_rank) || (Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0))));
   const topAlert = ranked.length ? ranked[0] : null;
   let historySaved = 0;
   if (saveHistory && alertCount > 0) {
@@ -3171,11 +3655,21 @@ async function alertPreview(params = {}) {
         status: row.status,
         level: row.level,
         move_pct: row.move_pct,
+        selected_window_move_pct: row.selected_window_move_pct,
+        selected_window_minutes: row.selected_window_minutes,
+        decision_basis_move_pct: row.decision_basis_move_pct,
+        decision_basis_window_minutes: row.decision_basis_window_minutes,
         threshold_pct: row.threshold_pct,
         window_minutes: windowMinutes,
         alert_mode: alertMode,
         streak_count: row.streak_count,
         rising_ratio: row.rising_ratio,
+        falling_ratio: row.falling_ratio,
+        direction: row.direction,
+        movement_alert_type: row.movement_alert_type,
+        primary_direction_alert: row.primary_direction_alert,
+        continuation_alert: row.continuation_alert,
+        continuation_alert_summary: row.continuation_alert_summary,
         volume_context: row.volume_context,
         entry_bias: row.entry_bias,
         decision_title: row.decision_title,

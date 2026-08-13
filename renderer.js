@@ -77,6 +77,27 @@ function pct(v, digits = 3, signed = false) {
   return `${sign}${n.toFixed(digits)}%`;
 }
 
+
+function alertMoveDisplay(row) {
+  const ctx = row?.decision_context || {};
+  const basisWindow = row?.decision_basis_window_minutes ?? ctx.decision_basis_window_minutes ?? row?.primary_direction_alert?.window_minutes;
+  const basisMove = row?.decision_basis_move_pct ?? ctx.decision_basis_move_pct ?? row?.move_pct;
+  const selectedWindow = row?.selected_window_minutes ?? ctx.selected_window_minutes;
+  const selectedMove = row?.selected_window_move_pct ?? ctx.selected_window_move_pct;
+  const main = basisWindow ? `${basisWindow}分 ${pct(basisMove, 3, true)}` : pct(basisMove, 3, true);
+  if (Number.isFinite(Number(selectedWindow)) && Number.isFinite(Number(selectedMove)) && Number(selectedWindow) !== Number(basisWindow)) {
+    return `${main}（選択${selectedWindow}分 ${pct(selectedMove, 3, true)}）`;
+  }
+  return main;
+}
+
+function continuationAlertText(row) {
+  const c = row?.continuation_alert || row?.decision_context?.continuation_alert || row?.decision_context?.market_state?.continuation_alert;
+  if (!c) return '—';
+  const windows = Array.isArray(c.threshold_windows) && c.threshold_windows.length ? ` / 超過 ${c.threshold_windows.join('/')}分` : '';
+  return `${c.label || '継続判定'}${windows} / ${c.note || ''}`;
+}
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -1131,17 +1152,19 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
 
   const rowHtml = rows.map((row) => {
     const level = row.level || '注意以上なし';
-    const move = row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true);
+    const move = alertMoveDisplay(row);
     const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
     const title = row.decision_title || level;
     const ctx = row.decision_context || {};
+    const directionSummary = row.direction_alert_summary || ctx.market_state?.direction_window_summary || '';
+    const continuationSummary = continuationAlertText(row);
     const decision = ctx.conditional_forecast || row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意以上ではありません。');
     const volume = row.market_context_text || volumeContextText(row.volume_context);
     const preferred = ctx.preferred_candidate?.label ? `主候補: ${ctx.preferred_candidate.label}` : '';
     const excluded = Array.isArray(ctx.excluded_candidates) && ctx.excluded_candidates.length ? `除外: ${ctx.excluded_candidates.map((item) => item.label).join(' / ')}` : '';
     const invalidation = Array.isArray(ctx.invalidation_conditions) && ctx.invalidation_conditions.length ? `外れ条件: ${ctx.invalidation_conditions.slice(0, 2).join(' / ')}` : '';
     const itemClass = row.alert_hit ? 'is-hit' : (row.level_rank === 1 ? 'is-info' : 'is-muted');
-    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
+    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
   }).join('');
   listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / decision_context v1 / 出来高は判断材料の一部で、将来の売買シミュレーターへ渡す材料です。</div>`;
 }
@@ -1196,14 +1219,18 @@ async function loadAlertPreview() {
   document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / 共通 ${pct(data.common_threshold_pct ?? data.threshold_pct, 2)} / 適用 ${appliedSummary || '—'} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
-    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status} / ${top.decision_context?.conditional_forecast || top.order_adjustment || top.decision_comment || ''}`
-    : '注意以上の上位通知はありません。現在の気づき・注文候補・外れ条件を上のサマリーに表示しています。';
+    ? `上位通知: ${top.symbol} ${alertMoveDisplay(top)} / ${top.level || '—'} / ${top.status} / ${top.decision_context?.conditional_forecast || top.order_adjustment || top.decision_comment || ''}`
+    : '注意以上の上位通知はありません。方向メモ・現在の気づき・注文候補・外れ条件を上のサマリーに表示しています。';
   const rows = (data.rows || []).map((row) => ({
     symbol: row.symbol,
     level: row.level || '注意以上なし',
     status: row.status,
-    move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
+    move_pct: alertMoveDisplay(row),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
+    direction: row.direction_label || row.decision_context?.market_state?.direction_label || '—',
+    movement_alert: row.movement_alert_label || row.decision_context?.market_state?.movement_alert_label || '—',
+    direction_alerts: row.direction_alert_summary || row.decision_context?.market_state?.direction_window_summary || '—',
+    continuation_alert: continuationAlertText(row),
     note: row.level_note || row.decision_comment || '—',
     volume: row.market_context_text || volumeContextText(row.volume_context),
     order_hint: row.order_adjustment || '—',
@@ -1228,6 +1255,10 @@ async function loadAlertPreview() {
     ['status', '状態'],
     ['move_pct', `変動率(${data.window_minutes}分)`],
     ['threshold', '適用しきい値'],
+    ['direction', '方向'],
+    ['movement_alert', '方向アラート'],
+    ['direction_alerts', '窓別方向メモ'],
+    ['continuation_alert', '継続判定'],
     ['note', '判断コメント'],
     ['volume', '出来高コンテキスト'],
     ['order_hint', '注文位置の考え方'],
@@ -1257,7 +1288,7 @@ async function loadAlertHistory() {
     symbol: row.symbol || '—',
     level: row.level || '—',
     status: row.status || '—',
-    move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
+    move_pct: alertMoveDisplay(row),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2),
     window: `${row.window_minutes ?? 0}`,
     mode: row.alert_mode || '—',
