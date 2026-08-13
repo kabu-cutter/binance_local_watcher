@@ -122,7 +122,19 @@ function technicalContextText(row) {
   if (!ctx || !ctx.ok) return 'テクニカル: 判定不可';
   const atr = ctx.atr_pct === null || ctx.atr_pct === undefined ? '—' : pct(ctx.atr_pct, 3);
   const vwap = ctx.vwap_distance_pct === null || ctx.vwap_distance_pct === undefined ? '—' : pct(ctx.vwap_distance_pct, 3, true);
-  return `${ctx.ma_alignment_label || 'MA不明'} / ${ctx.atr_label || 'ATR不明'} ${atr} / ${ctx.vwap_label || 'VWAP不明'} ${vwap}`;
+  const rsi = ctx.rsi === null || ctx.rsi === undefined ? '—' : Number(ctx.rsi).toFixed(1);
+  const bbWidth = ctx.bb_width_pct === null || ctx.bb_width_pct === undefined ? '—' : pct(ctx.bb_width_pct, 3);
+  const score = ctx.technical_score === null || ctx.technical_score === undefined ? '—' : `${ctx.technical_confidence || '—'} ${ctx.technical_score}/100`;
+  return `${ctx.ma_alignment_label || 'MA不明'} / ${ctx.atr_label || 'ATR不明'} ${atr} / ${ctx.vwap_label || 'VWAP不明'} ${vwap} / ${ctx.rsi_label || 'RSI不明'} ${rsi} / ${ctx.bb_width_label || 'BB不明'} ${bbWidth} / ${ctx.bb_label || ''} / 信頼度 ${score}`;
+}
+
+function technicalPracticalText(row) {
+  const ctx = row?.technical_context || row?.decision_context?.technical_context;
+  return row?.technical_practical_text
+    || row?.decision_context?.technical_practical_text
+    || row?.decision_context?.market_state?.technical_practical_text
+    || ctx?.practical_text
+    || 'テクニカル単体では決めず、出来高・価格位置・コストで候補を絞ります。';
 }
 
 function referenceModeText(row) {
@@ -177,6 +189,7 @@ function renderAlertPreviewDetailsTable(el, rows, data) {
       alertDetailPair('コストアラート', row.cost_alerts),
       alertDetailPair('横ばい・レンジ滞在', row.sideways_context),
       alertDetailPair('テクニカルアラート', row.technical_context, 'is-wide'),
+      alertDetailPair('テクニカル意味', row.technical_meaning, 'is-wide'),
       alertDetailPair('継続・矛盾チェック', row.combined_signal, 'is-wide'),
     ].join('');
     const secondLine = [
@@ -202,7 +215,8 @@ function renderAlertPreviewDetailsTable(el, rows, data) {
       alertDetailPair('起点価格', row.base),
       alertDetailPair('最新時刻', row.latest_time),
     ].join('');
-    td.innerHTML = `<div class="alert-detail-two-tier"><div class="alert-detail-line">${firstLine}</div><div class="alert-detail-line">${secondLine}</div><div class="alert-detail-line alert-detail-line-context">${thirdLine}</div><div class="alert-detail-line alert-detail-line-small">${smallLine}</div></div>`;
+    const technicalMeaningBlock = `<div class="alert-detail-technical-meaning"><b>テクニカルの意味：</b>${escapeHtml(row.technical_meaning || '—')}</div>`;
+    td.innerHTML = `<div class="alert-detail-two-tier">${technicalMeaningBlock}<div class="alert-detail-line">${firstLine}</div><div class="alert-detail-line">${secondLine}</div><div class="alert-detail-line alert-detail-line-context">${thirdLine}</div><div class="alert-detail-line alert-detail-line-small">${smallLine}</div></div>`;
     detail.appendChild(td);
     tbody.appendChild(detail);
   });
@@ -1291,11 +1305,13 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
     const volumeAlerts = volumeCostAlertText(row);
     const costAlerts = costAlertText(row);
     const combined = combinedSignalText(row);
+    const technical = technicalContextText(row);
+    const technicalMeaning = technicalPracticalText(row);
     const preferred = ctx.preferred_candidate?.label ? `主候補: ${ctx.preferred_candidate.label}` : '';
     const excluded = Array.isArray(ctx.excluded_candidates) && ctx.excluded_candidates.length ? `除外: ${ctx.excluded_candidates.map((item) => item.label).join(' / ')}` : '';
     const invalidation = Array.isArray(ctx.invalidation_conditions) && ctx.invalidation_conditions.length ? `外れ条件: ${ctx.invalidation_conditions.slice(0, 2).join(' / ')}` : '';
     const itemClass = row.alert_hit ? 'is-hit' : (row.level_rank === 1 ? 'is-info' : 'is-muted');
-    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small>${escapeHtml([volumeAlerts, costAlerts, combined].filter(Boolean).join(' / '))}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
+    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small>${escapeHtml(directionSummary)}</small><small>${escapeHtml(continuationSummary !== '—' ? continuationSummary : '')}</small><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small><small><b>テクニカル:</b> ${escapeHtml(technical)}</small><small><b>意味:</b> ${escapeHtml(technicalMeaning)}</small><small>${escapeHtml([volumeAlerts, costAlerts, combined].filter(Boolean).join(' / '))}</small><small>${escapeHtml([preferred, excluded, invalidation].filter(Boolean).join(' / '))}</small></div>`;
   }).join('');
   listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / decision_context v1 / 出来高は判断材料の一部で、将来の売買シミュレーターへ渡す材料です。</div>`;
 }
@@ -1365,6 +1381,7 @@ async function loadAlertPreview() {
     price_position: pricePositionText(row),
     sideways_context: row.sideways_summary || sidewaysContextText(row),
     technical_context: row.technical_summary || technicalContextText(row),
+    technical_meaning: technicalPracticalText(row),
     reference_mode: referenceModeText(row),
     note: row.level_note || row.decision_comment || '—',
     volume: row.market_context_text || volumeContextText(row.volume_context),

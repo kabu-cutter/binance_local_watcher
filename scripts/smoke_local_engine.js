@@ -61,6 +61,8 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'combined_signal_summary')), 'alert-preview.combined_signal_summary missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'sideways_context')), 'alert-preview.sideways_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'technical_context')), 'alert-preview.technical_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'technical_practical_text')), 'alert-preview.technical_practical_text missing');
+  assert(alertPreview.rows.every((row) => row.technical_context === null || Object.prototype.hasOwnProperty.call(row.technical_context, 'practical_text')), 'alert-preview.technical_context.practical_text missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'volume_alert_summary')), 'alert-preview.volume_alert_summary missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'cost_alert_summary')), 'alert-preview.cost_alert_summary missing');
   assert(alertPreview.rows.every((row) => row.decision_context && row.decision_context.market_state), 'alert-preview.decision_context.market_state missing');
@@ -74,8 +76,18 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'combined_signal')), 'alert-preview.decision_context.market_state.combined_signal missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'sideways_context')), 'alert-preview.decision_context.sideways_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'technical_context')), 'alert-preview.decision_context.technical_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'technical_practical_text')), 'alert-preview.decision_context.technical_practical_text missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'technical_practical_text')), 'alert-preview.decision_context.market_state.technical_practical_text missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'sideways_signal')), 'alert-preview.decision_context.market_state.sideways_signal missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'technical_signal')), 'alert-preview.decision_context.market_state.technical_signal missing');
+  assert(alertPreview.rows.every((row) => row.technical_context === null || Object.prototype.hasOwnProperty.call(row.technical_context, 'rsi')), 'alert-preview.technical_context.rsi missing');
+  assert(alertPreview.rows.every((row) => row.technical_context === null || Object.prototype.hasOwnProperty.call(row.technical_context, 'bb_width_pct')), 'alert-preview.technical_context.bb_width_pct missing');
+  assert(alertPreview.rows.every((row) => row.technical_context === null || Object.prototype.hasOwnProperty.call(row.technical_context, 'confluence_signal')), 'alert-preview.technical_context.confluence_signal missing');
+  assert(alertPreview.rows.every((row) => row.technical_context === null || Object.prototype.hasOwnProperty.call(row.technical_context, 'technical_score')), 'alert-preview.technical_context.technical_score missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'rsi_level')), 'alert-preview.decision_context.market_state.rsi_level missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'bb_width_state')), 'alert-preview.decision_context.market_state.bb_width_state missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'confluence_signal')), 'alert-preview.decision_context.market_state.confluence_signal missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'technical_score')), 'alert-preview.decision_context.market_state.technical_score missing');
   assert(Array.isArray(alertPreview.growth_alert_context), 'alert-preview.growth_alert_context missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
 

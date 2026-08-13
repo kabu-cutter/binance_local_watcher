@@ -3182,6 +3182,7 @@ function compactActiveAlert(item) {
     level: item.level || '注意以上なし',
     level_rank: Number(item.level_rank || 0),
     note: item.note || '',
+    practical_text: item.practical_text || '',
     alert_hit: Boolean(item.alert_hit),
   };
 }
@@ -3616,6 +3617,108 @@ function averageNumber(values) {
   return nums.reduce((sum, value) => sum + value, 0) / nums.length;
 }
 
+function stddevNumber(values) {
+  const nums = (values || []).map((value) => Number(value)).filter(Number.isFinite);
+  if (nums.length < 2) return null;
+  const avg = averageNumber(nums);
+  const variance = nums.reduce((sum, value) => sum + ((value - avg) ** 2), 0) / nums.length;
+  return Math.sqrt(variance);
+}
+
+function calculateRsiFromPrices(prices, period = 14) {
+  const nums = (prices || []).map((value) => Number(value)).filter(Number.isFinite);
+  if (nums.length < period + 1) return null;
+  const slice = nums.slice(-(period + 1));
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i < slice.length; i += 1) {
+    const diff = slice[i] - slice[i - 1];
+    if (diff > 0) gains += diff;
+    else losses += Math.abs(diff);
+  }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0 && avgGain === 0) return 50;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+function rsiLevelLabel(level) {
+  const labels = {
+    extreme_high: 'RSI過熱強め',
+    high: 'RSI高め',
+    neutral: 'RSI中立',
+    low: 'RSI低め',
+    extreme_low: 'RSI下げ過熱',
+    unknown: 'RSI不明',
+  };
+  return labels[level] || 'RSI不明';
+}
+
+function classifyRsiLevel(rsi) {
+  const value = Number(rsi);
+  if (!Number.isFinite(value)) return 'unknown';
+  if (value >= 78) return 'extreme_high';
+  if (value >= 68) return 'high';
+  if (value <= 22) return 'extreme_low';
+  if (value <= 32) return 'low';
+  return 'neutral';
+}
+
+function bollingerContextFromPrices(prices, currentPrice, period = 20) {
+  const nums = (prices || []).map((value) => Number(value)).filter(Number.isFinite);
+  const current = Number(currentPrice);
+  if (!Number.isFinite(current) || nums.length < period) {
+    return { ok: false, state: 'unknown', label: 'BB不明' };
+  }
+  const recent = nums.slice(-period);
+  const mid = averageNumber(recent);
+  const sd = stddevNumber(recent);
+  if (!Number.isFinite(mid) || !Number.isFinite(sd) || mid <= 0) {
+    return { ok: false, state: 'unknown', label: 'BB不明' };
+  }
+  const upper = mid + (sd * 2);
+  const lower = mid - (sd * 2);
+  const widthPct = ((upper - lower) / mid) * 100;
+  let previousWidthPct = null;
+  if (nums.length >= period * 2) {
+    const prev = nums.slice(-(period * 2), -period);
+    const prevMid = averageNumber(prev);
+    const prevSd = stddevNumber(prev);
+    if (Number.isFinite(prevMid) && prevMid > 0 && Number.isFinite(prevSd)) {
+      previousWidthPct = (((prevMid + (prevSd * 2)) - (prevMid - (prevSd * 2))) / prevMid) * 100;
+    }
+  }
+  const widthRatio = previousWidthPct && previousWidthPct > 0 ? widthPct / previousWidthPct : null;
+  const bandSpan = upper - lower;
+  const positionRatio = bandSpan > 0 ? (current - lower) / bandSpan : 0.5;
+  let state = 'middle';
+  let label = 'BB中央付近';
+  if (current >= upper) { state = 'upper_break'; label = 'BB上限突破'; }
+  else if (positionRatio >= 0.86) { state = 'upper_touch'; label = 'BB上限接近'; }
+  else if (current <= lower) { state = 'lower_break'; label = 'BB下限割れ'; }
+  else if (positionRatio <= 0.14) { state = 'lower_touch'; label = 'BB下限接近'; }
+  let widthState = 'normal';
+  let widthLabel = 'BB通常';
+  if (Number.isFinite(widthRatio) && widthRatio <= 0.72) { widthState = 'squeeze'; widthLabel = 'BB収縮'; }
+  else if (Number.isFinite(widthRatio) && widthRatio >= 1.35) { widthState = 'expansion'; widthLabel = 'BB拡大'; }
+  return {
+    ok: true,
+    state,
+    label,
+    mid,
+    upper,
+    lower,
+    width_pct: widthPct,
+    previous_width_pct: previousWidthPct,
+    width_ratio: Number.isFinite(widthRatio) ? widthRatio : null,
+    width_state: widthState,
+    width_label: widthLabel,
+    position_ratio: Number.isFinite(positionRatio) ? Math.max(0, Math.min(1, positionRatio)) : null,
+  };
+}
+
 function slopeDirectionLabel(direction) {
   if (direction === 'up') return '上向き';
   if (direction === 'down') return '下向き';
@@ -3688,6 +3791,15 @@ function buildSidewaysContext(symbolRows = [], latest = null, thresholdPct = 0.3
   const rangePositionRatio = runHigh > runLow ? (current - runLow) / (runHigh - runLow) : 0.5;
   const volumeRank = Number(volumeContext?.volume_rank || 0);
   const tradeRank = Number(volumeContext?.trade_count_rank || 0);
+  const rsi = calculateRsiFromPrices(prices, 14);
+  const rsiLevel = classifyRsiLevel(rsi);
+  const rsiLabel = rsiLevelLabel(rsiLevel);
+  const bb = bollingerContextFromPrices(prices, current, 20);
+  const bbState = bb?.state || 'unknown';
+  const bbLabel = bb?.label || 'BB不明';
+  const bbWidthState = bb?.width_state || 'unknown';
+  const bbWidthLabel = bb?.width_label || 'BB不明';
+
   const activeAlerts = [];
   const add = (type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
     activeAlerts.push({ family: 'sideways_range', type, label, level, level_rank: levelRank, note, alert_hit: Boolean(alertHit), ...extra });
@@ -3804,6 +3916,56 @@ function maAlignmentLabel(alignment) {
   return labels[alignment] || 'MA不明';
 }
 
+function technicalPracticalTextForSignal(signal, fallback = {}) {
+  const map = {
+    ma_aligned_up: '流れは上向き。過熱がなければ浅め〜標準指値を候補に残します。',
+    ma_aligned_down: '流れは下向き。浅い買いは落とし、反発確認か深め指値に絞ります。',
+    ma_conflict: '短期と中期が不一致。追随を落とし、方向が揃うまで待機寄りです。',
+    ma_flat: 'MAは横ばい。方向根拠は弱く、レンジ端かブレイク待ちです。',
+    atr_compressed: '値幅が縮小。いま入るより、上抜け/下抜け待ちの材料です。',
+    atr_expanded: '値幅が拡大。ブレイク候補ですが、滑りと逆行を重く見ます。',
+    atr_extreme: '急変中。成行追随は除外寄りで、落ち着いた後を検証します。',
+    vwap_above_extended: '平均約定価格より大きく上。追随買いは高値掴み注意です。',
+    vwap_below_extended: '平均約定価格より大きく下。反発候補でも続落リスクを残します。',
+    trend_near_vwap: '上向きで過熱しすぎない状態。浅め〜標準指値を検証候補に残します。',
+    sideways_atr_squeeze: '横ばいで値幅縮小。方向が出るまで待ち、レンジ端を比較します。',
+    sideways_atr_breakout_watch: '横ばい後に値幅拡大。上抜け/下抜けの方向確定を待ちます。',
+    rsi_high: 'RSI高め。上昇中でも追随は浅くせず、押し目か標準指値へ寄せます。',
+    rsi_extreme_high: 'RSI過熱強め。成行追随は除外寄りで、利確余地と反落条件を優先します。',
+    rsi_low: 'RSI低め。反発候補ですが、下げ止まり確認までは浅い買いを落とします。',
+    rsi_extreme_low: 'RSI下げ過熱。反発候補でも続落リスクが高く、反発確認か深め指値に絞ります。',
+    bb_squeeze: 'BB収縮。値幅が縮み、次の上抜け/下抜けを待つ段階です。',
+    bb_expansion: 'BB拡大。値動きが広がっています。ブレイク候補ですが滑り・逆行も重く見ます。',
+    bb_upper_touch: 'BB上限付近。上昇は強いが追随買いは高値掴み注意です。',
+    bb_upper_break: 'BB上限突破。勢いはありますが、成行追随より押し目候補を優先します。',
+    bb_lower_touch: 'BB下限付近。反発候補ですが、下抜け失敗/続落を外れ条件にします。',
+    bb_lower_break: 'BB下限割れ。浅い買いは落とし、反発確認または深め指値に絞ります。',
+    technical_bullish_confluence: 'テクニカルは上向きに揃い気味。過熱とコストが重くなければ浅め〜標準指値を残します。',
+    technical_bearish_confluence: 'テクニカルは下向きに揃い気味。浅い買いは除外し、反発確認か見送りを優先します。',
+    technical_overextended_up: '上昇材料はありますが過熱も強いです。成行追随を落とし、押し目待ちに寄せます。',
+    technical_rebound_watch: '下げ過熱・下限接近の反発候補です。ただし反発確認までは深め指値か待機です。',
+    technical_squeeze_watch: '値幅収縮が強く、方向待ちです。上抜け/下抜け後の候補に分けます。',
+    technical_context: 'テクニカル単体では決めず、出来高・価格位置・コストで候補を絞ります。',
+  };
+  if (map[signal]) return map[signal];
+  if (fallback.maAlignment === 'aligned_up' && fallback.vwapState !== 'above_extended') return map.ma_aligned_up;
+  if (fallback.maAlignment === 'aligned_down') return map.ma_aligned_down;
+  if (fallback.atrLevel === 'compressed') return map.atr_compressed;
+  if (fallback.atrLevel === 'expanded') return map.atr_expanded;
+  if (fallback.atrLevel === 'extreme') return map.atr_extreme;
+  if (fallback.vwapState === 'above_extended') return map.vwap_above_extended;
+  if (fallback.vwapState === 'below_extended') return map.vwap_below_extended;
+  if (fallback.rsiLevel === 'extreme_high') return map.rsi_extreme_high;
+  if (fallback.rsiLevel === 'high') return map.rsi_high;
+  if (fallback.rsiLevel === 'extreme_low') return map.rsi_extreme_low;
+  if (fallback.rsiLevel === 'low') return map.rsi_low;
+  if (fallback.bbState === 'upper_break') return map.bb_upper_break;
+  if (fallback.bbState === 'upper_touch') return map.bb_upper_touch;
+  if (fallback.bbState === 'lower_break') return map.bb_lower_break;
+  if (fallback.bbState === 'lower_touch') return map.bb_lower_touch;
+  return map.technical_context;
+}
+
 function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.3, volumeContext = null, sidewaysContext = null) {
   const current = Number(latest?.price);
   const rows = (Array.isArray(symbolRows) ? symbolRows : [])
@@ -3877,7 +4039,8 @@ function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.
 
   const activeAlerts = [];
   const add = (type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
-    activeAlerts.push({ family: 'technical_context', type, label, level, level_rank: levelRank, note, alert_hit: Boolean(alertHit), ...extra });
+    const practicalText = technicalPracticalTextForSignal(type, { maAlignment, atrLevel, vwapState, rsiLevel, bbState });
+    activeAlerts.push({ family: 'technical_context', type, label, level, level_rank: levelRank, note, practical_text: practicalText, alert_hit: Boolean(alertHit), ...extra });
   };
   if (maAlignment === 'aligned_up') add('ma_aligned_up', 'MA上向き整合', 'Lv2 注意', 2, '短期・中期MAが上向きで揃っています。上昇継続候補の信頼度を上げる材料です。', true);
   else if (maAlignment === 'aligned_down') add('ma_aligned_down', 'MA下向き整合', 'Lv2 注意', 2, '短期・中期MAが下向きで揃っています。買い候補は浅い位置を除外する材料です。', true);
@@ -3899,9 +4062,70 @@ function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.
     add('sideways_atr_breakout_watch', '横ばい後のATR上昇', 'Lv2 注意', 2, '横ばい後に値幅が広がっています。上抜け/下抜けの方向確定を待つ材料です。', true);
   }
 
+  if (rsiLevel === 'extreme_high') add('rsi_extreme_high', 'RSI過熱強め', 'Lv3 警戒', 3, 'RSIがかなり高く、上昇中でも追随買いは反落リスクを重く見ます。', true, { rsi });
+  else if (rsiLevel === 'high') add('rsi_high', 'RSI高め', 'Lv2 注意', 2, 'RSIが高めです。上昇中でも浅い追随は落とし、押し目か標準指値へ寄せます。', true, { rsi });
+  else if (rsiLevel === 'extreme_low') add('rsi_extreme_low', 'RSI下げ過熱', 'Lv3 警戒', 3, 'RSIがかなり低く、反発候補でも続落リスクを残します。', true, { rsi });
+  else if (rsiLevel === 'low') add('rsi_low', 'RSI低め', 'Lv2 注意', 2, 'RSIが低めです。反発候補ですが、下げ止まり確認までは浅い買いを落とします。', true, { rsi });
+
+  if (bb?.ok && bbWidthState === 'squeeze') add('bb_squeeze', 'BB収縮', 'Lv1 情報', 1, 'ボリンジャーバンドが収縮しています。値幅が縮み、次の上抜け/下抜けを待つ段階です。', false, { bb_width_pct: bb.width_pct, bb_width_ratio: bb.width_ratio });
+  if (bb?.ok && bbWidthState === 'expansion') add('bb_expansion', 'BB拡大', 'Lv2 注意', 2, 'ボリンジャーバンドが拡大しています。値動きが広がっていますが、滑り・逆行も重く見ます。', true, { bb_width_pct: bb.width_pct, bb_width_ratio: bb.width_ratio });
+  if (bbState === 'upper_break') add('bb_upper_break', 'BB上限突破', 'Lv2 注意', 2, 'BB上限を突破しています。勢いはありますが、成行追随より押し目候補を優先します。', true, { bb_position_ratio: bb.position_ratio });
+  else if (bbState === 'upper_touch') add('bb_upper_touch', 'BB上限接近', 'Lv2 注意', 2, 'BB上限付近です。上昇は強い一方、追随買いは高値掴み注意です。', true, { bb_position_ratio: bb.position_ratio });
+  else if (bbState === 'lower_break') add('bb_lower_break', 'BB下限割れ', 'Lv2 注意', 2, 'BB下限を割れています。浅い買いは落とし、反発確認または深め指値に絞ります。', true, { bb_position_ratio: bb.position_ratio });
+  else if (bbState === 'lower_touch') add('bb_lower_touch', 'BB下限接近', 'Lv2 注意', 2, 'BB下限付近です。反発候補ですが、下抜け失敗/続落を外れ条件にします。', true, { bb_position_ratio: bb.position_ratio });
+
+  let confluenceSignal = 'none';
+  let confluenceLabel = '複合テクニカルなし';
+  if (maAlignment === 'aligned_up' && ['near', 'above'].includes(vwapState) && ['neutral', 'high'].includes(rsiLevel) && !['upper_break'].includes(bbState)) {
+    confluenceSignal = 'technical_bullish_confluence';
+    confluenceLabel = '上向き複合テクニカル';
+    add('technical_bullish_confluence', confluenceLabel, 'Lv2 注意', 2, 'MA上向き、VWAP過熱なし、RSI過熱強すぎなし。上昇継続候補として検証します。', true);
+  }
+  if (maAlignment === 'aligned_down' && ['neutral', 'low'].includes(rsiLevel) && !['lower_break'].includes(bbState)) {
+    confluenceSignal = 'technical_bearish_confluence';
+    confluenceLabel = '下向き複合テクニカル';
+    add('technical_bearish_confluence', confluenceLabel, 'Lv2 注意', 2, 'MA下向きで弱さが揃い気味です。浅い買いは除外し、反発確認か見送りに寄せます。', true);
+  }
+  if (maAlignment === 'aligned_up' && (vwapState === 'above_extended' || rsiLevel === 'extreme_high' || bbState === 'upper_break')) {
+    confluenceSignal = 'technical_overextended_up';
+    confluenceLabel = '上昇過熱複合';
+    add('technical_overextended_up', confluenceLabel, 'Lv3 警戒', 3, '上昇材料はありますが過熱も強いです。成行追随を落とし、押し目待ちへ寄せます。', true);
+  }
+  if ((rsiLevel === 'low' || rsiLevel === 'extreme_low') && (vwapState === 'below_extended' || bbState === 'lower_touch' || bbState === 'lower_break')) {
+    confluenceSignal = 'technical_rebound_watch';
+    confluenceLabel = '反発候補複合';
+    add('technical_rebound_watch', confluenceLabel, 'Lv2 注意', 2, '下げ過熱と下限接近が重なっています。反発候補ですが、反発確認までは深め指値か待機です。', true);
+  }
+  if ((bbWidthState === 'squeeze' || atrLevel === 'compressed') && (sidewaysContext?.breakout_watch || maAlignment === 'flat')) {
+    confluenceSignal = 'technical_squeeze_watch';
+    confluenceLabel = '収縮ブレイク待ち';
+    add('technical_squeeze_watch', confluenceLabel, 'Lv1 情報', 1, '値幅収縮が強く、方向待ちです。上抜け/下抜け後の候補に分けます。', false);
+  }
+
+  const technicalScore = (() => {
+    let score = 50;
+    if (maAlignment === 'aligned_up' || maAlignment === 'aligned_down') score += 10;
+    if (maAlignment === 'conflict') score -= 8;
+    if (atrLevel === 'expanded') score += 8;
+    if (atrLevel === 'extreme') score -= 8;
+    if (vwapState === 'near') score += 6;
+    if (vwapState === 'above_extended' || vwapState === 'below_extended') score -= 6;
+    if (rsiLevel === 'neutral') score += 6;
+    if (rsiLevel === 'high' || rsiLevel === 'low') score -= 3;
+    if (rsiLevel === 'extreme_high' || rsiLevel === 'extreme_low') score -= 8;
+    if (bbWidthState === 'squeeze') score += 3;
+    if (bbWidthState === 'expansion') score += 5;
+    if (bbState === 'upper_break' || bbState === 'lower_break') score -= 4;
+    if (['technical_bullish_confluence', 'technical_bearish_confluence', 'technical_rebound_watch'].includes(confluenceSignal)) score += 8;
+    if (confluenceSignal === 'technical_overextended_up') score -= 8;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  })();
+  const technicalConfidence = technicalScore >= 70 ? '高' : technicalScore >= 55 ? '中' : technicalScore >= 40 ? '低め' : '低';
+
   const ranked = activeAlerts.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || (Number(b.alert_hit) - Number(a.alert_hit)));
   const primary = ranked[0] || null;
-  const summaryParts = [maAlignmentLabel(maAlignment), atrLabel, vwapLabel].filter(Boolean);
+  const summaryParts = [maAlignmentLabel(maAlignment), atrLabel, vwapLabel, rsiLabel, bbWidthLabel, bbLabel, confluenceLabel !== '複合テクニカルなし' ? confluenceLabel : ''].filter(Boolean);
+  const practicalText = primary?.practical_text || technicalPracticalTextForSignal(primary?.type || 'technical_context', { maAlignment, atrLevel, vwapState, rsiLevel, bbState });
   return {
     ok: true,
     signal: primary?.type || 'technical_context',
@@ -3910,6 +4134,7 @@ function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.
     level_rank: primary?.level_rank || 0,
     alert_hit: ranked.some((item) => item.alert_hit && (item.level_rank || 0) >= 2),
     note: primary?.note || summaryParts.join(' / '),
+    practical_text: practicalText,
     ma_short: Number.isFinite(maShort) ? maShort : null,
     ma_mid: Number.isFinite(maMid) ? maMid : null,
     ma_long: Number.isFinite(maLong) ? maLong : null,
@@ -3930,7 +4155,24 @@ function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.
     vwap_distance_pct: Number.isFinite(vwapDistancePct) ? vwapDistancePct : null,
     vwap_state: vwapState,
     vwap_label: vwapLabel,
-    technical_bias: primary?.type || maAlignment,
+    rsi: Number.isFinite(Number(rsi)) ? Number(rsi) : null,
+    rsi_level: rsiLevel,
+    rsi_label: rsiLabel,
+    bb_mid: bb?.ok && Number.isFinite(Number(bb.mid)) ? Number(bb.mid) : null,
+    bb_upper: bb?.ok && Number.isFinite(Number(bb.upper)) ? Number(bb.upper) : null,
+    bb_lower: bb?.ok && Number.isFinite(Number(bb.lower)) ? Number(bb.lower) : null,
+    bb_width_pct: bb?.ok && Number.isFinite(Number(bb.width_pct)) ? Number(bb.width_pct) : null,
+    bb_width_ratio: bb?.ok && Number.isFinite(Number(bb.width_ratio)) ? Number(bb.width_ratio) : null,
+    bb_width_state: bbWidthState,
+    bb_width_label: bbWidthLabel,
+    bb_state: bbState,
+    bb_label: bbLabel,
+    bb_position_ratio: bb?.ok && Number.isFinite(Number(bb.position_ratio)) ? Number(bb.position_ratio) : null,
+    confluence_signal: confluenceSignal,
+    confluence_label: confluenceLabel,
+    technical_score: technicalScore,
+    technical_confidence: technicalConfidence,
+    technical_bias: primary?.type || confluenceSignal || maAlignment,
     summary: summaryParts.join(' / '),
     active_alerts: ranked.map(compactActiveAlert).filter(Boolean),
   };
@@ -3940,7 +4182,21 @@ function technicalSummary(context) {
   if (!context || !context.ok) return 'テクニカル: 判定不可';
   const atr = Number.isFinite(Number(context.atr_pct)) ? `${Number(context.atr_pct).toFixed(3)}%` : '—';
   const vwap = Number.isFinite(Number(context.vwap_distance_pct)) ? `${Number(context.vwap_distance_pct).toFixed(3)}%` : '—';
-  return `${context.ma_alignment_label || 'MA不明'} / ${context.atr_label || 'ATR不明'} ${atr} / ${context.vwap_label || 'VWAP不明'} ${vwap}`;
+  const rsi = Number.isFinite(Number(context.rsi)) ? `${Number(context.rsi).toFixed(1)}` : '—';
+  const bbWidth = Number.isFinite(Number(context.bb_width_pct)) ? `${Number(context.bb_width_pct).toFixed(3)}%` : '—';
+  const score = Number.isFinite(Number(context.technical_score)) ? `${context.technical_confidence || '—'} ${Number(context.technical_score)}/100` : '—';
+  return `${context.ma_alignment_label || 'MA不明'} / ${context.atr_label || 'ATR不明'} ${atr} / ${context.vwap_label || 'VWAP不明'} ${vwap} / ${context.rsi_label || 'RSI不明'} ${rsi} / ${context.bb_width_label || 'BB不明'} ${bbWidth} / ${context.bb_label || ''} / 信頼度 ${score}`;
+}
+
+function technicalPracticalSummary(context) {
+  if (!context || !context.ok) return 'テクニカル判断材料なし';
+  return context.practical_text || technicalPracticalTextForSignal(context.signal, {
+    maAlignment: context.ma_alignment,
+    atrLevel: context.atr_level,
+    vwapState: context.vwap_state,
+    rsiLevel: context.rsi_level,
+    bbState: context.bb_state,
+  });
 }
 
 function applyTechnicalDecisionOverlay(decision, technicalContext, direction) {
@@ -3956,6 +4212,50 @@ function applyTechnicalDecisionOverlay(decision, technicalContext, direction) {
       order_adjustment: '成行追随は候補から外し、急変が落ち着いた後の押し目/反発確認候補だけを残します。',
       target_adjustment: '必要利確価格は広めに見積もり、コスト後Netが残る条件だけを検証します。',
       risk_comment: '値幅急拡大中は約定直後の逆行と板滑りを主リスクにします。',
+    };
+  }
+  if (signal === 'technical_overextended_up' || signal === 'rsi_extreme_high' || signal === 'bb_upper_break' || signal === 'bb_upper_touch' || signal === 'rsi_high') {
+    return {
+      ...base,
+      entry_bias: 'wait_for_pullback',
+      decision_title: `${decision.decision_title} / ${technicalContext.label}`,
+      decision_comment: `${decision.decision_comment} テクニカルは上方向の材料を含みますが、過熱・上限接近もあるため追随候補を落とします。`,
+      order_adjustment: '成行追随は除外寄りです。買い候補として残すなら、押し目後の浅め〜標準指値、または過熱が落ち着いた後に限定します。',
+      target_adjustment: '必要利確価格は現在値追随ではなく、押し目後の買値からコスト後Netが残る条件だけを検証します。',
+      risk_comment: 'RSI過熱、BB上限、VWAP上振れが続く間は高値掴みと急反落を主リスクにします。',
+    };
+  }
+  if (signal === 'technical_bearish_confluence' || signal === 'rsi_extreme_low' || signal === 'rsi_low' || signal === 'bb_lower_break' || signal === 'bb_lower_touch') {
+    return {
+      ...base,
+      entry_bias: 'deeper_limit_or_rebound_wait',
+      decision_title: `${decision.decision_title} / ${technicalContext.label}`,
+      decision_comment: `${decision.decision_comment} 下げ過熱・下限接近の反発候補はありますが、下げ止まり確認前の浅い買いは除外します。`,
+      order_adjustment: '浅め指値と現在価格追随は落とし、反発確認後または深め指値だけを候補にします。',
+      target_adjustment: '反発後の値幅がコスト後Netを超える場合だけ検証します。戻りが弱い場合は候補から外します。',
+      risk_comment: 'BB下限割れ、RSI低位継続、VWAP下振れ継続は続落リスクとして扱います。',
+    };
+  }
+  if (signal === 'technical_squeeze_watch' || signal === 'bb_squeeze') {
+    return {
+      ...base,
+      entry_bias: 'range_break_or_lower_limit',
+      decision_title: `${decision.decision_title} / ${technicalContext.label}`,
+      decision_comment: `${decision.decision_comment} 値幅収縮が強く、方向待ちです。`,
+      order_adjustment: '現在価格では決め打ちせず、上抜け後候補・下抜け後見送り・レンジ下限候補に分けます。',
+      target_adjustment: 'レンジ幅がコスト後Netを超えない場合、小刻み狙いは候補から落とします。',
+      risk_comment: '上抜け/下抜け後に出来高が伴わない場合はダマシを主リスクにします。',
+    };
+  }
+  if (signal === 'technical_bullish_confluence') {
+    return {
+      ...base,
+      entry_bias: direction === 'down' ? 'standard_limit_or_watch' : 'shallow_to_standard_limit',
+      decision_title: `${decision.decision_title} / 上向き複合テクニカル`,
+      decision_comment: `${decision.decision_comment} テクニカルは上向きに揃い気味です。過熱とコストが重くなければ候補を残します。`,
+      order_adjustment: '浅め指値で到達機会、標準指値で利確余地を比較します。出来高裏付けが弱い場合は標準指値または待機に寄せます。',
+      target_adjustment: 'MA整合とVWAP過熱なしが続く間だけ、必要利確価格を検証します。',
+      risk_comment: 'RSI過熱化、BB上限突破失敗、VWAP上振れ拡大を外れ条件にします。',
     };
   }
   if (signal === 'ma_aligned_up' || signal === 'trend_near_vwap') {
@@ -4173,6 +4473,18 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
   if (technicalContext?.vwap_state === 'above_extended') {
     invalidationConditions.push('VWAP上振れが縮小し、過熱が落ち着く。');
   }
+  if (technicalContext?.rsi_level === 'extreme_high' || technicalContext?.rsi_level === 'high') {
+    invalidationConditions.push('RSI過熱が落ち着き、押し目後も出来高が維持される。');
+  }
+  if (technicalContext?.rsi_level === 'extreme_low' || technicalContext?.rsi_level === 'low') {
+    invalidationConditions.push('反発後にRSI低位を脱し、下げ止まりが確認される。');
+  }
+  if (technicalContext?.bb_width_state === 'squeeze') {
+    invalidationConditions.push('BB収縮後に上抜け/下抜けし、出来高が伴う。');
+  }
+  if (technicalContext?.bb_state === 'upper_break' || technicalContext?.bb_state === 'lower_break') {
+    invalidationConditions.push('BB突破後の押し戻し/戻りが弱く、方向が維持される。');
+  }
   if (Array.isArray(combinedSignalContext?.invalidation_conditions)) {
     combinedSignalContext.invalidation_conditions.forEach((item) => {
       if (item && !invalidationConditions.includes(item)) invalidationConditions.push(item);
@@ -4186,9 +4498,10 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
   const pricePositionText = pricePositionSummary(pricePositionContext);
   const sidewaysText = sidewaysSummary(sidewaysContext);
   const technicalText = technicalSummary(technicalContext);
+  const technicalPracticalText = technicalPracticalSummary(technicalContext);
   const volumeCostSummary = volumeCostContext?.summary ? `。${volumeCostContext.summary}` : '';
   const combinedSummary = combinedSignalContext?.summary ? `。継続・矛盾チェック: ${combinedSignalContext.summary}` : '';
-  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${pricePositionText}。${sidewaysText}。${technicalText}。${decision.market_context_text || marketContextSummary(volumeContext)}${volumeCostSummary}${combinedSummary}`;
+  const currentInsight = `${decision.decision_title}。${directionSummary}${continuationSummary ? `。${continuationSummary}` : ''}。${pricePositionText}。${sidewaysText}。${technicalText}。${technicalPracticalText}。${decision.market_context_text || marketContextSummary(volumeContext)}${volumeCostSummary}${combinedSummary}`;
   const conditionalForecast = decision.order_adjustment || decision.decision_comment || '条件付き見通しは未判定です。';
   const simulationUse = preferred
     ? `売買シミュレーターでは「${preferred.label}」を主候補として検証し、除外候補は取引しない比較対象にします。`
@@ -4233,9 +4546,18 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
       breakout_watch: Boolean(sidewaysContext?.breakout_watch),
       technical_signal: technicalContext?.signal || 'unknown',
       technical_label: technicalContext?.label || 'テクニカル判定不可',
+      technical_practical_text: technicalPracticalText,
       ma_alignment: technicalContext?.ma_alignment || 'unknown',
       atr_level: technicalContext?.atr_level || 'unknown',
       vwap_state: technicalContext?.vwap_state || 'unknown',
+      rsi_level: technicalContext?.rsi_level || 'unknown',
+      rsi: Number.isFinite(Number(technicalContext?.rsi)) ? Number(technicalContext.rsi) : null,
+      bb_width_state: technicalContext?.bb_width_state || 'unknown',
+      bb_state: technicalContext?.bb_state || 'unknown',
+      confluence_signal: technicalContext?.confluence_signal || 'none',
+      confluence_label: technicalContext?.confluence_label || '複合テクニカルなし',
+      technical_score: Number.isFinite(Number(technicalContext?.technical_score)) ? Number(technicalContext.technical_score) : null,
+      technical_confidence: technicalContext?.technical_confidence || '—',
       selected_window_minutes: Number.isFinite(Number(selectedWindowMinutes)) ? Number(selectedWindowMinutes) : windowMinutes,
       selected_window_move_pct: Number.isFinite(Number(selectedWindowMovePct)) ? Number(selectedWindowMovePct) : (Number.isFinite(move) ? move : null),
       decision_basis_window_minutes: windowMinutes,
@@ -4269,6 +4591,7 @@ function enrichDecisionContext({ symbol, windowMinutes, alertMode, movePct, thre
     sideways_summary: sidewaysText,
     technical_context: technicalContext || null,
     technical_summary: technicalText,
+    technical_practical_text: technicalPracticalText,
     volume_cost_context: volumeCostContext || null,
     combined_signal_context: combinedSignalContext || null,
     combined_signal_summary: combinedSignalContext?.summary || '継続・矛盾チェックで注意以上の追加材料はありません。',
@@ -4365,15 +4688,15 @@ function buildGrowthAlertContext(rows = [], costFloorPct = 0.28, windowMinutes =
     },
     {
       family: '強いテクニカルアラート',
-      status: hasTechnical ? '更新5 実装済み' : '更新5 実装済み',
+      status: hasTechnical ? '更新5+6 実装済み' : '更新5+6 実装済み',
       priority: 'A',
-      note: 'MA方向整合、ATR変動率、VWAP乖離をtechnical_contextとして実取引判断材料にします。',
+      note: 'MA方向整合、ATR変動率、VWAP乖離、RSI、ボリンジャーバンド、複合テクニカル一致をtechnical_contextとして実取引判断材料にします。',
     },
     {
       family: '次フェーズ技術強化',
-      status: '計画中',
+      status: '更新6 実装済み',
       priority: 'B',
-      note: 'RSI、ボリンジャーバンド、複合テクニカル一致、シミュレーター検証で強化します。',
+      note: 'RSI、ボリンジャーバンド、複合テクニカル一致を追加済み。次はアラートセンター集約とシミュレーター検証へ渡します。',
     },
     {
       family: 'シミュレーター連携',
@@ -4628,6 +4951,7 @@ async function alertPreview(params = {}) {
         sideways_summary: '横ばい: 判定不可',
         technical_context: null,
         technical_summary: 'テクニカル: 判定不可',
+        technical_practical_text: 'テクニカル判断材料なし',
         reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
@@ -4689,6 +5013,7 @@ async function alertPreview(params = {}) {
         sideways_summary: '横ばい: 判定不可',
         technical_context: null,
         technical_summary: 'テクニカル: 判定不可',
+        technical_practical_text: 'テクニカル判断材料なし',
         reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
@@ -4744,6 +5069,7 @@ async function alertPreview(params = {}) {
         sideways_summary: '横ばい: 判定不可',
         technical_context: null,
         technical_summary: 'テクニカル: 判定不可',
+        technical_practical_text: 'テクニカル判断材料なし',
         reference_mode_context: null,
         direction_alerts: [],
         direction_alert_summary: '方向アラート判定不可',
@@ -4936,6 +5262,7 @@ async function alertPreview(params = {}) {
       sideways_summary: sidewaysSummary(sidewaysContext),
       technical_context: technicalContext,
       technical_summary: technicalSummary(technicalContext),
+      technical_practical_text: technicalPracticalSummary(technicalContext),
       reference_mode_context: referenceModeContext,
       direction_alerts: directionWindowMoves,
       direction_alert_summary: directionAlertSummary(directionWindowMoves),
@@ -5018,6 +5345,7 @@ async function alertPreview(params = {}) {
         sideways_summary: row.sideways_summary,
         technical_context: row.technical_context,
         technical_summary: row.technical_summary,
+        technical_practical_text: row.technical_practical_text,
         reference_mode_context: row.reference_mode_context,
         combined_signal_context: row.combined_signal_context,
         combined_signal_summary: row.combined_signal_summary,
