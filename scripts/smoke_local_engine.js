@@ -45,6 +45,8 @@ async function run() {
     },
   });
   assert(Array.isArray(alertPreview.rows), 'alert-preview.rows missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'decision_comment')), 'alert-preview.decision_comment missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'volume_context')), 'alert-preview.volume_context missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
 
   const costEstimate = await call('cost-estimate', {

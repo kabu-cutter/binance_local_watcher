@@ -1333,11 +1333,20 @@ tr:hover td { background: rgba(255,255,255,0.34); }
 #alertHistoryTable td:nth-child(3) {
   font-weight: 850;
 }
-#alertPreviewTable td:nth-child(6) {
-  min-width: 190px;
+#alertPreviewTable td:nth-child(6),
+#alertPreviewTable td:nth-child(7),
+#alertPreviewTable td:nth-child(8),
+#alertPreviewTable td:nth-child(9),
+#alertPreviewTable td:nth-child(10) {
+  min-width: 210px;
   color: var(--muted);
-  font-size: 0.80rem;
+  font-size: 0.78rem;
   line-height: 1.45;
+}
+#alertPreviewTable td:nth-child(8),
+#alertPreviewTable td:nth-child(9) {
+  color: var(--ink);
+  font-weight: 720;
 }
 
 /* Alert setting panel alignment update */
@@ -1818,6 +1827,9 @@ tr:hover td { background: rgba(255,255,255,0.34); }
   color: var(--muted-2);
   font-size: 0.74rem;
   line-height: 1.45;
+}
+.alert-summary-item small b {
+  color: var(--ink);
 }
 .alert-summary-item.is-hit {
   border-color: rgba(239,205,122,0.36);

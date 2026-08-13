@@ -76,6 +76,30 @@ function pct(v, digits = 3, signed = false) {
   const sign = signed && n > 0 ? '+' : '';
   return `${sign}${n.toFixed(digits)}%`;
 }
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+  }[ch]));
+}
+
+function ratio(v, digits = 2) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return `${Number(v).toFixed(digits)}倍`;
+}
+
+function pctRatio(v, digits = 0) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return `${(Number(v) * 100).toFixed(digits)}%`;
+}
+
+function volumeContextText(context) {
+  if (!context || !context.ok) return context?.note || '出来高 未取得';
+  return `出来高 ${context.volume_label || '—'} ${ratio(context.volume_ratio)} / 取引回数 ${context.trade_count_label || '—'} ${ratio(context.trade_count_ratio)} / Taker buy ${context.taker_buy_label || '—'} ${pctRatio(context.taker_buy_ratio)}`;
+}
 function neededWinDisplay(v, digits = 1) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
   const n = Number(v);
@@ -1071,13 +1095,17 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   if (!data) {
     setState('is-clear');
     statusEl.textContent = '未判定';
-    textEl.textContent = '判定更新を押すと、注意以上のアラートがあるかをここにまとめます。';
+    textEl.textContent = '判定更新を押すと、注文位置の考え方と出来高コンテキストをここにまとめます。';
     listEl.innerHTML = '<span class="alert-summary-empty">まだ判定していません。</span>';
     return;
   }
 
   const rows = data.rows || [];
   const activeRows = rows.filter((row) => row.alert_hit);
+  const rankedRows = rows.slice().sort((a, b) => ((b.level_rank || 0) - (a.level_rank || 0)) || Math.abs(Number(b.move_pct || 0)) - Math.abs(Number(a.move_pct || 0)));
+  const focus = activeRows.length
+    ? activeRows.slice().sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct))[0]
+    : rankedRows[0];
   const windowMinutes = data.window_minutes ?? document.getElementById('alertWindowMinutes')?.value ?? '—';
   const mode = data.alert_mode || document.getElementById('alertMode')?.value || 'simple';
   const symbols = (data.symbols || selectedSymbols || []).join(', ') || '—';
@@ -1085,7 +1113,7 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   if (!rows.length) {
     setState('is-clear');
     statusEl.textContent = '判定対象なし';
-    textEl.textContent = '判定対象の通貨または履歴データを確認してください。';
+    textEl.textContent = '判定対象の通貨または履歴データが不足しているため、注文位置の判断には進みません。';
     listEl.innerHTML = '<span class="alert-summary-empty">判定できるデータがありません。</span>';
     return;
   }
@@ -1093,23 +1121,24 @@ function renderAlertSummary(data = null, selectedSymbols = []) {
   if (!activeRows.length) {
     setState('is-clear');
     statusEl.textContent = 'アラートなし';
-    textEl.textContent = `注意以上の上昇アラートはありません。現在は上昇アラート中心の判定です。下落・急落は後続で追加予定です。`;
+    textEl.textContent = focus?.order_adjustment || focus?.decision_comment || '注意以上の上昇アラートはありません。買い候補として扱うなら、現在価格追随より指値候補側で考える状態です。';
   } else {
-    const top = activeRows.slice().sort((a, b) => (b.level_rank - a.level_rank) || (b.move_pct - a.move_pct))[0];
-    setState((top?.level_rank || 0) >= 3 ? 'is-warning' : 'is-watch');
-    statusEl.textContent = top?.level || 'Lv2 注意';
-    textEl.textContent = `${activeRows.length}件の注意以上があります。追いかける前に、手数料・必要値幅・Daily Goalを確認してください。`;
+    setState((focus?.level_rank || 0) >= 3 ? 'is-warning' : 'is-watch');
+    statusEl.textContent = focus?.level || 'Lv2 注意';
+    textEl.textContent = focus?.order_adjustment || focus?.decision_comment || '買い候補として扱うなら、注文想定と指値位置を調整する段階です。';
   }
 
   const rowHtml = rows.map((row) => {
     const level = row.level || 'アラートなし';
     const move = row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true);
     const threshold = row.threshold_pct === null || row.threshold_pct === undefined ? '—' : pct(row.threshold_pct, 2);
-    const note = row.level_note || (row.alert_hit ? '注意アラートです。' : '現在は注意アラートではありません。');
+    const title = row.decision_title || level;
+    const decision = row.order_adjustment || row.decision_comment || row.level_note || (row.alert_hit ? '注文位置の調整が必要です。' : '現在は注意アラートではありません。');
+    const volume = row.market_context_text || volumeContextText(row.volume_context);
     const itemClass = row.alert_hit ? 'is-hit' : 'is-muted';
-    return `<div class="alert-summary-item ${itemClass}"><strong>${row.symbol}</strong><span>${level}</span><span>${move} / しきい値 ${threshold}</span><small>${note}</small></div>`;
+    return `<div class="alert-summary-item ${itemClass}"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(level)}</span><span>${escapeHtml(move)} / しきい値 ${escapeHtml(threshold)}</span><small><b>${escapeHtml(title)}</b>：${escapeHtml(decision)}</small><small>${escapeHtml(volume)}</small></div>`;
   }).join('');
-  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${mode} / 窓 ${windowMinutes}分 / 対象 ${symbols}</div>`;
+  listEl.innerHTML = `${rowHtml}<div class="alert-summary-context">mode ${escapeHtml(mode)} / 窓 ${escapeHtml(windowMinutes)}分 / 対象 ${escapeHtml(symbols)} / 出来高は判断材料の一部で、単独では売買判断に使いません。</div>`;
 }
 
 async function loadAlertPreview() {
@@ -1146,15 +1175,19 @@ async function loadAlertPreview() {
   document.getElementById('alertPreviewMemo').textContent = `${data.message} / mode ${data.alert_mode} / 対象: ${(data.symbols || selectedSymbols).join(', ')} / 窓 ${data.window_minutes}分 / 共通 ${pct(data.common_threshold_pct ?? data.threshold_pct, 2)} / 適用 ${appliedSummary || '—'} / 履歴保存 ${data.history_saved || 0}件 / データ元: ${data.source}`;
   const top = data.top_alert;
   document.getElementById('alertTopMemo').textContent = top
-    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status}`
-    : '注意以上の上位通知はありません。';
+    ? `上位通知: ${top.symbol} ${pct(top.move_pct, 3, true)} / ${top.level || '—'} / ${top.status} / ${top.order_adjustment || top.decision_comment || ''}`
+    : '注意以上の上位通知はありません。現在は注文位置を急がず、指値候補側で見る状態です。';
   const rows = (data.rows || []).map((row) => ({
     symbol: row.symbol,
     level: row.level || 'アラートなし',
     status: row.status,
     move_pct: row.move_pct === null || row.move_pct === undefined ? '—' : pct(row.move_pct, 3, true),
     threshold: row.threshold_pct === null || row.threshold_pct === undefined ? pct(data.threshold_pct, 2) : pct(row.threshold_pct, 2),
-    note: row.level_note || '—',
+    note: row.level_note || row.decision_comment || '—',
+    volume: row.market_context_text || volumeContextText(row.volume_context),
+    order_hint: row.order_adjustment || '—',
+    target_hint: row.target_adjustment || '—',
+    risk_hint: row.risk_comment || '—',
     streak: `${row.streak_count ?? 0}`,
     rolling_streak: `${row.rolling_streak ?? 0}`,
     rising_ratio: row.rising_ratio === null || row.rising_ratio === undefined ? '—' : pct(row.rising_ratio, 1),
@@ -1169,7 +1202,11 @@ async function loadAlertPreview() {
     ['status', '状態'],
     ['move_pct', `変動率(${data.window_minutes}分)`],
     ['threshold', '適用しきい値'],
-    ['note', '見方'],
+    ['note', '判断コメント'],
+    ['volume', '出来高コンテキスト'],
+    ['order_hint', '注文位置の考え方'],
+    ['target_hint', '利確幅の考え方'],
+    ['risk_hint', 'リスクの見方'],
     ['streak', '連続回数'],
     ['rolling_streak', 'rolling連続'],
     ['rising_ratio', '上昇比率'],

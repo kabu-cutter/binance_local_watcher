@@ -81,7 +81,17 @@
           "message",
           "common_threshold_pct",
           "cost_floor_pct",
-          "threshold_guidance"
+          "threshold_guidance",
+          "alert_count",
+          "volume_context_source",
+          "rows[].volume_context",
+          "rows[].market_context_text",
+          "rows[].entry_bias",
+          "rows[].decision_title",
+          "rows[].decision_comment",
+          "rows[].order_adjustment",
+          "rows[].target_adjustment",
+          "rows[].risk_comment"
         ]
       },
       "alert-history": {
