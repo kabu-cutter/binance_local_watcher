@@ -170,7 +170,24 @@
           "rows[].decision_context.market_state.combined_signal",
           "rows[].decision_context.market_state.combined_label",
           "rows[].decision_context.active_alerts[].family=continuation_conflict",
-          "rows[].decision_context.active_alerts[].family=combined_market_signal"
+          "rows[].decision_context.active_alerts[].family=combined_market_signal",
+          "rows[].sideways_context",
+          "rows[].sideways_summary",
+          "rows[].technical_context",
+          "rows[].technical_summary",
+          "rows[].decision_context.sideways_context",
+          "rows[].decision_context.sideways_summary",
+          "rows[].decision_context.technical_context",
+          "rows[].decision_context.technical_summary",
+          "rows[].decision_context.market_state.sideways_signal",
+          "rows[].decision_context.market_state.sideways_minutes",
+          "rows[].decision_context.market_state.breakout_watch",
+          "rows[].decision_context.market_state.technical_signal",
+          "rows[].decision_context.market_state.ma_alignment",
+          "rows[].decision_context.market_state.atr_level",
+          "rows[].decision_context.market_state.vwap_state",
+          "rows[].decision_context.active_alerts[].family=sideways_range",
+          "rows[].decision_context.active_alerts[].family=technical_context"
         ]
       },
       "alert-history": {

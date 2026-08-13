@@ -107,6 +107,24 @@ function pricePositionText(row) {
   return `${ctx.label || '価格位置'} / 日中高値差 ${dayHigh} / 日中安値差 ${dayLow} / 30分レンジ ${range}`;
 }
 
+
+function sidewaysContextText(row) {
+  const ctx = row?.sideways_context || row?.decision_context?.sideways_context;
+  if (!ctx || !ctx.ok) return '横ばい: 判定不可';
+  const minutes = ctx.sideways_minutes === null || ctx.sideways_minutes === undefined ? '—' : `${Math.round(Number(ctx.sideways_minutes))}分`;
+  const range = ctx.sideways_range_pct === null || ctx.sideways_range_pct === undefined ? '—' : pct(ctx.sideways_range_pct, 3);
+  const position = ctx.range_position_ratio === null || ctx.range_position_ratio === undefined ? '—' : `${Math.round(Number(ctx.range_position_ratio) * 100)}%位置`;
+  return `${ctx.label || '横ばい'} / 継続 ${minutes} / 値幅 ${range} / レンジ内 ${position}`;
+}
+
+function technicalContextText(row) {
+  const ctx = row?.technical_context || row?.decision_context?.technical_context;
+  if (!ctx || !ctx.ok) return 'テクニカル: 判定不可';
+  const atr = ctx.atr_pct === null || ctx.atr_pct === undefined ? '—' : pct(ctx.atr_pct, 3);
+  const vwap = ctx.vwap_distance_pct === null || ctx.vwap_distance_pct === undefined ? '—' : pct(ctx.vwap_distance_pct, 3, true);
+  return `${ctx.ma_alignment_label || 'MA不明'} / ${ctx.atr_label || 'ATR不明'} ${atr} / ${ctx.vwap_label || 'VWAP不明'} ${vwap}`;
+}
+
 function referenceModeText(row) {
   const ctx = row?.reference_mode_context || row?.decision_context?.reference_mode_context;
   if (!ctx) return '別モード参考値: —';
@@ -157,6 +175,8 @@ function renderAlertPreviewDetailsTable(el, rows, data) {
       alertDetailPair('出来高コンテキスト', row.volume),
       alertDetailPair('出来高・フローアラート', row.volume_alerts),
       alertDetailPair('コストアラート', row.cost_alerts),
+      alertDetailPair('横ばい・レンジ滞在', row.sideways_context),
+      alertDetailPair('テクニカルアラート', row.technical_context, 'is-wide'),
       alertDetailPair('継続・矛盾チェック', row.combined_signal, 'is-wide'),
     ].join('');
     const secondLine = [
@@ -1343,6 +1363,8 @@ async function loadAlertPreview() {
     direction_alerts: row.direction_alert_summary || row.decision_context?.market_state?.direction_window_summary || '—',
     continuation_alert: continuationAlertText(row),
     price_position: pricePositionText(row),
+    sideways_context: row.sideways_summary || sidewaysContextText(row),
+    technical_context: row.technical_summary || technicalContextText(row),
     reference_mode: referenceModeText(row),
     note: row.level_note || row.decision_comment || '—',
     volume: row.market_context_text || volumeContextText(row.volume_context),

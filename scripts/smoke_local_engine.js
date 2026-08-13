@@ -59,6 +59,8 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'cost_context')), 'alert-preview.cost_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'combined_signal_context')), 'alert-preview.combined_signal_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'combined_signal_summary')), 'alert-preview.combined_signal_summary missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'sideways_context')), 'alert-preview.sideways_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'technical_context')), 'alert-preview.technical_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'volume_alert_summary')), 'alert-preview.volume_alert_summary missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row, 'cost_alert_summary')), 'alert-preview.cost_alert_summary missing');
   assert(alertPreview.rows.every((row) => row.decision_context && row.decision_context.market_state), 'alert-preview.decision_context.market_state missing');
@@ -70,6 +72,10 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'cost_risk')), 'alert-preview.decision_context.market_state.cost_risk missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'combined_signal_context')), 'alert-preview.decision_context.combined_signal_context missing');
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'combined_signal')), 'alert-preview.decision_context.market_state.combined_signal missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'sideways_context')), 'alert-preview.decision_context.sideways_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context, 'technical_context')), 'alert-preview.decision_context.technical_context missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'sideways_signal')), 'alert-preview.decision_context.market_state.sideways_signal missing');
+  assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'technical_signal')), 'alert-preview.decision_context.market_state.technical_signal missing');
   assert(Array.isArray(alertPreview.growth_alert_context), 'alert-preview.growth_alert_context missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
 
