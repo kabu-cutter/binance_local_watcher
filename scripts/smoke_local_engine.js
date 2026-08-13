@@ -1,3 +1,6 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const engine = require('../local_engine');
 
 function assert(condition, message) {
@@ -7,6 +10,52 @@ function assert(condition, message) {
 async function call(route, payload = {}) {
   const data = await engine.invoke(route, payload);
   return data;
+}
+
+
+function syntheticJstTimestamp(epochMs) {
+  const d = new Date(epochMs + (9 * 60 * 60 * 1000));
+  return d.toISOString().replace('T', ' ').slice(0, 19) + ' JST';
+}
+
+function writeSyntheticPriceHistory(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const base = Date.now() - (120 * 60 * 1000);
+  const lines = ['timestamp,symbol,price_jpy'];
+  for (let i = 0; i < 120; i += 1) {
+    const timestamp = syntheticJstTimestamp(base + (i * 60 * 1000));
+    const btc = 15000000 + (Math.sin(i / 8) * 6000) + (i * 100);
+    const eth = 300000 + (Math.sin(i / 10) * 120) + (i * 2);
+    lines.push(`${timestamp},BTCJPY,${btc.toFixed(0)}`);
+    lines.push(`${timestamp},ETHJPY,${eth.toFixed(0)}`);
+  }
+  fs.writeFileSync(path.join(dir, 'price_history.csv'), `${lines.join('\n')}\n`, 'utf8');
+}
+
+async function runSyntheticAlertPreviewCheck() {
+  const previousProjectDir = process.env.BLW_PROJECT_DIR;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'blw-alert-smoke-'));
+  try {
+    writeSyntheticPriceHistory(tempDir);
+    process.env.BLW_PROJECT_DIR = tempDir;
+    const preview = await call('alert-preview', {
+      query: {
+        window_minutes: 15,
+        threshold_pct: 0.3,
+        symbols: 'BTCJPY,ETHJPY',
+        save_history: false,
+      },
+    });
+    assert(Array.isArray(preview.rows) && preview.rows.length === 2, 'synthetic alert-preview.rows missing');
+    assert(preview.rows.every((row) => row.sideways_context), 'synthetic sideways_context missing');
+    assert(preview.rows.every((row) => row.technical_context), 'synthetic technical_context missing');
+    assert(preview.rows.every((row) => typeof row.technical_practical_text === 'string'), 'synthetic technical_practical_text missing');
+    return preview.rows.map((row) => `${row.symbol}:${row.technical_context?.label || 'technical'}`).join(', ');
+  } finally {
+    if (previousProjectDir === undefined) delete process.env.BLW_PROJECT_DIR;
+    else process.env.BLW_PROJECT_DIR = previousProjectDir;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function run() {
@@ -90,6 +139,9 @@ async function run() {
   assert(alertPreview.rows.every((row) => Object.prototype.hasOwnProperty.call(row.decision_context.market_state, 'technical_score')), 'alert-preview.decision_context.market_state.technical_score missing');
   assert(Array.isArray(alertPreview.growth_alert_context), 'alert-preview.growth_alert_context missing');
   checks.push(`alert-preview ok (${alertPreview.rows.length} rows)`);
+
+  const syntheticSummary = await runSyntheticAlertPreviewCheck();
+  checks.push(`synthetic alert-preview ok (${syntheticSummary})`);
 
   const costEstimate = await call('cost-estimate', {
     query: {

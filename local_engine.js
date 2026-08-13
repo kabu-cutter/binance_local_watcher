@@ -3791,14 +3791,6 @@ function buildSidewaysContext(symbolRows = [], latest = null, thresholdPct = 0.3
   const rangePositionRatio = runHigh > runLow ? (current - runLow) / (runHigh - runLow) : 0.5;
   const volumeRank = Number(volumeContext?.volume_rank || 0);
   const tradeRank = Number(volumeContext?.trade_count_rank || 0);
-  const rsi = calculateRsiFromPrices(prices, 14);
-  const rsiLevel = classifyRsiLevel(rsi);
-  const rsiLabel = rsiLevelLabel(rsiLevel);
-  const bb = bollingerContextFromPrices(prices, current, 20);
-  const bbState = bb?.state || 'unknown';
-  const bbLabel = bb?.label || 'BB不明';
-  const bbWidthState = bb?.width_state || 'unknown';
-  const bbWidthLabel = bb?.width_label || 'BB不明';
 
   const activeAlerts = [];
   const add = (type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
@@ -4036,6 +4028,15 @@ function buildTechnicalContext(symbolRows = [], latest = null, thresholdPct = 0.
     else if (vwapDistancePct <= -vwapBase) { vwapState = 'below'; vwapLabel = 'VWAP下振れ'; }
     else { vwapState = 'near'; vwapLabel = 'VWAP近辺'; }
   }
+
+  const rsi = calculateRsiFromPrices(prices, 14);
+  const rsiLevel = classifyRsiLevel(rsi);
+  const rsiLabel = rsiLevelLabel(rsiLevel);
+  const bb = bollingerContextFromPrices(prices, current, 20);
+  const bbState = bb?.state || 'unknown';
+  const bbLabel = bb?.label || 'BB不明';
+  const bbWidthState = bb?.width_state || 'unknown';
+  const bbWidthLabel = bb?.width_label || 'BB不明';
 
   const activeAlerts = [];
   const add = (type, label, level, levelRank, note, alertHit = levelRank >= 2, extra = {}) => {
